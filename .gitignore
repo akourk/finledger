@@ -1,5 +1,15 @@
-/local/data/input/*
-/local/data/output/*
-/local/localhtml/data/*
+/dashboard/data/*
+/data/input/*
+/data/output/*
 
 .DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+*.csv
+.env
+*.log
+.vscode/

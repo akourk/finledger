@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <!-- Load portfolio data -->
+    <script src="./data/portfolio_summary.js"></script>
+    <script src="./data/holdings_detail.js"></script>
+    <script src="./data/account_summary.js"></script>
+    <script src="./data/income_by_year.js"></script>
+    <script src="./data/historical_holdings.js"></script>
+    <script src="./data/realized_gains.js"></script>
+    <script src="./data/cash_balances.js"></script>
+    <script src="./data/master_transactions.js"></script>
+    <script src="./data/portfolio_cost_basis.js"></script>
+    <script src="./data/retirement_data.js"></script>
+    <!-- Styles -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="dashboard">
+        <header>
+            <h1>Portfolio Dashboard</h1>
+            <p class="timestamp" id="timestamp">Loading...</p>
+        </header>
+
+        <div id="errorMessage" class="error-message" style="display: none;">
+            <p>Could not load portfolio data. Run <code>python detectAndClean.py</code> first.</p>
+        </div>
+
+        <div id="dashboardContent" style="display: none;">
+            <!-- Tab Navigation -->
+            <div class="tab-nav">
+                <button class="tab-btn active" data-tab="overview">Overview</button>
+                <button class="tab-btn" data-tab="accounts">Accounts</button>
+                <button class="tab-btn" data-tab="holdings">Holdings</button>
+                <button class="tab-btn" data-tab="transactions">Transactions</button>
+                <button class="tab-btn" data-tab="income">Income</button>
+                <button class="tab-btn" data-tab="history">History</button>
+                <button class="tab-btn" data-tab="tax">Tax</button>
+                <button class="tab-btn" data-tab="crypto">Crypto</button>
+                <button class="tab-btn" data-tab="options">Options</button>
+                <button class="tab-btn" data-tab="retirement">Retirement</button>
+            </div>
+
+            <!-- Overview Tab -->
+            <div id="overview" class="tab-content active">
+                <div class="summary-cards" id="summaryCards"></div>
+
+                <div class="charts-grid">
+                    <div class="chart-container">
+                        <h3 class="chart-title">Account Allocation</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="allocationChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <h3 class="chart-title">Top Holdings</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="assetAllocationChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <h3 class="chart-title">Sector Allocation</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="sectorAllocationChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <h3 class="chart-title">Tax Lot Breakdown</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="taxLotChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <h3 class="chart-title">Investment vs Cash</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="investmentCashChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <h3 class="chart-title">Returns Breakdown</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="returnsChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Top 10 Holdings</h3>
+                        <table class="holdings-table" id="topHoldingsTable">
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th>Account</th>
+                                    <th style="text-align: right;">Value</th>
+                                    <th style="text-align: right;">Cost Basis</th>
+                                    <th style="text-align: right;">Gain/Loss</th>
+                                    <th style="text-align: right;">% Return</th>
+                                </tr>
+                            </thead>
+                            <tbody id="topHoldingsBody"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Recent Activity -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Recent Activity</h3>
+                        <div class="recent-activity" id="recentActivity"></div>
+                    </div>
+
+                    <!-- Best/Worst Performers -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Top Movers (30 Day)</h3>
+                        <div class="top-movers" id="topMovers"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Accounts Tab -->
+            <div id="accounts" class="tab-content">
+                <div class="accounts-grid" id="accountsGrid"></div>
+            </div>
+
+            <!-- Holdings Tab -->
+            <div id="holdings" class="tab-content">
+                <input type="text" class="search-box" id="holdingsSearch" placeholder="Search by symbol or account...">
+
+                <div class="chart-container full-width" style="margin-bottom: 24px;">
+                    <h3 class="chart-title">All Holdings</h3>
+                    <div style="max-height: 600px; overflow-y: auto;">
+                        <table class="holdings-table sortable-table" id="allHoldingsTable">
+                            <thead>
+                                <tr>
+                                    <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="account">Account <span class="sort-icon"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="quantity" style="text-align: right;">Quantity <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="current_price" style="text-align: right;">Price
+                                        <span class="sort-icon"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="current_value" style="text-align: right;">Value
+                                        <span class="sort-icon"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="cost_basis" style="text-align: right;">Cost Basis
+                                        <span class="sort-icon"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="unrealized_gain" style="text-align: right;">
+                                        Gain/Loss <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="unrealized_gain_pct" style="text-align: right;">%
+                                        Return <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="change_7d" style="text-align: right;">7D % <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="change_30d" style="text-align: right;">30D % <span
+                                            class="sort-icon"></span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="allHoldingsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="charts-grid">
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Holdings Treemap (by Value)</h3>
+                        <div class="treemap-container" id="holdingsTreemap" style="height: 620px;"></div>
+                    </div>
+
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Holdings Heatmap (Performance)</h3>
+                        <div class="heatmap-container" id="holdingsHeatmap" style="height: 350px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Income Tab -->
+            <div id="income" class="tab-content">
+                <div class="charts-grid">
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Income Projection</h3>
+                        <div class="income-projection" id="incomeProjection"></div>
+                    </div>
+
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Income by Year</h3>
+                        <div class="chart-wrapper historical-chart-wrapper">
+                            <canvas id="incomeChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Dividend Calendar (Monthly)</h3>
+                        <div class="chart-wrapper historical-chart-wrapper">
+                            <canvas id="dividendCalendarChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Income Details</h3>
+                        <table class="income-table" id="incomeTable">
+                            <thead>
+                                <tr>
+                                    <th>Year</th>
+                                    <th style="text-align: right;">Dividends</th>
+                                    <th style="text-align: right;">Interest</th>
+                                    <th style="text-align: right;">Staking</th>
+                                    <th style="text-align: right;">Other</th>
+                                    <th style="text-align: right;">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody id="incomeBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- History Tab -->
+            <div id="history" class="tab-content">
+                <div class="charts-grid">
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Portfolio Value Over Time</h3>
+                        <div class="chart-wrapper historical-chart-wrapper">
+                            <canvas id="historicalChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Portfolio Value vs Cost Basis (with Gain/Loss)</h3>
+                        <div class="chart-wrapper historical-chart-wrapper">
+                            <canvas id="valueVsInvestedChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">What If I Invested in S&P 500?</h3>
+                        <div class="chart-wrapper historical-chart-wrapper">
+                            <canvas id="growthComparisonChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Monthly Returns</h3>
+                        <div class="chart-wrapper historical-chart-wrapper">
+                            <canvas id="monthlyReturnsChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Transactions Tab -->
+            <div id="transactions" class="tab-content">
+                <!-- Filters Section -->
+                <div class="transactions-filters">
+                    <div class="filter-row">
+                        <div class="filter-group">
+                            <label>Action Type</label>
+                            <select id="txFilterAction">
+                                <option value="">All Actions</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Account</label>
+                            <select id="txFilterAccount">
+                                <option value="">All Accounts</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Symbol</label>
+                            <select id="txFilterSymbol">
+                                <option value="">All Symbols</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Date Range</label>
+                            <div class="date-range">
+                                <input type="date" id="txFilterDateFrom" placeholder="From">
+                                <span>to</span>
+                                <input type="date" id="txFilterDateTo" placeholder="To">
+                            </div>
+                        </div>
+                        <div class="filter-group search-group">
+                            <label>Search</label>
+                            <input type="text" id="txSearch" placeholder="Search transactions...">
+                        </div>
+                        <div class="filter-group">
+                            <button id="txClearFilters" class="clear-filters-btn">Clear Filters</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Monthly Summary Cards -->
+                <div class="tx-summary-cards" id="txSummaryCards">
+                    <!-- Populated by JS -->
+                </div>
+
+                <!-- Charts Section -->
+                <div class="charts-grid">
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Transaction Volume Over Time</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="txVolumeChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Activity by Type</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="txTypeChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Transaction Table -->
+                <div class="charts-grid">
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Transaction Log <span id="txCount" class="tx-count"></span></h3>
+                        <div class="table-scroll-container">
+                            <table class="holdings-table" id="txTable">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" data-sort="date">Date <span class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="action" style="text-align: left;">Action <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="quantity" style="text-align: right;">Quantity
+                                            <span class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="price" style="text-align: right;">Price <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="amount" style="text-align: right;">Amount <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="account" style="text-align: left;">Account <span
+                                                class="sort-icon"></span></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="txTableBody"></tbody>
+                            </table>
+                        </div>
+                        <div class="tx-pagination" id="txPagination">
+                            <!-- Pagination controls -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tax Tab -->
+            <div id="tax" class="tab-content">
+                <div class="charts-grid">
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Tax Loss Harvesting Opportunities</h3>
+                        <table class="holdings-table" id="taxLossTable">
+                            <thead>
+                                <tr>
+                                    <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="account" style="text-align: left;">Account <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="quantity" style="text-align: right;">Quantity <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="cost_basis" style="text-align: right;">Cost Basis
+                                        <span class="sort-icon"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="current_value" style="text-align: right;">Current
+                                        Value <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="unrealized_loss" style="text-align: right;">
+                                        Unrealized Loss <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="holding_period" style="text-align: left;">Holding
+                                        Period <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="wash_sale_date" style="text-align: left;">Wash Sale
+                                        Until <span class="sort-icon"></span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="taxLossBody"></tbody>
+                        </table>
+                    </div>
+
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Short-Term vs Long-Term Gains</h3>
+                        <div class="chart-wrapper" style="max-height: 350px;">
+                            <canvas id="gainsBreakdownChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Unrealized Gains by Holding Period</h3>
+                        <div class="chart-wrapper" style="max-height: 350px;">
+                            <canvas id="holdingPeriodChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Realized Gains/Losses This Year</h3>
+                        <table class="holdings-table" id="realizedGainsTable">
+                            <thead>
+                                <tr>
+                                    <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="sell_date" style="text-align: left;">Sell Date <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="quantity" style="text-align: right;">Quantity <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="proceeds" style="text-align: right;">Proceeds <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="cost_basis" style="text-align: right;">Cost Basis
+                                        <span class="sort-icon"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="gain_loss" style="text-align: right;">Gain/Loss
+                                        <span class="sort-icon"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="term" style="text-align: left;">Term <span
+                                            class="sort-icon"></span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="realizedGainsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Retirement Tab -->
+            <div id="retirement" class="tab-content">
+                <div class="charts-grid">
+                    <!-- FIRE Tracker -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">FIRE Tracker (Financial Independence)</h3>
+                        <div class="fire-tracker" id="fireTracker"></div>
+                    </div>
+
+                    <!-- Savings Rate -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Savings Rate</h3>
+                        <div class="savings-rate" id="savingsRate"></div>
+                    </div>
+
+                    <!-- Retirement Projections -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Retirement Projections</h3>
+                        <div class="retirement-projections" id="retirementProjections"></div>
+                    </div>
+
+                    <!-- Retirement Projection Chart -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Portfolio Growth Projection</h3>
+                        <div class="chart-wrapper" style="max-height: 350px;">
+                            <canvas id="retirementProjectionChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Salary & Income Summary -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Salary & Income</h3>
+                        <div class="retirement-summary" id="salaryInfo"></div>
+                    </div>
+
+                    <!-- Contribution Limits & Progress -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">2025 Contribution Limits</h3>
+                        <div class="contribution-limits" id="contributionLimits"></div>
+                    </div>
+
+                    <!-- Salary History Chart -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Salary History</h3>
+                        <div class="chart-wrapper" style="max-height: 300px;">
+                            <canvas id="salaryHistoryChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Retirement Accounts Summary -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Retirement Accounts</h3>
+                        <div class="chart-wrapper" style="max-height: 300px;">
+                            <canvas id="retirementAccountsChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Budget Breakdown -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Monthly Budget Estimate</h3>
+                        <div class="budget-breakdown" id="budgetBreakdown"></div>
+                    </div>
+
+                    <!-- Bonus History -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Bonus History</h3>
+                        <table class="holdings-table" id="bonusHistoryTable">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th style="text-align: right;">Amount</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bonusHistoryBody"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Salary Change History -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Salary Change History</h3>
+                        <table class="holdings-table" id="salaryHistoryTable">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th style="text-align: right;">Salary</th>
+                                    <th style="text-align: right;">Change</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody id="salaryHistoryBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Crypto Tab -->
+            <div id="crypto" class="tab-content">
+                <div class="charts-grid">
+                    <!-- Crypto Summary Cards -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Crypto Portfolio Summary</h3>
+                        <div class="crypto-summary" id="cryptoSummary"></div>
+                    </div>
+
+                    <!-- Crypto Holdings -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Crypto Allocation</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="cryptoAllocationChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Crypto vs Traditional -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Crypto vs Traditional Assets</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="cryptoVsTraditionalChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Staking Rewards Over Time -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Staking Rewards Over Time</h3>
+                        <div class="chart-wrapper" style="max-height: 300px;">
+                            <canvas id="stakingRewardsChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Crypto Holdings Table -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Crypto Holdings</h3>
+                        <table class="holdings-table" id="cryptoHoldingsTable">
+                            <thead>
+                                <tr>
+                                    <th>Asset</th>
+                                    <th style="text-align: right;">Quantity</th>
+                                    <th style="text-align: right;">Price</th>
+                                    <th style="text-align: right;">Value</th>
+                                    <th style="text-align: right;">Cost Basis</th>
+                                    <th style="text-align: right;">Gain/Loss</th>
+                                    <th style="text-align: right;">% Return</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cryptoHoldingsBody"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Staking Income by Year -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Staking Income by Year</h3>
+                        <div class="staking-income" id="stakingIncome"></div>
+                    </div>
+
+                    <!-- Crypto Transaction Summary -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Transaction Summary</h3>
+                        <div class="crypto-tx-summary" id="cryptoTxSummary"></div>
+                    </div>
+
+                    <!-- Recent Crypto Transactions -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Recent Crypto Transactions</h3>
+                        <div style="max-height: 400px; overflow-y: auto;">
+                            <table class="holdings-table" id="cryptoTransactionsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Asset</th>
+                                        <th>Action</th>
+                                        <th style="text-align: right;">Quantity</th>
+                                        <th style="text-align: right;">Price</th>
+                                        <th style="text-align: right;">Amount</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="cryptoTransactionsBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Options Tab -->
+            <div id="options" class="tab-content">
+                <div class="charts-grid">
+                    <!-- Options Summary Cards -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Options Trading Summary</h3>
+                        <div class="options-summary" id="optionsSummary"></div>
+                    </div>
+
+                    <!-- Open Positions -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Open Positions</h3>
+                        <table class="holdings-table" id="openOptionsTable">
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th>Type</th>
+                                    <th>Strike</th>
+                                    <th>Expiration</th>
+                                    <th style="text-align: right;">Contracts</th>
+                                    <th style="text-align: right;">Cost Basis</th>
+                                    <th style="text-align: right;">Current Value</th>
+                                    <th style="text-align: right;">P&L</th>
+                                </tr>
+                            </thead>
+                            <tbody id="openOptionsBody"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- P&L by Strategy -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">P&L by Symbol</h3>
+                        <div class="chart-wrapper" style="max-height: 300px;">
+                            <canvas id="optionsPLChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Premium Collected/Paid -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Premium Flow</h3>
+                        <div class="options-premium" id="optionsPremium"></div>
+                    </div>
+
+                    <!-- Monthly Options P&L -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Monthly Options P&L</h3>
+                        <div class="chart-wrapper" style="max-height: 300px;">
+                            <canvas id="optionsMonthlyChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Closed Positions -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Closed Positions (Trade History)</h3>
+                        <table class="holdings-table sortable-table" id="closedOptionsTable">
+                            <thead>
+                                <tr>
+                                    <th class="sortable" data-sort="openDate">Open Date <span class="sort-icon"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="closeDate">Close Date <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="type">Type <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="strike" style="text-align: right;">Strike <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="contracts" style="text-align: right;">Contracts
+                                        <span class="sort-icon"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="premiumPaid" style="text-align: right;">Premium Paid
+                                        <span class="sort-icon"></span>
+                                    </th>
+                                    <th class="sortable" data-sort="premiumReceived" style="text-align: right;">Premium
+                                        Received <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="pnl" style="text-align: right;">P&L <span
+                                            class="sort-icon"></span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="closedOptionsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dashboard JavaScript -->
+    <script src="dashboard.js"></script>
+</body>
+
+</html>
