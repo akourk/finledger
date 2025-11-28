@@ -12,6 +12,25 @@ from .historical import (
     calculate_cumulative_invested,
     calculate_portfolio_cost_basis_history,
 )
+from .performance import (
+    calculate_asset_performance,
+    calculate_account_performance,
+    calculate_portfolio_performance,
+    calculate_sector_performance,
+    generate_performance_report,
+)
+from .benchmark import (
+    generate_benchmark_report,
+    calculate_alpha_beta,
+    calculate_sharpe_ratio,
+    calculate_max_drawdown,
+)
+from .monte_carlo import (
+    generate_monte_carlo_report,
+    run_monte_carlo_simulation,
+    run_scenario_analysis,
+    calculate_safe_withdrawal,
+)
 
 __all__ = [
     'calculate_holdings', 'calculate_holdings_quantities_only', 'add_running_balances',
@@ -25,4 +44,17 @@ __all__ = [
     'calculate_cost_basis_changes',
     'calculate_cumulative_invested',
     'calculate_portfolio_cost_basis_history',
+    'calculate_asset_performance',
+    'calculate_account_performance',
+    'calculate_portfolio_performance',
+    'calculate_sector_performance',
+    'generate_performance_report',
+    'generate_benchmark_report',
+    'calculate_alpha_beta',
+    'calculate_sharpe_ratio',
+    'calculate_max_drawdown',
+    'generate_monte_carlo_report',
+    'run_monte_carlo_simulation',
+    'run_scenario_analysis',
+    'calculate_safe_withdrawal',
 ]

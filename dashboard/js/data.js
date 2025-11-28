@@ -59,7 +59,7 @@ function normalizeHistory(data) {
 
     var firstRow = data[0];
     var accounts = [];
-    var excludeKeys = ['Date', 'TotalValue', 'NumPositions', 'SP500', 'TWR', 'PeriodReturn', 'TotalInvested', 'WhatIfSP500'];
+    var excludeKeys = ['Date', 'TotalValue', 'NumPositions', 'SP500', 'TWR', 'PeriodReturn', 'TotalInvested', 'WhatIfSP500', 'CostBasis'];
 
     for (var key in firstRow) {
         if (excludeKeys.indexOf(key) === -1) {
@@ -72,6 +72,7 @@ function normalizeHistory(data) {
             date: h.Date,
             totalValue: h.TotalValue,
             totalInvested: h.TotalInvested || 0,
+            costBasis: h.CostBasis || 0,
             sp500: h.SP500 || null,
             twr: h.TWR || 0,
             periodReturn: h.PeriodReturn || 0,

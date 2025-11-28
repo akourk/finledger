@@ -20,6 +20,9 @@
     <script src="./data/portfolio_cost_basis.js"></script>
     <script src="./data/retirement_data.js"></script>
     <script src="./data/corporate_actions.js" onerror="window.corporateActionsData = [];"></script>
+    <script src="./data/performance_data.js" onerror="window.performanceData = {};"></script>
+    <script src="./data/benchmark_data.js" onerror="window.benchmarkData = {};"></script>
+    <script src="./data/monte_carlo_data.js" onerror="window.monteCarloData = {};"></script>
     <!-- Styles -->
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -90,6 +93,7 @@
                 <button class="tab-btn active" data-tab="overview">Overview</button>
                 <button class="tab-btn" data-tab="accounts">Accounts</button>
                 <button class="tab-btn" data-tab="holdings">Holdings</button>
+                <button class="tab-btn" data-tab="performance">Performance</button>
                 <button class="tab-btn" data-tab="transactions">Transactions</button>
                 <button class="tab-btn" data-tab="income">Income</button>
                 <button class="tab-btn" data-tab="history">History</button>
@@ -102,6 +106,18 @@
 
             <!-- Overview Tab -->
             <div id="overview" class="tab-content active">
+                <!-- Portfolio Value Sparkline Hero -->
+                <div class="portfolio-hero" id="portfolioHero">
+                    <div class="hero-left">
+                        <div class="hero-label">Total Portfolio Value</div>
+                        <div class="hero-value" id="heroValue">--</div>
+                        <div class="hero-change" id="heroChange"></div>
+                    </div>
+                    <div class="hero-sparkline">
+                        <canvas id="portfolioSparkline"></canvas>
+                    </div>
+                </div>
+
                 <div class="summary-cards" id="summaryCards">
                     <!-- Loading skeleton for cards -->
                     <div class="card skeleton-loading">
@@ -122,7 +138,7 @@
                     </div>
                 </div>
 
-                <div class="charts-grid">
+                <div class="charts-grid overview-grid">
                     <div class="chart-container">
                         <h3 class="chart-title">Account Allocation</h3>
                         <div class="chart-wrapper">
@@ -130,16 +146,6 @@
                                 <div class="spinner"></div>
                             </div>
                             <canvas id="allocationChart"></canvas>
-                        </div>
-                    </div>
-
-                    <div class="chart-container">
-                        <h3 class="chart-title">Top Holdings</h3>
-                        <div class="chart-wrapper">
-                            <div class="chart-loading" id="assetAllocationChartLoading">
-                                <div class="spinner"></div>
-                            </div>
-                            <canvas id="assetAllocationChart"></canvas>
                         </div>
                     </div>
 
@@ -154,32 +160,22 @@
                     </div>
 
                     <div class="chart-container">
-                        <h3 class="chart-title">Tax Lot Breakdown</h3>
-                        <div class="chart-wrapper">
-                            <div class="chart-loading" id="taxLotChartLoading">
-                                <div class="spinner"></div>
-                            </div>
-                            <canvas id="taxLotChart"></canvas>
-                        </div>
-                    </div>
-
-                    <div class="chart-container">
-                        <h3 class="chart-title">Investment vs Cash</h3>
-                        <div class="chart-wrapper">
-                            <div class="chart-loading" id="investmentCashChartLoading">
-                                <div class="spinner"></div>
-                            </div>
-                            <canvas id="investmentCashChart"></canvas>
-                        </div>
-                    </div>
-
-                    <div class="chart-container">
                         <h3 class="chart-title">Returns Breakdown</h3>
                         <div class="chart-wrapper">
                             <div class="chart-loading" id="returnsChartLoading">
                                 <div class="spinner"></div>
                             </div>
                             <canvas id="returnsChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <h3 class="chart-title">Portfolio Growth</h3>
+                        <div class="chart-wrapper">
+                            <div class="chart-loading" id="growthChartLoading">
+                                <div class="spinner"></div>
+                            </div>
+                            <canvas id="portfolioGrowthChart"></canvas>
                         </div>
                     </div>
 
@@ -223,6 +219,13 @@
             <div id="holdings" class="tab-content">
                 <input type="text" class="search-box" id="holdingsSearch" placeholder="Search by symbol or account...">
 
+                <div class="charts-grid" style="margin-bottom: 24px;">
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Holdings Treemap (by Value)</h3>
+                        <div class="treemap-container" id="holdingsTreemap" style="height: 620px;"></div>
+                    </div>
+                </div>
+
                 <div class="chart-container full-width" style="margin-bottom: 24px;">
                     <h3 class="chart-title">All Holdings</h3>
                     <div style="max-height: 600px; overflow-y: auto;">
@@ -260,13 +263,152 @@
 
                 <div class="charts-grid">
                     <div class="chart-container full-width">
-                        <h3 class="chart-title">Holdings Treemap (by Value)</h3>
-                        <div class="treemap-container" id="holdingsTreemap" style="height: 620px;"></div>
-                    </div>
-
-                    <div class="chart-container full-width">
                         <h3 class="chart-title">Holdings Heatmap (Performance)</h3>
                         <div class="heatmap-container" id="holdingsHeatmap" style="height: 350px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Performance Tab -->
+            <div id="performance" class="tab-content">
+                <!-- Portfolio Performance Summary -->
+                <div class="chart-container full-width" style="margin-bottom: 24px;">
+                    <h3 class="chart-title">Portfolio Performance Summary</h3>
+                    <div id="portfolioPerformance"></div>
+                </div>
+
+                <div class="charts-grid">
+                    <!-- Period Comparison Bar Chart -->
+                    <div class="chart-container third-width">
+                        <h3 class="chart-title">Portfolio Returns by Period</h3>
+                        <div class="chart-wrapper" style="height: 300px;">
+                            <canvas id="periodComparisonChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Top Performers -->
+                    <div class="chart-container third-width">
+                        <h3 class="chart-title">Top Performers</h3>
+                        <div id="topPerformers"></div>
+                    </div>
+
+                    <!-- Bottom Performers -->
+                    <div class="chart-container third-width">
+                        <h3 class="chart-title">Bottom Performers</h3>
+                        <div id="bottomPerformers"></div>
+                    </div>
+
+                    <!-- Benchmark Comparison Section -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Benchmark Comparison (S&P 500)</h3>
+                        <div id="benchmarkComparison"></div>
+                    </div>
+
+                    <!-- Portfolio vs Benchmark Chart -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Portfolio vs S&P 500 (Normalized)</h3>
+                        <div class="chart-wrapper" style="height: 350px;">
+                            <canvas id="benchmarkChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Risk Metrics -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Risk Metrics</h3>
+                        <div id="riskMetrics"></div>
+                    </div>
+
+                    <!-- Returns vs Benchmark Table -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Returns vs Benchmark</h3>
+                        <div id="benchmarkReturnsTable"></div>
+                    </div>
+
+                    <!-- Account Performance Table -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Account Performance</h3>
+                        <div style="overflow-x: auto;">
+                            <table class="holdings-table" id="accountPerformanceTable">
+                                <thead>
+                                    <tr>
+                                        <th>Account</th>
+                                        <th style="text-align: right;">Value</th>
+                                        <th style="text-align: right;">Total</th>
+                                        <th style="text-align: right;">1D</th>
+                                        <th style="text-align: right;">1W</th>
+                                        <th style="text-align: right;">2W</th>
+                                        <th style="text-align: right;">1M</th>
+                                        <th style="text-align: right;">3M</th>
+                                        <th style="text-align: right;">6M</th>
+                                        <th style="text-align: right;">1Y</th>
+                                        <th style="text-align: right;">2Y</th>
+                                        <th style="text-align: right;">5Y</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="accountPerformanceBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Sector Performance Table -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Sector Performance</h3>
+                        <div style="overflow-x: auto;">
+                            <table class="holdings-table" id="sectorPerformanceTable">
+                                <thead>
+                                    <tr>
+                                        <th>Sector</th>
+                                        <th style="text-align: right;">Value</th>
+                                        <th style="text-align: right;">Total</th>
+                                        <th style="text-align: right;">1D</th>
+                                        <th style="text-align: right;">1W</th>
+                                        <th style="text-align: right;">2W</th>
+                                        <th style="text-align: right;">1M</th>
+                                        <th style="text-align: right;">3M</th>
+                                        <th style="text-align: right;">6M</th>
+                                        <th style="text-align: right;">1Y</th>
+                                        <th style="text-align: right;">2Y</th>
+                                        <th style="text-align: right;">5Y</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sectorPerformanceBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Asset Performance Heatmap -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Asset Performance Heatmap (Top 25 by Value)</h3>
+                        <div id="assetPerformanceHeatmap" style="height: 600px;"></div>
+                    </div>
+
+                    <!-- Full Asset Performance Table -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">All Assets Performance</h3>
+                        <input type="text" class="search-box" id="performanceSearch"
+                            placeholder="Search by symbol or account...">
+                        <div style="max-height: 500px; overflow-y: auto; overflow-x: auto;">
+                            <table class="holdings-table" id="assetPerformanceTable">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>Account</th>
+                                        <th style="text-align: right;">Value</th>
+                                        <th style="text-align: right;">Total</th>
+                                        <th style="text-align: right;">1D</th>
+                                        <th style="text-align: right;">1W</th>
+                                        <th style="text-align: right;">2W</th>
+                                        <th style="text-align: right;">1M</th>
+                                        <th style="text-align: right;">3M</th>
+                                        <th style="text-align: right;">6M</th>
+                                        <th style="text-align: right;">1Y</th>
+                                        <th style="text-align: right;">2Y</th>
+                                        <th style="text-align: right;">5Y</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="assetPerformanceBody"></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -647,9 +789,35 @@
                         <div class="retirement-projections" id="retirementProjections"></div>
                     </div>
 
-                    <!-- Retirement Projection Chart -->
+                    <!-- Monte Carlo Projection Summary -->
                     <div class="chart-container full-width">
-                        <h3 class="chart-title">Portfolio Growth Projection</h3>
+                        <h3 class="chart-title">Monte Carlo Simulation Results</h3>
+                        <div id="monteCarloSummary"></div>
+                    </div>
+
+                    <!-- Monte Carlo Probability Cone Chart -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Portfolio Growth Projection (Monte Carlo)</h3>
+                        <div class="chart-wrapper" style="height: 400px;">
+                            <canvas id="monteCarloConeChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Scenario Analysis -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Scenario Analysis</h3>
+                        <div id="scenarioAnalysis"></div>
+                    </div>
+
+                    <!-- Safe Withdrawal Rate -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Safe Withdrawal Rate</h3>
+                        <div id="withdrawalAnalysis"></div>
+                    </div>
+
+                    <!-- Retirement Projection Chart (Legacy) -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Portfolio Growth Projection (Deterministic)</h3>
                         <div class="chart-wrapper" style="max-height: 350px;">
                             <canvas id="retirementProjectionChart"></canvas>
                         </div>
@@ -907,6 +1075,7 @@
     <!-- Feature Modules -->
     <script src="js/overview.js"></script>
     <script src="js/holdings.js"></script>
+    <script src="js/performance.js"></script>
     <script src="js/income.js"></script>
     <script src="js/history.js"></script>
     <script src="js/tax.js"></script>

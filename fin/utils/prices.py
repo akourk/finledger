@@ -143,6 +143,75 @@ def get_price_changes(symbols: List[str], price_cache: Dict[str, Dict[str, float
     return results
 
 
+# Time period definitions for multi-period returns
+PERFORMANCE_PERIODS = {
+    "1d": 1,
+    "1w": 7,
+    "2w": 14,
+    "1m": 30,
+    "3m": 90,
+    "6m": 180,
+    "1y": 365,
+    "2y": 730,
+    "5y": 1825,
+}
+
+
+def get_multi_period_returns(symbols: List[str], price_cache: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, Optional[float]]]:
+    """
+    Calculate returns for multiple time periods for a list of symbols.
+    
+    Periods: 1D, 1W, 2W, 1M, 3M, 6M, 1Y, 2Y, 5Y
+    
+    Args:
+        symbols: List of ticker symbols
+        price_cache: Nested dict of {symbol: {date: price}}
+    
+    Returns:
+        Dict of {symbol: {"return_1d": pct, "return_1w": pct, ..., "price_current": price, "price_1d": price, ...}}
+    """
+    logger.info(f"Calculating multi-period returns for {len(symbols)} symbols")
+    today = datetime.now()
+    today_str = today.strftime("%Y-%m-%d")
+    
+    results = {}
+    
+    print(f"Fetching multi-period returns for {len(symbols)} symbols...")
+    
+    for symbol in symbols:
+        symbol_data = {"price_current": None}
+        
+        # Get current price
+        current_price, _ = get_price_from_yfinance(symbol, today_str, price_cache)
+        
+        if current_price is None or current_price == 0:
+            # Set all periods to None
+            for period_name in PERFORMANCE_PERIODS.keys():
+                symbol_data[f"return_{period_name}"] = None
+                symbol_data[f"price_{period_name}"] = None
+            results[symbol] = symbol_data
+            continue
+        
+        symbol_data["price_current"] = round(current_price, 4)
+        
+        # Calculate return for each period
+        for period_name, days in PERFORMANCE_PERIODS.items():
+            period_date = (today - timedelta(days=days)).strftime("%Y-%m-%d")
+            period_price, _ = get_price_from_yfinance(symbol, period_date, price_cache)
+            
+            if period_price is not None and period_price > 0:
+                period_return = ((current_price - period_price) / period_price) * 100
+                symbol_data[f"return_{period_name}"] = round(period_return, 2)
+                symbol_data[f"price_{period_name}"] = round(period_price, 4)
+            else:
+                symbol_data[f"return_{period_name}"] = None
+                symbol_data[f"price_{period_name}"] = None
+        
+        results[symbol] = symbol_data
+    
+    return results
+
+
 def get_split_multiplier(ticker: str, transaction_date_str: str, split_cache: dict) -> float:
     """
     Calculate the cumulative split multiplier for a ticker from a transaction date to today.

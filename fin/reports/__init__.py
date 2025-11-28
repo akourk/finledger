@@ -18,6 +18,7 @@ from .exporters import (
     export_cash_balances_csv,
     export_portfolio_summary_js,
     export_dataframe_js,
+    export_performance_data_js,
 )
 from .retirement import (
     load_retirement_data,
@@ -37,6 +38,7 @@ __all__ = [
     'export_account_summary_csv', 'export_historical_holdings_csv',
     'export_cash_balances_csv',
     'export_portfolio_summary_js', 'export_dataframe_js',
+    'export_performance_data_js',
     'load_retirement_data', 'calculate_retirement_projections',
     'calculate_contribution_tracking', 'calculate_budget_metrics',
     'generate_retirement_summary', 'export_retirement_data_js',

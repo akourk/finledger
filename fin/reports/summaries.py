@@ -5,7 +5,54 @@ Generates account and portfolio summary reports.
 """
 
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Dict, Tuple
+
+
+def calculate_daily_portfolio_change(holdings_df: pd.DataFrame, price_cache: Dict) -> Tuple[float, float]:
+    """
+    Calculate the portfolio's change from yesterday to today.
+    
+    Returns:
+        Tuple of (dollar_change, percent_change)
+    """
+    from fin.utils.prices import get_price_from_yfinance
+    
+    if holdings_df.empty:
+        return 0.0, 0.0
+    
+    today = datetime.now()
+    yesterday = today - timedelta(days=1)
+    today_str = today.strftime("%Y-%m-%d")
+    yesterday_str = yesterday.strftime("%Y-%m-%d")
+    
+    total_change = 0.0
+    yesterday_value = 0.0
+    
+    for _, row in holdings_df.iterrows():
+        symbol = row["Symbol"]
+        quantity = row["Quantity"]
+        current_price = row.get("CurrentPrice", 0)
+        
+        if quantity == 0 or current_price == 0:
+            continue
+        
+        # Get yesterday's price
+        yesterday_price, _ = get_price_from_yfinance(symbol, yesterday_str, price_cache)
+        
+        if yesterday_price is None or yesterday_price == 0:
+            # Fall back to current price (no change)
+            yesterday_price = current_price
+        
+        # Calculate change for this position
+        position_change = quantity * (current_price - yesterday_price)
+        total_change += position_change
+        yesterday_value += quantity * yesterday_price
+    
+    # Calculate percentage change
+    percent_change = (total_change / yesterday_value * 100) if yesterday_value > 0 else 0.0
+    
+    return round(total_change, 2), round(percent_change, 2)
 
 
 def generate_account_summary(holdings_df: pd.DataFrame, income_df: pd.DataFrame,
@@ -121,7 +168,8 @@ def generate_account_summary(holdings_df: pd.DataFrame, income_df: pd.DataFrame,
 
 def generate_portfolio_summary(holdings_df: pd.DataFrame, account_summary_df: pd.DataFrame,
                                 historical_df: pd.DataFrame, income_by_year_df: pd.DataFrame,
-                                cash_balances_df: pd.DataFrame = None) -> dict:
+                                cash_balances_df: pd.DataFrame = None,
+                                price_cache: Dict = None) -> dict:
     """
     Generate overall portfolio summary with key metrics.
     Includes cash savings accounts in total portfolio value.
@@ -219,6 +267,15 @@ def generate_portfolio_summary(holdings_df: pd.DataFrame, account_summary_df: pd
     if not holdings_df.empty:
         top_holdings = holdings_df.nlargest(10, "CurrentValue")[["Symbol", "CurrentValue", "UnrealizedGainPct"]].to_dict('records')
         summary["TopHoldings"] = top_holdings
+    
+    # Daily change (if price_cache provided)
+    if price_cache is not None and not holdings_df.empty:
+        daily_change, daily_change_pct = calculate_daily_portfolio_change(holdings_df, price_cache)
+        summary["DailyChange"] = daily_change
+        summary["DailyChangePct"] = daily_change_pct
+    else:
+        summary["DailyChange"] = 0
+        summary["DailyChangePct"] = 0
     
     return summary
 

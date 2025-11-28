@@ -29,6 +29,10 @@ function createRetirementSection() {
     createFireTracker(data);
     createSavingsRate(data);
     createRetirementProjections(data);
+    createMonteCarloSummary();
+    createMonteCarloConeChart();
+    createScenarioAnalysis();
+    createWithdrawalAnalysis();
     createRetirementProjectionChart(data);
     createSalaryInfo(data);
     createContributionLimits(data);
@@ -37,6 +41,318 @@ function createRetirementSection() {
     createBudgetBreakdown(data);
     createBonusHistoryTable(data);
     createSalaryHistoryTable(data);
+}
+
+// Get Monte Carlo data
+function getMonteCarloData() {
+    if (typeof monteCarloData !== 'undefined') {
+        return monteCarloData;
+    }
+    return {};
+}
+
+// Create Monte Carlo summary cards
+function createMonteCarloSummary() {
+    var container = document.getElementById('monteCarloSummary');
+    if (!container) return;
+
+    var data = getMonteCarloData();
+
+    if (!data.main_simulation) {
+        container.innerHTML = '<p class="muted">No Monte Carlo data available. Run the portfolio aggregator to generate projections.</p>';
+        return;
+    }
+
+    var sim = data.main_simulation;
+    var params = sim.parameters || {};
+    var stats = sim.final_statistics || {};
+    var probs = sim.probabilities || {};
+    var realStats = sim.real_final_statistics || {};
+
+    var html = '<div class="monte-carlo-hero">';
+
+    // Main projection
+    html += '<div class="mc-main">';
+    html += '<div class="mc-label">Projected Portfolio (' + params.years + ' years)</div>';
+    html += '<div class="mc-range">';
+    html += '<span class="mc-low">' + formatCompactCurrency(stats.p10) + '</span>';
+    html += '<span class="mc-median positive">' + formatCompactCurrency(stats.median) + '</span>';
+    html += '<span class="mc-high">' + formatCompactCurrency(stats.p90) + '</span>';
+    html += '</div>';
+    html += '<div class="mc-range-labels">';
+    html += '<span>10th %ile</span><span>Median</span><span>90th %ile</span>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '</div>';
+
+    // Probability cards
+    html += '<div class="monte-carlo-cards">';
+
+    // Parameters card
+    html += '<div class="mc-card">';
+    html += '<div class="mc-card-label">Simulation Parameters</div>';
+    html += '<div class="mc-card-content">';
+    html += '<div class="mc-stat-row"><span>Starting Value:</span><span>' + formatCurrency(params.starting_value) + '</span></div>';
+    html += '<div class="mc-stat-row"><span>Annual Contribution:</span><span>' + formatCurrency(params.annual_contribution) + '</span></div>';
+    html += '<div class="mc-stat-row"><span>Expected Return:</span><span>' + params.mean_return + '%</span></div>';
+    html += '<div class="mc-stat-row"><span>Volatility:</span><span>' + params.volatility + '%</span></div>';
+    html += '<div class="mc-stat-row"><span>Simulations:</span><span>' + params.num_simulations.toLocaleString() + '</span></div>';
+    html += '</div>';
+    html += '</div>';
+
+    // Probabilities card
+    html += '<div class="mc-card">';
+    html += '<div class="mc-card-label">Outcome Probabilities</div>';
+    html += '<div class="mc-card-content">';
+    html += '<div class="mc-stat-row"><span>Double your money:</span><span class="positive">' + probs.double + '%</span></div>';
+    html += '<div class="mc-stat-row"><span>Triple your money:</span><span class="positive">' + probs.triple + '%</span></div>';
+    if (probs.million !== null) {
+        html += '<div class="mc-stat-row"><span>Reach $1 million:</span><span class="positive">' + probs.million + '%</span></div>';
+    }
+    html += '<div class="mc-stat-row"><span>Lose money:</span><span class="negative">' + probs.loss + '%</span></div>';
+    html += '</div>';
+    html += '</div>';
+
+    // Real returns card (inflation-adjusted)
+    html += '<div class="mc-card">';
+    html += '<div class="mc-card-label">Inflation-Adjusted (Real)</div>';
+    html += '<div class="mc-card-content">';
+    html += '<div class="mc-stat-row"><span>10th Percentile:</span><span>' + formatCompactCurrency(realStats.p10) + '</span></div>';
+    html += '<div class="mc-stat-row"><span>Median:</span><span class="positive">' + formatCompactCurrency(realStats.median) + '</span></div>';
+    html += '<div class="mc-stat-row"><span>90th Percentile:</span><span>' + formatCompactCurrency(realStats.p90) + '</span></div>';
+    html += '<div class="mc-stat-row subdued"><span>Inflation Rate:</span><span>' + params.inflation_rate + '%/yr</span></div>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '</div>';
+
+    container.innerHTML = html;
+}
+
+// Create Monte Carlo probability cone chart
+function createMonteCarloConeChart() {
+    var ctx = document.getElementById('monteCarloConeChart');
+    if (!ctx) return;
+
+    var data = getMonteCarloData();
+
+    if (!data.main_simulation || !data.main_simulation.yearly_values) {
+        ctx.parentElement.innerHTML = '<p class="muted" style="text-align: center; padding: 50px;">No Monte Carlo projection data available</p>';
+        return;
+    }
+
+    var sim = data.main_simulation;
+    var years = sim.years_list || [];
+    var values = sim.yearly_values || {};
+
+    // Create datasets for the probability cone
+    var datasets = [
+        // 10-90 percentile band (outer)
+        {
+            label: '10th-90th Percentile',
+            data: values.p90,
+            borderColor: 'transparent',
+            backgroundColor: 'rgba(74, 222, 128, 0.15)',
+            fill: '+1',
+            pointRadius: 0
+        },
+        {
+            label: '',
+            data: values.p10,
+            borderColor: 'transparent',
+            backgroundColor: 'rgba(74, 222, 128, 0.15)',
+            fill: false,
+            pointRadius: 0
+        },
+        // 25-75 percentile band (inner)
+        {
+            label: '25th-75th Percentile',
+            data: values.p75,
+            borderColor: 'transparent',
+            backgroundColor: 'rgba(74, 222, 128, 0.25)',
+            fill: '+1',
+            pointRadius: 0
+        },
+        {
+            label: '',
+            data: values.p25,
+            borderColor: 'transparent',
+            backgroundColor: 'rgba(74, 222, 128, 0.25)',
+            fill: false,
+            pointRadius: 0
+        },
+        // Median line
+        {
+            label: 'Median (50th)',
+            data: values.p50,
+            borderColor: '#4ade80',
+            backgroundColor: 'transparent',
+            borderWidth: 3,
+            fill: false,
+            pointRadius: 0
+        },
+        // Mean line
+        {
+            label: 'Mean',
+            data: values.mean,
+            borderColor: '#60a5fa',
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            borderDash: [5, 5],
+            fill: false,
+            pointRadius: 0
+        }
+    ];
+
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: years.map(function (y) { return 'Year ' + y; }),
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: {
+                        color: '#888',
+                        font: { size: 11 },
+                        filter: function (item) {
+                            return item.text !== '';
+                        }
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            if (context.dataset.label === '') return null;
+                            return context.dataset.label + ': ' + formatCurrency(context.raw);
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888', maxTicksLimit: 10 },
+                    grid: { display: false }
+                },
+                y: {
+                    ticks: {
+                        color: '#888',
+                        callback: function (val) { return formatCompactCurrency(val); }
+                    },
+                    grid: { color: 'rgba(255,255,255,0.05)' }
+                }
+            }
+        }
+    });
+}
+
+// Create scenario analysis display
+function createScenarioAnalysis() {
+    var container = document.getElementById('scenarioAnalysis');
+    if (!container) return;
+
+    var data = getMonteCarloData();
+
+    if (!data.scenarios) {
+        container.innerHTML = '<p class="muted">No scenario data available</p>';
+        return;
+    }
+
+    var scenarios = data.scenarios;
+    var scenarioOrder = ['bear', 'conservative', 'moderate', 'bullish', 'optimistic'];
+
+    // Find max for bar scaling
+    var maxValue = 0;
+    scenarioOrder.forEach(function (key) {
+        if (scenarios[key]) {
+            maxValue = Math.max(maxValue, scenarios[key].p90_final);
+        }
+    });
+
+    var html = '<div class="scenario-list">';
+
+    scenarioOrder.forEach(function (key) {
+        var s = scenarios[key];
+        if (!s) return;
+
+        var barWidth = (s.median_final / maxValue) * 100;
+        var rangeWidth = ((s.p90_final - s.p10_final) / maxValue) * 100;
+        var rangeLeft = (s.p10_final / maxValue) * 100;
+
+        var colorClass = key === 'bear' ? 'bear' :
+            key === 'conservative' ? 'conservative' :
+                key === 'moderate' ? 'moderate' :
+                    key === 'bullish' ? 'bullish' : 'optimistic';
+
+        html += '<div class="scenario-row">';
+        html += '<div class="scenario-label">';
+        html += '<span class="scenario-name">' + s.label + '</span>';
+        html += '<span class="scenario-params">' + s.return + '% return, ' + s.volatility + '% vol</span>';
+        html += '</div>';
+        html += '<div class="scenario-bar-container">';
+        html += '<div class="scenario-range" style="left: ' + rangeLeft + '%; width: ' + rangeWidth + '%;"></div>';
+        html += '<div class="scenario-median ' + colorClass + '" style="left: ' + barWidth + '%;"></div>';
+        html += '</div>';
+        html += '<div class="scenario-values">';
+        html += '<span class="scenario-median-val">' + formatCompactCurrency(s.median_final) + '</span>';
+        html += '</div>';
+        html += '</div>';
+    });
+
+    html += '</div>';
+
+    html += '<div class="scenario-legend">';
+    html += '<span>Range shows 10th-90th percentile outcomes</span>';
+    html += '</div>';
+
+    container.innerHTML = html;
+}
+
+// Create withdrawal analysis display
+function createWithdrawalAnalysis() {
+    var container = document.getElementById('withdrawalAnalysis');
+    if (!container) return;
+
+    var data = getMonteCarloData();
+
+    if (!data.withdrawal_analysis) {
+        container.innerHTML = '<p class="muted">No withdrawal analysis available</p>';
+        return;
+    }
+
+    var wa = data.withdrawal_analysis;
+
+    var html = '<div class="withdrawal-summary">';
+
+    html += '<div class="withdrawal-hero">';
+    html += '<div class="withdrawal-rate">' + wa.safe_withdrawal_rate + '%</div>';
+    html += '<div class="withdrawal-label">Safe Withdrawal Rate</div>';
+    html += '<div class="withdrawal-sublabel">' + wa.success_rate + '% probability of success over ' + wa.years + ' years</div>';
+    html += '</div>';
+
+    html += '<div class="withdrawal-details">';
+    html += '<div class="withdrawal-row">';
+    html += '<span class="withdrawal-detail-label">Annual Withdrawal</span>';
+    html += '<span class="withdrawal-detail-value positive">' + formatCurrency(wa.annual_withdrawal) + '</span>';
+    html += '</div>';
+    html += '<div class="withdrawal-row">';
+    html += '<span class="withdrawal-detail-label">Monthly Withdrawal</span>';
+    html += '<span class="withdrawal-detail-value positive">' + formatCurrency(wa.monthly_withdrawal) + '</span>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div class="withdrawal-note">';
+    html += '<p>Based on projected median portfolio value at retirement. The "4% rule" suggests ' + formatCurrency(data.main_simulation.final_statistics.median * 0.04) + '/year.</p>';
+    html += '</div>';
+
+    html += '</div>';
+
+    container.innerHTML = html;
 }
 
 // Create FIRE Tracker

@@ -500,13 +500,34 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
     historical_summary, historical_details = calculate_historical_holdings(
         master_df, price_cache, include_cash=cash_balances
     )
+    
+    # Calculate cost basis history and merge with historical holdings
+    print("   Adding historical cost basis...")
+    cost_basis_history = calculate_portfolio_cost_basis_history(master_df)
+    if not cost_basis_history.empty and not historical_summary.empty:
+        # Merge cost basis into historical summary
+        # For each snapshot date, find the cost basis at or before that date
+        cost_basis_history['Date'] = pd.to_datetime(cost_basis_history['Date'])
+        historical_summary['Date'] = pd.to_datetime(historical_summary['Date'])
+        
+        # Create a function to get cost basis for each snapshot date
+        def get_cost_basis_at_date(snapshot_date):
+            prior = cost_basis_history[cost_basis_history['Date'] <= snapshot_date]
+            if not prior.empty:
+                return prior.iloc[-1]['TotalCostBasis']
+            return 0.0
+        
+        historical_summary['CostBasis'] = historical_summary['Date'].apply(get_cost_basis_at_date)
+        historical_summary['Date'] = historical_summary['Date'].dt.strftime('%Y-%m-%d')
+    
     if not historical_summary.empty:
         export_historical_holdings_csv(historical_summary)
     
     # 10. Portfolio summary
     print("\n10. Generating portfolio summary...")
     portfolio_summary = generate_portfolio_summary(
-        holdings_detail, account_summary, historical_summary, income_by_year, cash_balances
+        holdings_detail, account_summary, historical_summary, income_by_year, cash_balances,
+        price_cache
     )
     portfolio_summary["GeneratedAt"] = datetime.now().isoformat()
     
@@ -575,6 +596,56 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
         action_counts = corporate_actions['Type'].value_counts()
         for action_type, count in action_counts.items():
             print(f"     - {action_type}: {count}")
+    
+    # 17. Multi-period performance report
+    print("\n17. Calculating multi-period performance...")
+    from .calculators.performance import generate_performance_report
+    from .reports.exporters import export_performance_data_js
+    performance_report = None
+    if not holdings_detail.empty:
+        performance_report = generate_performance_report(holdings_detail, price_cache)
+        export_performance_data_js(performance_report)
+    
+    # 18. Benchmark comparison report
+    print("\n18. Generating benchmark comparison...")
+    from .calculators.benchmark import generate_benchmark_report
+    from .reports.exporters import export_benchmark_data_js
+    benchmark_report = None
+    if not historical_summary.empty and performance_report:
+        portfolio_perf = performance_report.get("portfolio", {})
+        benchmark_report = generate_benchmark_report(historical_summary, portfolio_perf)
+        export_benchmark_data_js(benchmark_report)
+    
+    # 19. Monte Carlo simulation report
+    print("\n19. Running Monte Carlo projections...")
+    from .calculators.monte_carlo import generate_monte_carlo_report
+    from .reports.exporters import export_monte_carlo_data_js
+    monte_carlo_report = None
+    if portfolio_summary.get("TotalValue", 0) > 0:
+        # Get annual contribution from retirement data
+        annual_contribution = 0
+        if retirement_summary:
+            contributions = retirement_summary.get("contributions", {})
+            annual_contribution = (
+                contributions.get("traditional_401k", 0) + 
+                contributions.get("roth_ira", 0) + 
+                retirement_summary.get("employer_match", 0)
+            )
+        
+        # Get years to retirement
+        years_to_retirement = 30
+        if retirement_summary:
+            personal = retirement_summary.get("personal", {})
+            years_to_retirement = personal.get("years_to_retirement", 30)
+        
+        monte_carlo_report = generate_monte_carlo_report(
+            portfolio_value=portfolio_summary.get("TotalValue", 0),
+            annual_contribution=annual_contribution,
+            historical_df=historical_summary,
+            years_to_retirement=years_to_retirement,
+            retirement_data=retirement_summary
+        )
+        export_monte_carlo_data_js(monte_carlo_report)
     
     # Print summary to console
     print_portfolio_summary(portfolio_summary)

@@ -11,6 +11,7 @@ from .formatting import (
 )
 from .prices import (
     get_price_from_yfinance, get_price_changes,
+    get_multi_period_returns, PERFORMANCE_PERIODS,
     get_split_multiplier, adjust_for_splits,
     convert_price_based_symbols,
     get_sector_info, get_sectors_for_holdings,
@@ -27,6 +28,7 @@ __all__ = [
     'clean_currency', 'standardize_action', 'parse_date',
     # Price functions
     'get_price_from_yfinance', 'get_price_changes',
+    'get_multi_period_returns', 'PERFORMANCE_PERIODS',
     'get_split_multiplier', 'adjust_for_splits',
     'convert_price_based_symbols',
     'get_sector_info', 'get_sectors_for_holdings',

@@ -48,6 +48,11 @@ function loadTabContent(tabId) {
                 createHoldingsHeatmap();
             }, 100);
             break;
+        case 'performance':
+            if (typeof initPerformance === 'function') {
+                initPerformance();
+            }
+            break;
         case 'income':
             createIncomeProjection();
             createIncomeSection();
@@ -112,13 +117,12 @@ function initDashboard() {
     initTabs();
 
     // Create overview sections
+    createPortfolioHero();
     createSummaryCards();
     createAllocationChart();
-    createInvestmentCashChart();
-    createReturnsChart();
-    createTaxLotChart();
-    createAssetAllocationChart();
     createSectorAllocationChart();
+    createReturnsChart();
+    createPortfolioGrowthChart();
     createTopHoldingsTable();
     createRecentActivity();
     createTopMovers();

@@ -4,6 +4,95 @@
  */
 
 // ==========================================
+// Portfolio Hero with Sparkline
+// ==========================================
+
+function createPortfolioHero() {
+    if (typeof portfolioData === 'undefined') return;
+
+    var heroValue = document.getElementById('heroValue');
+    var heroChange = document.getElementById('heroChange');
+
+    if (heroValue) {
+        heroValue.textContent = formatCurrency(portfolioData.TotalValue);
+    }
+
+    // Use pre-calculated daily change from portfolio data
+    if (heroChange) {
+        var dailyChange = portfolioData.DailyChange || 0;
+        var dailyPct = portfolioData.DailyChangePct || 0;
+
+        var changeClass = dailyChange >= 0 ? 'positive' : 'negative';
+        var sign = dailyChange >= 0 ? '+' : '';
+        heroChange.className = 'hero-change ' + changeClass;
+        heroChange.innerHTML = sign + formatCurrency(dailyChange) + ' (' + sign + dailyPct.toFixed(2) + '%) today';
+    }
+
+    createPortfolioSparkline();
+}
+
+function createPortfolioSparkline() {
+    var ctx = document.getElementById('portfolioSparkline');
+    if (!ctx) return;
+
+    var historicalData = getHistoricalHoldings();
+    if (!historicalData || historicalData.length < 2) return;
+
+    // Get last 90 days of data
+    var recentData = historicalData.slice(-90);
+    var labels = recentData.map(function (d) { return d.date; });
+    var values = recentData.map(function (d) { return d.totalValue; });
+
+    // Determine color based on trend
+    var startVal = values[0];
+    var endVal = values[values.length - 1];
+    var trendColor = endVal >= startVal ? '#4ade80' : '#f87171';
+    var trendBg = endVal >= startVal ? 'rgba(74, 222, 128, 0.1)' : 'rgba(248, 113, 113, 0.1)';
+
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                borderColor: trendColor,
+                backgroundColor: trendBg,
+                fill: true,
+                tension: 0.4,
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function (context) {
+                            return formatCurrency(context.raw);
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { display: false },
+                y: { display: false }
+            },
+            interaction: {
+                mode: 'nearest',
+                axis: 'x',
+                intersect: false
+            }
+        }
+    });
+}
+
+// ==========================================
 // Summary Cards
 // ==========================================
 
@@ -17,18 +106,36 @@ function createSummaryCards() {
     var historicalData = getHistoricalHoldings();
     var timeChanges = calculateTimeChanges(historicalData);
 
-    var holdings = getHoldingsDetail();
-    var diversification = calculateDiversificationScore(holdings);
+    var diversification = calculateDiversificationScore(getHoldingsDetail());
+
+    // Calculate total return (realized + unrealized)
+    var totalReturn = (data.TotalUnrealizedGain || 0) + (data.AllTimeRealizedGain || 0);
+    var totalReturnPct = data.TotalCostBasis > 0 ? (totalReturn / data.TotalCostBasis * 100) : 0;
 
     var cards = [
-        { label: 'Total Portfolio Value', value: formatCurrency(data.TotalValue), cls: '' },
-        { label: 'Investment Value', value: formatCurrency(data.InvestmentValue), cls: '' },
-        { label: 'Cash & Savings', value: formatCurrency(data.CashValue), cls: '' },
         {
             label: 'Unrealized Gain/Loss',
             value: formatCurrency(data.TotalUnrealizedGain),
             subvalue: formatPercent(data.UnrealizedGainPct),
             cls: (data.TotalUnrealizedGain || 0) >= 0 ? 'positive' : 'negative'
+        },
+        {
+            label: 'Realized Gains (All-Time)',
+            value: formatCurrency(data.AllTimeRealizedGain),
+            subvalue: 'YTD: ' + formatCurrency(data.YTDRealizedGain || 0),
+            cls: (data.AllTimeRealizedGain || 0) >= 0 ? 'positive' : 'negative'
+        },
+        {
+            label: 'Total Return',
+            value: formatCurrency(totalReturn),
+            subvalue: (totalReturnPct >= 0 ? '+' : '') + totalReturnPct.toFixed(1) + '% all-time',
+            cls: totalReturn >= 0 ? 'positive' : 'negative'
+        },
+        {
+            label: 'YTD Income',
+            value: formatCurrency(data.YTDIncome || 0),
+            subvalue: 'All-time: ' + formatCurrency(data.AllTimeIncome || 0),
+            cls: 'positive'
         },
         {
             label: '1 Month Change',
@@ -49,13 +156,11 @@ function createSummaryCards() {
             cls: timeChanges.ytd.change >= 0 ? 'positive' : 'negative'
         },
         {
-            label: 'Diversification Score',
+            label: 'Diversification',
             value: diversification.score + '/100',
-            subvalue: diversification.grade,
+            subvalue: diversification.grade + ' • ' + (data.NumPositions || 0) + ' positions',
             cls: diversification.score >= 70 ? 'positive' : diversification.score >= 40 ? '' : 'negative'
-        },
-        { label: 'Total Positions', value: (data.NumPositions || 0).toString(), cls: '' },
-        { label: 'Total Accounts', value: (data.NumAccounts || 0).toString(), cls: '' }
+        }
     ];
 
     var html = '';
@@ -244,27 +349,6 @@ function createAllocationChart() {
     });
 }
 
-function createInvestmentCashChart() {
-    if (typeof portfolioData === 'undefined') return;
-
-    var ctx = document.getElementById('investmentCashChart');
-    if (!ctx) return;
-
-    new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: ['Investments', 'Cash'],
-            datasets: [{
-                data: [portfolioData.InvestmentValue || 0, portfolioData.CashValue || 0],
-                backgroundColor: ['#60a5fa', '#4ade80'],
-                borderWidth: 1,
-                borderColor: '#121212'
-            }]
-        },
-        options: getDonutChartOptions()
-    });
-}
-
 function createReturnsChart() {
     if (typeof portfolioData === 'undefined') return;
 
@@ -274,14 +358,15 @@ function createReturnsChart() {
     var costBasis = portfolioData.TotalCostBasis || 0;
     var unrealizedGain = portfolioData.TotalUnrealizedGain || 0;
     var realizedGains = portfolioData.AllTimeRealizedGain || 0;
+    var income = portfolioData.AllTimeIncome || 0;
 
     new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: ['Cost Basis', 'Unrealized', 'Realized'],
+            labels: ['Cost Basis', 'Unrealized', 'Realized', 'Income'],
             datasets: [{
-                data: [costBasis, unrealizedGain, realizedGains],
-                backgroundColor: ['#60a5fa', unrealizedGain >= 0 ? '#4ade80' : '#f87171', '#a78bfa'],
+                data: [costBasis, unrealizedGain, realizedGains, income],
+                backgroundColor: ['#60a5fa', unrealizedGain >= 0 ? '#4ade80' : '#f87171', '#a78bfa', '#fbbf24'],
                 borderRadius: 4
             }]
         },
@@ -303,66 +388,91 @@ function createReturnsChart() {
     });
 }
 
-function createTaxLotChart() {
-    if (typeof portfolioData === 'undefined') return;
-
-    var ctx = document.getElementById('taxLotChart');
+function createPortfolioGrowthChart() {
+    var ctx = document.getElementById('portfolioGrowthChart');
     if (!ctx) return;
 
-    var longTerm = portfolioData.LongTermValue || 0;
-    var shortTerm = portfolioData.ShortTermValue || 0;
+    var historicalData = getHistoricalHoldings();
+    if (!historicalData || historicalData.length < 2) return;
 
-    if (longTerm === 0 && shortTerm === 0) return;
-
-    new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: ['Long-term', 'Short-term'],
-            datasets: [{
-                data: [longTerm, shortTerm],
-                backgroundColor: ['#4ade80', '#f59e0b'],
-                borderWidth: 1,
-                borderColor: '#121212'
-            }]
-        },
-        options: getDonutChartOptions()
+    // Get last 12 months of data
+    var recentData = historicalData.slice(-12);
+    var labels = recentData.map(function (d) {
+        var date = new Date(d.date);
+        return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
     });
-}
+    var values = recentData.map(function (d) { return d.totalValue; });
 
-function createAssetAllocationChart() {
-    var data = getHoldingsDetail();
-    if (data.length === 0) return;
-
-    var ctx = document.getElementById('assetAllocationChart');
-    if (!ctx) return;
-
-    var symbolTotals = {};
-    data.forEach(function (h) {
-        if (!symbolTotals[h.symbol]) symbolTotals[h.symbol] = 0;
-        symbolTotals[h.symbol] += h.current_value || 0;
+    // Get historical cost basis (if available) or fall back to current
+    var costBasisData = recentData.map(function (d) {
+        return d.costBasis || 0;
     });
 
-    var symbolArray = Object.keys(symbolTotals).map(function (symbol) {
-        return { symbol: symbol, value: symbolTotals[symbol] };
-    }).sort(function (a, b) { return b.value - a.value; });
+    // Check if we have valid cost basis data
+    var hasCostBasisHistory = costBasisData.some(function (cb) { return cb > 0; });
 
-    var top14 = symbolArray.slice(0, 14);
-    var otherValue = symbolArray.slice(14).reduce(function (sum, item) { return sum + item.value; }, 0);
+    var datasets = [
+        {
+            label: 'Portfolio Value',
+            data: values,
+            borderColor: '#4ade80',
+            backgroundColor: 'rgba(74, 222, 128, 0.1)',
+            fill: true,
+            tension: 0.3,
+            borderWidth: 2
+        }
+    ];
 
-    var labels = top14.map(function (item) { return item.symbol; });
-    var values = top14.map(function (item) { return item.value; });
-
-    if (otherValue > 0) {
-        labels.push('Other (' + (symbolArray.length - 14) + ')');
-        values.push(otherValue);
+    if (hasCostBasisHistory) {
+        datasets.push({
+            label: 'Cost Basis',
+            data: costBasisData,
+            borderColor: '#f59e0b',
+            backgroundColor: 'rgba(245, 158, 11, 0.05)',
+            fill: true,
+            tension: 0.3,
+            borderWidth: 2
+        });
     }
 
-    var colors = labels.map(function (label, i) { return chartColorPalette[i % chartColorPalette.length]; });
-
     new Chart(ctx, {
-        type: 'doughnut',
-        data: { labels: labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 1, borderColor: '#121212' }] },
-        options: getDonutChartOptions()
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: { color: '#888', font: { size: 11 } }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            return context.dataset.label + ': ' + formatCurrency(context.raw);
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888' },
+                    grid: { display: false }
+                },
+                y: {
+                    ticks: {
+                        color: '#888',
+                        callback: function (val) {
+                            return '$' + (val / 1000).toFixed(0) + 'k';
+                        }
+                    },
+                    grid: { color: 'rgba(255,255,255,0.05)' }
+                }
+            }
+        }
     });
 }
 
