@@ -1,15 +1,59 @@
+# Data files (sensitive financial information)
 /dashboard/data/*
 /data/input/*
 /data/output/*
+/data/*.json
 
+# System files
 .DS_Store
 
 # Python
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.so
 
-*.csv
-.env
-*.log
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.tox/
+
+# IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+
+# Logs
+*.log
+logs/
+
+# CSV files (may contain sensitive data)
+*.csv
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Documentation
+site/
+docs/_build/
+
+# Mac
+*.DS_Store
+
+# Temporary files
+*.tmp
+.cache/

@@ -7,6 +7,7 @@
     <title>Portfolio Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <!-- Load portfolio data -->
     <script src="./data/portfolio_summary.js"></script>
     <script src="./data/holdings_detail.js"></script>
@@ -18,6 +19,7 @@
     <script src="./data/master_transactions.js"></script>
     <script src="./data/portfolio_cost_basis.js"></script>
     <script src="./data/retirement_data.js"></script>
+    <script src="./data/corporate_actions.js" onerror="window.corporateActionsData = [];"></script>
     <!-- Styles -->
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -25,12 +27,61 @@
 <body>
     <div class="dashboard">
         <header>
-            <h1>Portfolio Dashboard</h1>
-            <p class="timestamp" id="timestamp">Loading...</p>
+            <div class="header-left">
+                <h1>Portfolio Dashboard</h1>
+                <p class="timestamp" id="timestamp">Loading...</p>
+            </div>
+            <div class="header-right">
+                <div class="refresh-indicator" id="refreshIndicator">
+                    <span class="refresh-status" id="refreshStatus">
+                        <span class="status-dot"></span>
+                        <span id="lastUpdatedText">Checking...</span>
+                    </span>
+                    <button class="refresh-btn" id="refreshBtn" title="Refresh data">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path
+                                d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
         </header>
 
         <div id="errorMessage" class="error-message" style="display: none;">
             <p>Could not load portfolio data. Run <code>python detectAndClean.py</code> first.</p>
+        </div>
+
+        <!-- Loading Skeleton -->
+        <div id="loadingSkeleton" class="loading-skeleton">
+            <div class="skeleton-tabs">
+                <div class="skeleton-tab"></div>
+                <div class="skeleton-tab"></div>
+                <div class="skeleton-tab"></div>
+                <div class="skeleton-tab"></div>
+                <div class="skeleton-tab"></div>
+            </div>
+            <div class="skeleton-cards">
+                <div class="skeleton-card"></div>
+                <div class="skeleton-card"></div>
+                <div class="skeleton-card"></div>
+                <div class="skeleton-card"></div>
+                <div class="skeleton-card"></div>
+                <div class="skeleton-card"></div>
+            </div>
+            <div class="skeleton-charts">
+                <div class="skeleton-chart"></div>
+                <div class="skeleton-chart"></div>
+                <div class="skeleton-chart"></div>
+                <div class="skeleton-chart"></div>
+            </div>
+            <div class="skeleton-table">
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+                <div class="skeleton-row"></div>
+            </div>
         </div>
 
         <div id="dashboardContent" style="display: none;">
@@ -43,6 +94,7 @@
                 <button class="tab-btn" data-tab="income">Income</button>
                 <button class="tab-btn" data-tab="history">History</button>
                 <button class="tab-btn" data-tab="tax">Tax</button>
+                <button class="tab-btn" data-tab="corporate-actions">Corporate Actions</button>
                 <button class="tab-btn" data-tab="crypto">Crypto</button>
                 <button class="tab-btn" data-tab="options">Options</button>
                 <button class="tab-btn" data-tab="retirement">Retirement</button>
@@ -50,12 +102,33 @@
 
             <!-- Overview Tab -->
             <div id="overview" class="tab-content active">
-                <div class="summary-cards" id="summaryCards"></div>
+                <div class="summary-cards" id="summaryCards">
+                    <!-- Loading skeleton for cards -->
+                    <div class="card skeleton-loading">
+                        <div class="skeleton-text"></div>
+                        <div class="skeleton-text short"></div>
+                    </div>
+                    <div class="card skeleton-loading">
+                        <div class="skeleton-text"></div>
+                        <div class="skeleton-text short"></div>
+                    </div>
+                    <div class="card skeleton-loading">
+                        <div class="skeleton-text"></div>
+                        <div class="skeleton-text short"></div>
+                    </div>
+                    <div class="card skeleton-loading">
+                        <div class="skeleton-text"></div>
+                        <div class="skeleton-text short"></div>
+                    </div>
+                </div>
 
                 <div class="charts-grid">
                     <div class="chart-container">
                         <h3 class="chart-title">Account Allocation</h3>
                         <div class="chart-wrapper">
+                            <div class="chart-loading" id="allocationChartLoading">
+                                <div class="spinner"></div>
+                            </div>
                             <canvas id="allocationChart"></canvas>
                         </div>
                     </div>
@@ -63,6 +136,9 @@
                     <div class="chart-container">
                         <h3 class="chart-title">Top Holdings</h3>
                         <div class="chart-wrapper">
+                            <div class="chart-loading" id="assetAllocationChartLoading">
+                                <div class="spinner"></div>
+                            </div>
                             <canvas id="assetAllocationChart"></canvas>
                         </div>
                     </div>
@@ -70,6 +146,9 @@
                     <div class="chart-container">
                         <h3 class="chart-title">Sector Allocation</h3>
                         <div class="chart-wrapper">
+                            <div class="chart-loading" id="sectorAllocationChartLoading">
+                                <div class="spinner"></div>
+                            </div>
                             <canvas id="sectorAllocationChart"></canvas>
                         </div>
                     </div>
@@ -77,6 +156,9 @@
                     <div class="chart-container">
                         <h3 class="chart-title">Tax Lot Breakdown</h3>
                         <div class="chart-wrapper">
+                            <div class="chart-loading" id="taxLotChartLoading">
+                                <div class="spinner"></div>
+                            </div>
                             <canvas id="taxLotChart"></canvas>
                         </div>
                     </div>
@@ -84,6 +166,9 @@
                     <div class="chart-container">
                         <h3 class="chart-title">Investment vs Cash</h3>
                         <div class="chart-wrapper">
+                            <div class="chart-loading" id="investmentCashChartLoading">
+                                <div class="spinner"></div>
+                            </div>
                             <canvas id="investmentCashChart"></canvas>
                         </div>
                     </div>
@@ -91,6 +176,9 @@
                     <div class="chart-container">
                         <h3 class="chart-title">Returns Breakdown</h3>
                         <div class="chart-wrapper">
+                            <div class="chart-loading" id="returnsChartLoading">
+                                <div class="spinner"></div>
+                            </div>
                             <canvas id="returnsChart"></canvas>
                         </div>
                     </div>
@@ -330,7 +418,8 @@
                                         <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span>
                                         </th>
                                         <th class="sortable" data-sort="quantity" style="text-align: right;">Quantity
-                                            <span class="sort-icon"></span></th>
+                                            <span class="sort-icon"></span>
+                                        </th>
                                         <th class="sortable" data-sort="price" style="text-align: right;">Price <span
                                                 class="sort-icon"></span></th>
                                         <th class="sortable" data-sort="amount" style="text-align: right;">Amount <span
@@ -354,29 +443,37 @@
                 <div class="charts-grid">
                     <div class="chart-container full-width">
                         <h3 class="chart-title">Tax Loss Harvesting Opportunities</h3>
-                        <table class="holdings-table" id="taxLossTable">
-                            <thead>
-                                <tr>
-                                    <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="account" style="text-align: left;">Account <span
-                                            class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="quantity" style="text-align: right;">Quantity <span
-                                            class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="cost_basis" style="text-align: right;">Cost Basis
-                                        <span class="sort-icon"></span>
-                                    </th>
-                                    <th class="sortable" data-sort="current_value" style="text-align: right;">Current
-                                        Value <span class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="unrealized_loss" style="text-align: right;">
-                                        Unrealized Loss <span class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="holding_period" style="text-align: left;">Holding
-                                        Period <span class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="wash_sale_date" style="text-align: left;">Wash Sale
-                                        Until <span class="sort-icon"></span></th>
-                                </tr>
-                            </thead>
-                            <tbody id="taxLossBody"></tbody>
-                        </table>
+                        <div class="table-scroll-container" style="overflow-x: auto;">
+                            <table class="holdings-table" id="taxLossTable">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="account" style="text-align: left;">Account <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="quantity" style="text-align: right;">Quantity
+                                            <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="cost_basis" style="text-align: right;">Cost
+                                            Basis
+                                            <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="current_value" style="text-align: right;">
+                                            Current
+                                            Value <span class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="unrealized_loss" style="text-align: right;">
+                                            Unrealized Loss <span class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="holding_period" style="text-align: left;">
+                                            Holding
+                                            Period <span class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="wash_sale_date" style="text-align: left;">Wash
+                                            Sale
+                                            Until <span class="sort-icon"></span></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="taxLossBody"></tbody>
+                            </table>
+                        </div>
                     </div>
 
                     <div class="chart-container half-width">
@@ -417,6 +514,114 @@
                             </thead>
                             <tbody id="realizedGainsBody"></tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Corporate Actions Tab -->
+            <div id="corporate-actions" class="tab-content">
+                <div class="charts-grid">
+                    <!-- Corporate Actions Summary Cards -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Corporate Actions Summary</h3>
+                        <div class="corporate-actions-summary" id="corporateActionsSummary"></div>
+                    </div>
+
+                    <!-- Corporate Actions Timeline -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Corporate Actions Timeline</h3>
+                        <div class="chart-wrapper" style="max-height: 300px;">
+                            <canvas id="corporateActionsTimelineChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Actions by Type Chart -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Actions by Type</h3>
+                        <div class="chart-wrapper">
+                            <canvas id="corporateActionsTypeChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Cost Basis Impact -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Cost Basis Impact</h3>
+                        <div class="cost-basis-impact" id="costBasisImpact"></div>
+                    </div>
+
+                    <!-- Stock Splits -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Stock Splits & Reverse Splits</h3>
+                        <table class="holdings-table" id="stockSplitsTable">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Symbol</th>
+                                    <th>Type</th>
+                                    <th>Account</th>
+                                    <th>Details</th>
+                                </tr>
+                            </thead>
+                            <tbody id="stockSplitsBody"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Spin-offs & Mergers -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Spin-offs, Mergers & Acquisitions</h3>
+                        <table class="holdings-table" id="spinoffsMergersTable">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Symbol</th>
+                                    <th>Type</th>
+                                    <th>Account</th>
+                                    <th style="text-align: right;">Shares</th>
+                                    <th style="text-align: right;">Cash</th>
+                                    <th>CUSIP</th>
+                                    <th>Details</th>
+                                </tr>
+                            </thead>
+                            <tbody id="spinoffsMergersBody"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- All Corporate Actions -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">All Corporate Actions</h3>
+                        <div class="ca-filter-row">
+                            <select id="caFilterType">
+                                <option value="">All Types</option>
+                                <option value="Split">Splits</option>
+                                <option value="Reverse Split">Reverse Splits</option>
+                                <option value="Spinoff">Spin-offs</option>
+                                <option value="Merger">Mergers</option>
+                                <option value="Liquidation">Liquidations</option>
+                            </select>
+                            <select id="caFilterYear">
+                                <option value="">All Years</option>
+                            </select>
+                            <input type="text" id="caSearch" placeholder="Search symbol..." class="search-box">
+                        </div>
+                        <div style="max-height: 400px; overflow-y: auto;">
+                            <table class="holdings-table sortable-table" id="allCorporateActionsTable">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" data-sort="date">Date <span class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="type">Type <span class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="account">Account <span class="sort-icon"></span>
+                                        </th>
+                                        <th style="text-align: right;">Shares</th>
+                                        <th style="text-align: right;">Cash</th>
+                                        <th>CUSIP</th>
+                                        <th>Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="allCorporateActionsBody"></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -657,39 +862,63 @@
                     <!-- Closed Positions -->
                     <div class="chart-container full-width">
                         <h3 class="chart-title">Closed Positions (Trade History)</h3>
-                        <table class="holdings-table sortable-table" id="closedOptionsTable">
-                            <thead>
-                                <tr>
-                                    <th class="sortable" data-sort="openDate">Open Date <span class="sort-icon"></span>
-                                    </th>
-                                    <th class="sortable" data-sort="closeDate">Close Date <span
-                                            class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="type">Type <span class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="strike" style="text-align: right;">Strike <span
-                                            class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="contracts" style="text-align: right;">Contracts
-                                        <span class="sort-icon"></span>
-                                    </th>
-                                    <th class="sortable" data-sort="premiumPaid" style="text-align: right;">Premium Paid
-                                        <span class="sort-icon"></span>
-                                    </th>
-                                    <th class="sortable" data-sort="premiumReceived" style="text-align: right;">Premium
-                                        Received <span class="sort-icon"></span></th>
-                                    <th class="sortable" data-sort="pnl" style="text-align: right;">P&L <span
-                                            class="sort-icon"></span></th>
-                                </tr>
-                            </thead>
-                            <tbody id="closedOptionsBody"></tbody>
-                        </table>
+                        <div class="table-scroll-container" style="overflow-x: auto;">
+                            <table class="holdings-table sortable-table" id="closedOptionsTable">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" data-sort="openDate">Open Date <span
+                                                class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="closeDate">Close Date <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="type">Type <span class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="strike" style="text-align: right;">Strike <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="contracts" style="text-align: right;">Contracts
+                                            <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="premiumPaid" style="text-align: right;">Premium
+                                            Paid
+                                            <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="premiumReceived" style="text-align: right;">
+                                            Premium
+                                            Received <span class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="pnl" style="text-align: right;">P&L <span
+                                                class="sort-icon"></span></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="closedOptionsBody"></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Dashboard JavaScript -->
-    <script src="dashboard.js"></script>
+    <!-- Dashboard JavaScript (Modular) -->
+    <!-- Utilities and Data Layer -->
+    <script src="js/utils.js"></script>
+    <script src="js/data.js"></script>
+
+    <!-- Feature Modules -->
+    <script src="js/overview.js"></script>
+    <script src="js/holdings.js"></script>
+    <script src="js/income.js"></script>
+    <script src="js/history.js"></script>
+    <script src="js/tax.js"></script>
+    <script src="js/retirement.js"></script>
+    <script src="js/options.js"></script>
+    <script src="js/crypto.js"></script>
+    <script src="js/transactions.js"></script>
+    <script src="js/corporate-actions.js"></script>
+    <script src="js/widgets.js"></script>
+
+    <!-- Main Entry Point (must be last) -->
+    <script src="js/main.js"></script>
 </body>
 
 </html>

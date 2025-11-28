@@ -15,8 +15,58 @@ Supported Sources:
 - Custom Input (pre-normalized format)
 """
 
+import logging
+import sys
+from pathlib import Path
+from typing import Optional, Dict, Any, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import pandas as pd
 from datetime import datetime
+
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    # Fallback: simple progress indicator
+    class tqdm:
+        def __init__(self, iterable=None, desc=None, total=None, disable=False, **kwargs):
+            self.iterable = iterable
+            self.desc = desc
+            self.total = total or (len(iterable) if iterable else 0)
+            self.disable = disable
+            self.n = 0
+        
+        def __iter__(self):
+            for item in self.iterable:
+                yield item
+                self.update()
+        
+        def update(self, n=1):
+            self.n += n
+            if not self.disable and self.n % 5 == 0:
+                print(f"  Progress: {self.n}/{self.total}")
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            pass
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Suppress noisy loggers
+logging.getLogger('yfinance').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 from .config import (
     DATA_INPUT_PATH, DATA_OUTPUT_PATH, UNIFIED_COLUMNS,
@@ -31,7 +81,7 @@ from .utils.prices import (
     get_sectors_for_holdings,
 )
 from .parsers import detect_source, PARSER_REGISTRY, merge_accounts
-from .parsers.base import normalize_amounts, create_empty_dataframe, standardize_symbols
+from .parsers.base import normalize_amounts, create_empty_dataframe, standardize_symbols, validate_dataframe
 from .calculators import (
     calculate_holdings, calculate_holdings_quantities_only, add_running_balances,
     calculate_cost_basis, add_running_cost_basis,
@@ -50,40 +100,135 @@ from .reports import (
     export_portfolio_summary_js, export_dataframe_js,
     generate_retirement_summary, export_retirement_data_js,
 )
+from .quality import run_quality_checks, print_quality_report
+from .corporate_actions import (
+    generate_corporate_actions_report,
+    identify_corporate_actions,
+    KNOWN_SPINOFFS,
+    KNOWN_MERGERS,
+)
 
 
-def process_file(file_path) -> pd.DataFrame:
-    """Process a single input file and return normalized DataFrame."""
+def _process_files_sequential(files: List[Path], results: List[pd.DataFrame]) -> None:
+    """
+    Process files sequentially with progress bar.
+    
+    Args:
+        files: List of file paths to process
+        results: List to append successful results to
+    """
+    for file_path in tqdm(files, desc="Processing files", unit="file", disable=not TQDM_AVAILABLE):
+        try:
+            result = process_file(file_path)
+            if result is not None and len(result) > 0:
+                results.append(result)
+        except Exception as e:
+            logger.exception(f"Unexpected error processing {file_path.name}")
+            print(f"  ✗ Unexpected error with {file_path.name}: {e}")
+
+
+def _process_files_parallel(files: List[Path], results: List[pd.DataFrame], max_workers: int = 4) -> None:
+    """
+    Process files in parallel with progress bar.
+    
+    Args:
+        files: List of file paths to process
+        results: List to append successful results to
+        max_workers: Maximum number of parallel workers
+    """
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all jobs
+        future_to_file = {executor.submit(process_file, f): f for f in files}
+        
+        # Process completed jobs with progress bar
+        with tqdm(total=len(files), desc="Processing files", unit="file", disable=not TQDM_AVAILABLE) as pbar:
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                try:
+                    result = future.result()
+                    if result is not None and len(result) > 0:
+                        results.append(result)
+                except Exception as e:
+                    logger.exception(f"Unexpected error processing {file_path.name}")
+                    print(f"  ✗ Unexpected error with {file_path.name}: {e}")
+                finally:
+                    pbar.update(1)
+
+
+def process_file(file_path: Path) -> Optional[pd.DataFrame]:
+    """
+    Process a single input file and return normalized DataFrame.
+    
+    Args:
+        file_path: Path to CSV file to process
+    
+    Returns:
+        DataFrame with normalized transactions, or None if processing failed
+    """
+    logger.info(f"Processing: {file_path.name}")
     print(f"  Processing: {file_path.name}")
     
-    # Detect source
-    source = detect_source(file_path)
-    if source is None:
-        print(f"    ⚠ Unknown source - skipping")
-        return None
-    
-    print(f"    ✓ Detected source: {source}")
-    
-    # Get parser
-    parser = PARSER_REGISTRY.get(source)
-    if parser is None:
-        print(f"    ⚠ No parser available for source: {source}")
-        return None
-    
-    # Parse file
     try:
+        # Detect source
+        source = detect_source(file_path)
+        if source is None:
+            logger.warning(f"Unknown source for file: {file_path.name}")
+            print(f"    ⚠ Unknown source - skipping")
+            return None
+        
+        logger.info(f"Detected source: {source} for {file_path.name}")
+        print(f"    ✓ Detected source: {source}")
+        
+        # Get parser
+        parser = PARSER_REGISTRY.get(source)
+        if parser is None:
+            logger.error(f"No parser available for source: {source}")
+            print(f"    ⚠ No parser available for source: {source}")
+            return None
+        
+        # Parse file
         df = parser(file_path)
+        
+        if df is None or df.empty:
+            logger.warning(f"Parser returned empty DataFrame for {file_path.name}")
+            print(f"    ⚠ No transactions found in file")
+            return None
+        
+        # Validate DataFrame
+        is_valid, errors = validate_dataframe(df)
+        if not is_valid:
+            logger.error(f"Validation failed for {file_path.name}: {errors}")
+            print(f"    ✗ Validation errors: {', '.join(errors)}")
+            return None
+        
         # Add source filename for deduplication across files
         df["_SourceFile"] = file_path.name
+        logger.info(f"Successfully parsed {len(df)} transactions from {file_path.name}")
         print(f"    ✓ Parsed {len(df)} transactions")
         return df
+        
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {file_path.name} - {e}")
+        print(f"    ✗ File not found: {e}")
+        return None
+    except pd.errors.ParserError as e:
+        logger.error(f"CSV parsing error in {file_path.name}: {e}")
+        print(f"    ✗ CSV parsing error: {e}")
+        return None
     except Exception as e:
+        logger.exception(f"Unexpected error parsing {file_path.name}")
         print(f"    ✗ Error parsing file: {e}")
         return None
 
 
 def process_all_files() -> pd.DataFrame:
-    """Process all CSV files in the input directory."""
+    """
+    Process all CSV files in the input directory.
+    
+    Returns:
+        DataFrame containing all normalized transactions
+    """
+    logger.info("Starting transaction data aggregation")
     print("\n" + "="*60)
     print("Transaction Data Aggregator")
     print("="*60 + "\n")
@@ -92,23 +237,58 @@ def process_all_files() -> pd.DataFrame:
     files_processed = 0
     files_skipped = 0
     
+    # Validate input directory exists
+    if not DATA_INPUT_PATH.exists():
+        logger.error(f"Input directory does not exist: {DATA_INPUT_PATH}")
+        print(f"\n✗ Error: Input directory not found: {DATA_INPUT_PATH}")
+        return create_empty_dataframe()
+    
     # Load caches
-    price_cache = load_price_cache()
-    split_cache = load_split_cache()
+    try:
+        price_cache = load_price_cache()
+        split_cache = load_split_cache()
+        logger.info("Loaded caches successfully")
+    except Exception as e:
+        logger.error(f"Failed to load caches: {e}")
+        print(f"\n✗ Error loading caches: {e}")
+        price_cache = {}
+        split_cache = {}
     
     # Process each CSV file
-    for file_path in sorted(DATA_INPUT_PATH.iterdir()):
-        if file_path.is_file() and file_path.suffix.lower() == ".csv":
-            result = process_file(file_path)
-            if result is not None and len(result) > 0:
-                all_transactions.append(result)
-                files_processed += 1
-            else:
-                files_skipped += 1
+    csv_files = [f for f in DATA_INPUT_PATH.iterdir() 
+                 if f.is_file() and f.suffix.lower() == ".csv"]
+    
+    if not csv_files:
+        logger.warning(f"No CSV files found in {DATA_INPUT_PATH}")
+        print(f"\n⚠ No CSV files found in {DATA_INPUT_PATH}")
+        return create_empty_dataframe()
+    
+    logger.info(f"Found {len(csv_files)} CSV files to process")
+    print(f"Found {len(csv_files)} CSV files to process\n")
+    
+    # Process files (use environment variable or default)
+    use_parallel = getattr(process_all_files, '_parallel', True)
+    max_workers = getattr(process_all_files, '_workers', 4)
+    
+    if use_parallel and len(csv_files) > 1:
+        logger.info(f"Using parallel processing with {max_workers} workers")
+        _process_files_parallel(sorted(csv_files), all_transactions, max_workers)
+    else:
+        logger.info("Using sequential processing")
+        _process_files_sequential(sorted(csv_files), all_transactions)
+    
+    files_processed = len(all_transactions)
+    files_skipped = len(csv_files) - files_processed
     
     # Combine all transactions
     if all_transactions:
-        master_df = pd.concat(all_transactions, ignore_index=True)
+        try:
+            master_df = pd.concat(all_transactions, ignore_index=True)
+            logger.info(f"Combined {len(master_df)} total transactions from {len(all_transactions)} files")
+        except Exception as e:
+            logger.exception("Failed to combine transaction DataFrames")
+            print(f"\n✗ Error combining transactions: {e}")
+            return create_empty_dataframe()
         
         # Remove duplicate transactions (from overlapping date ranges in input files)
         dupe_cols = ["Date", "Account", "Symbol", "Action", "Quantity", "Amount"]
@@ -129,23 +309,51 @@ def process_all_files() -> pd.DataFrame:
         master_df = master_df.drop(columns=["_SourceFile", "_OccurrenceInFile"])
         
         dupes_removed = initial_count - len(master_df)
+        # Store for quality checks
+        master_df._dupes_removed = dupes_removed
         if dupes_removed > 0:
+            logger.info(f"Removed {dupes_removed} duplicate transactions")
             print(f"Removed {dupes_removed} duplicate transactions (from overlapping files)")
         
         # Normalize amounts to be consistently positive
-        master_df = normalize_amounts(master_df)
+        try:
+            master_df = normalize_amounts(master_df)
+            logger.debug("Normalized transaction amounts")
+        except Exception as e:
+            logger.error(f"Error normalizing amounts: {e}")
+            print(f"⚠ Warning: Error normalizing amounts: {e}")
         
         # Standardize fund names to ticker symbols
-        master_df = standardize_symbols(master_df)
+        try:
+            master_df = standardize_symbols(master_df)
+            logger.debug("Standardized ticker symbols")
+        except Exception as e:
+            logger.error(f"Error standardizing symbols: {e}")
+            print(f"⚠ Warning: Error standardizing symbols: {e}")
         
         # Merge accounts that have been transferred/rolled over
-        master_df = merge_accounts(master_df)
+        try:
+            master_df = merge_accounts(master_df)
+            logger.debug("Merged rolled-over accounts")
+        except Exception as e:
+            logger.error(f"Error merging accounts: {e}")
+            print(f"⚠ Warning: Error merging accounts: {e}")
         
         # Convert price-based symbols (e.g., VANG TR II 2055 → VFFVX)
-        master_df = convert_price_based_symbols(master_df, price_cache)
+        try:
+            master_df = convert_price_based_symbols(master_df, price_cache)
+            logger.debug("Converted price-based symbols")
+        except Exception as e:
+            logger.error(f"Error converting price-based symbols: {e}")
+            print(f"⚠ Warning: Error converting symbols: {e}")
         
         # Adjust historical transactions for stock splits
-        master_df = adjust_for_splits(master_df, split_cache)
+        try:
+            master_df = adjust_for_splits(master_df, split_cache)
+            logger.debug("Adjusted for stock splits")
+        except Exception as e:
+            logger.error(f"Error adjusting for splits: {e}")
+            print(f"⚠ Warning: Error adjusting for splits: {e}")
         
         # Reload price cache to capture any additions from parsers
         final_price_cache = load_price_cache()
@@ -155,8 +363,13 @@ def process_all_files() -> pd.DataFrame:
             final_price_cache[symbol].update(dates)
         
         # Save updated caches
-        save_price_cache(final_price_cache)
-        save_split_cache(split_cache)
+        try:
+            save_price_cache(final_price_cache)
+            save_split_cache(split_cache)
+            logger.info("Saved updated caches")
+        except Exception as e:
+            logger.error(f"Failed to save caches: {e}")
+            print(f"⚠ Warning: Failed to save caches: {e}")
         
         # Sort by date (newest first)
         master_df = master_df.sort_values("Date", ascending=False).reset_index(drop=True)
@@ -168,13 +381,15 @@ def process_all_files() -> pd.DataFrame:
         print(f"  Total transactions: {len(master_df)}")
         print(f"-"*60)
         
+        logger.info(f"Processing complete: {files_processed} files, {len(master_df)} transactions")
         return master_df
     else:
+        logger.warning("No transactions found in any files")
         print("\nNo transactions found!")
         return create_empty_dataframe()
 
 
-def generate_all_reports(master_df: pd.DataFrame, price_cache: dict):
+def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]]) -> Dict[str, Any]:
     """
     Generate all reports from the master transaction data.
     
@@ -190,18 +405,38 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: dict):
     9. historical_holdings.csv - Portfolio value over time
     10. portfolio_summary.json - Overall portfolio metrics
     """
+    logger.info("Starting report generation")
     print("\n" + "="*60)
     print("Generating Reports")
     print("="*60)
     
+    if master_df.empty:
+        logger.warning("Cannot generate reports from empty DataFrame")
+        print("\n⚠ No data to generate reports")
+        return {}
+    
     # 1. Simple holdings (for backwards compatibility)
     print("\n1. Calculating current holdings...")
-    simple_holdings = calculate_holdings(master_df, price_cache)
-    export_holdings_csv(simple_holdings)
+    try:
+        simple_holdings = calculate_holdings(master_df, price_cache)
+        export_holdings_csv(simple_holdings)
+        logger.info(f"Generated simple holdings report with {len(simple_holdings)} positions")
+    except Exception as e:
+        logger.exception("Failed to calculate holdings")
+        print(f"✗ Error calculating holdings: {e}")
+        simple_holdings = pd.DataFrame()
     
     # 2. Detailed holdings with cost basis and tax lots
     print("\n2. Calculating cost basis (FIFO method) and tax lots...")
-    holdings_detail, realized_gains, tax_lots = calculate_cost_basis(master_df, price_cache)
+    try:
+        holdings_detail, realized_gains, tax_lots = calculate_cost_basis(master_df, price_cache)
+        logger.info(f"Calculated cost basis for {len(holdings_detail)} holdings")
+    except Exception as e:
+        logger.exception("Failed to calculate cost basis")
+        print(f"✗ Error calculating cost basis: {e}")
+        holdings_detail = pd.DataFrame()
+        realized_gains = pd.DataFrame()
+        tax_lots = pd.DataFrame()
     
     # Add sector information to holdings
     if not holdings_detail.empty:
@@ -324,8 +559,36 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: dict):
     retirement_summary = generate_retirement_summary(master_df, holdings_detail)
     export_retirement_data_js(retirement_summary)
     
+    # 16. Corporate actions report
+    print("\n16. Generating corporate actions report...")
+    corporate_actions = generate_corporate_actions_report(master_df)
+    if not corporate_actions.empty:
+        # Export to CSV
+        ca_path = DATA_OUTPUT_PATH / "corporate_actions.csv"
+        corporate_actions.to_csv(ca_path, index=False)
+        print(f"   Found {len(corporate_actions)} corporate actions")
+        
+        # Export to JS for dashboard
+        export_dataframe_js(corporate_actions, "corporateActionsData", "corporate_actions.js")
+        
+        # Print summary
+        action_counts = corporate_actions['Type'].value_counts()
+        for action_type, count in action_counts.items():
+            print(f"     - {action_type}: {count}")
+    
     # Print summary to console
     print_portfolio_summary(portfolio_summary)
+    
+    # Run data quality checks if enabled
+    run_quality = getattr(generate_all_reports, '_quality_check', True)
+    if run_quality:
+        dupes = getattr(master_df, '_dupes_removed', 0)
+        issues, summary = run_quality_checks(
+            master_df, 
+            holdings_detail if not holdings_detail.empty else None,
+            dupes
+        )
+        print_quality_report(issues, summary)
     
     return {
         "simple_holdings": simple_holdings,
@@ -341,29 +604,112 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: dict):
     }
 
 
-def main():
-    """Main entry point."""
-    # Process all input files
-    master_df = process_all_files()
+def main(args: Optional[Any] = None) -> None:
+    """
+    Main entry point for the transaction aggregator.
+    
+    Args:
+        args: Parsed CLI arguments (from argparse.Namespace)
+    """
+    from .cli import parse_args, setup_logging, print_banner
+    
+    # Parse arguments if not provided
+    if args is None:
+        args = parse_args()
+    
+    # Setup logging based on verbosity
+    if args.quiet:
+        logging.getLogger().setLevel(logging.ERROR)
+    elif args.verbose:
+        setup_logging(verbose=True)
+    else:
+        setup_logging(verbose=False)
+    
+    # Print banner unless quiet
+    if not args.quiet:
+        print_banner(args.verbose)
+    
+    logger.info("="*60)
+    logger.info("Financial Portfolio Aggregator Starting")
+    logger.info("="*60)
+    
+    # Configure processing options
+    process_all_files._parallel = args.parallel
+    process_all_files._workers = args.workers
+    generate_all_reports._quality_check = args.quality_check
+    
+    # Override paths if provided
+    if args.input:
+        global DATA_INPUT_PATH
+        DATA_INPUT_PATH = args.input
+        logger.info(f"Using custom input path: {DATA_INPUT_PATH}")
+    
+    if args.output:
+        global DATA_OUTPUT_PATH
+        DATA_OUTPUT_PATH = args.output
+        logger.info(f"Using custom output path: {DATA_OUTPUT_PATH}")
+    
+    # Clear caches if requested
+    if args.clear_cache:
+        logger.info("Clearing caches...")
+        try:
+            from .utils.cache import (
+                PRICE_CACHE_PATH, SPLIT_CACHE_PATH, SECTOR_CACHE_PATH
+            )
+            for cache_path in [PRICE_CACHE_PATH, SPLIT_CACHE_PATH, SECTOR_CACHE_PATH]:
+                if cache_path.exists():
+                    cache_path.unlink()
+                    logger.info(f"Cleared {cache_path.name}")
+        except Exception as e:
+            logger.error(f"Error clearing caches: {e}")
+    
+    try:
+        # Process all input files
+        master_df = process_all_files()
+    except Exception as e:
+        logger.exception("Fatal error during file processing")
+        print(f"\n✗ Fatal error: {e}")
+        sys.exit(1)
     
     # Export to CSV
     if len(master_df) > 0:
-        export_master_csv(master_df)
+        try:
+            export_master_csv(master_df)
+            logger.info("Exported master transactions CSV")
+        except Exception as e:
+            logger.exception("Failed to export master CSV")
+            print(f"\n✗ Error exporting master CSV: {e}")
         
         # Reload price cache after processing (parsers may have added entries)
-        price_cache = load_price_cache()
+        try:
+            price_cache = load_price_cache()
+        except Exception as e:
+            logger.error(f"Failed to reload price cache: {e}")
+            price_cache = {}
         
         # Generate all reports
-        reports = generate_all_reports(master_df, price_cache)
+        try:
+            reports = generate_all_reports(master_df, price_cache)
+        except Exception as e:
+            logger.exception("Failed to generate reports")
+            print(f"\n✗ Error generating reports: {e}")
+            reports = {}
         
         # Save price cache (may have new prices from report generation)
-        save_price_cache(price_cache)
+        try:
+            save_price_cache(price_cache)
+            logger.info("Saved final price cache")
+        except Exception as e:
+            logger.error(f"Failed to save final price cache: {e}")
         
         # Show sample of output
         print("\nSample of master transactions (first 10 rows):")
         print(master_df.head(10).to_string())
     else:
+        logger.warning("No transactions to export")
         print("\nNo transactions to export.")
+    
+    logger.info("Processing completed successfully")
 
 
 if __name__ == "__main__":

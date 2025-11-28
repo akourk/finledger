@@ -5,24 +5,32 @@ Calculates cost basis using FIFO (First In, First Out) method.
 Tracks realized and unrealized gains/losses.
 """
 
+import logging
 import pandas as pd
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 
 from ..utils.prices import get_price_from_yfinance, get_price_changes
 
+logger = logging.getLogger(__name__)
 
-def get_transaction_effect(row) -> Tuple[Optional[str], float]:
+
+def get_transaction_effect(row: pd.Series) -> Tuple[Optional[str], float]:
     """
     Determine how a transaction affects cost basis.
-    Returns (effect_type, quantity) where effect_type is:
-    - 'buy': adds to position
-    - 'sell': removes from position
-    - 'merger_receive': receives shares with inherited cost basis
-    - 'merger_remove': removes shares (saves cost basis for transfer)
-    - 'merger_cash': cash from merger (realizes gain/loss)
-    - 'cash_in_lieu': cash for fractional shares
-    - None: no effect on cost basis
+    
+    Args:
+        row: Transaction row from DataFrame
+    
+    Returns:
+        Tuple of (effect_type, quantity) where effect_type is:
+        - 'buy': adds to position
+        - 'sell': removes from position
+        - 'merger_receive': receives shares with inherited cost basis
+        - 'merger_remove': removes shares (saves cost basis for transfer)
+        - 'merger_cash': cash from merger (realizes gain/loss)
+        - 'cash_in_lieu': cash for fractional shares
+        - None: no effect on cost basis
     """
     action = row["Action"]
     qty = row["Quantity"]
@@ -75,10 +83,16 @@ def get_transaction_effect(row) -> Tuple[Optional[str], float]:
         return None, 0
 
 
-def get_action_order(row) -> int:
+def get_action_order(row: pd.Series) -> int:
     """
     Determine action order for same-day transactions.
     Lower number = processed first.
+    
+    Args:
+        row: Transaction row from DataFrame
+    
+    Returns:
+        Integer order value (0-4)
     """
     action = row["Action"]
     qty = row["Quantity"]
@@ -102,7 +116,7 @@ def get_action_order(row) -> int:
         return 1  # Other actions in the middle
 
 
-def calculate_cost_basis(df: pd.DataFrame, price_cache: dict) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def calculate_cost_basis(df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Calculate cost basis for all holdings using FIFO (First In, First Out) method.
     
@@ -112,14 +126,26 @@ def calculate_cost_basis(df: pd.DataFrame, price_cache: dict) -> Tuple[pd.DataFr
     - Realized gains/losses from sales
     - Unrealized gains/losses for current holdings
     
-    Returns tuple of (holdings_df, realized_gains_df, tax_lots_df)
+    Args:
+        df: DataFrame with transaction data
+        price_cache: Nested dict of {symbol: {date: price}}
+    
+    Returns:
+        Tuple of (holdings_df, realized_gains_df, tax_lots_df)
     """
     if df.empty:
+        logger.warning("Empty DataFrame passed to calculate_cost_basis")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    
+    logger.info("Calculating cost basis using FIFO method")
     
     df = df.copy()
     
-    df["ActionOrder"] = df.apply(get_action_order, axis=1)
+    try:
+        df["ActionOrder"] = df.apply(get_action_order, axis=1)
+    except Exception as e:
+        logger.exception("Error determining action order")
+        raise ValueError(f"Failed to determine action order: {e}")
     # Sort order: Account, Date, ActionOrder, Symbol
     df = df.sort_values(["Account", "Date", "ActionOrder", "Symbol"]).reset_index(drop=True)
     df = df.drop(columns=["ActionOrder"])

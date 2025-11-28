@@ -4,17 +4,26 @@ Holdings Calculator Module
 Calculates current holdings quantities and values from transactions.
 """
 
+import logging
 import pandas as pd
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 
 from ..utils.prices import get_price_from_yfinance
 
+logger = logging.getLogger(__name__)
 
-def get_signed_quantity(row) -> float:
+
+def get_signed_quantity(row: pd.Series) -> float:
     """
     Calculate signed quantity based on action type.
     Positive = shares acquired, Negative = shares disposed.
+    
+    Args:
+        row: Transaction row from DataFrame
+    
+    Returns:
+        Signed quantity (positive for acquisitions, negative for disposals)
     """
     action = row["Action"]
     qty = row["Quantity"]
@@ -120,7 +129,7 @@ def get_signed_quantity(row) -> float:
         return 0
 
 
-def calculate_holdings(df: pd.DataFrame, price_cache: dict) -> pd.DataFrame:
+def calculate_holdings(df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]]) -> pd.DataFrame:
     """
     Calculate current holdings for each account and asset combination.
     
@@ -131,15 +140,27 @@ def calculate_holdings(df: pd.DataFrame, price_cache: dict) -> pd.DataFrame:
     - Dividend/Interest/Staking: +quantity (if reinvested, otherwise 0)
     - StockSplit: The split adjustment already modified historical quantities
     
-    Returns DataFrame with columns: Account, Symbol, Quantity, CurrentPrice, Value, Currency
+    Args:
+        df: DataFrame with transaction data
+        price_cache: Nested dict of {symbol: {date: price}}
+    
+    Returns:
+        DataFrame with columns: Account, Symbol, Quantity, CurrentPrice, Value, Currency
     """
     if df.empty:
+        logger.warning("Empty DataFrame passed to calculate_holdings")
         return pd.DataFrame(columns=["Account", "Symbol", "Quantity", "CurrentPrice", "Value", "Currency"])
+    
+    logger.info("Calculating current holdings")
     
     # Create a copy to work with
     df = df.copy()
     
-    df["SignedQty"] = df.apply(get_signed_quantity, axis=1)
+    try:
+        df["SignedQty"] = df.apply(get_signed_quantity, axis=1)
+    except Exception as e:
+        logger.exception("Error calculating signed quantities")
+        raise ValueError(f"Failed to calculate signed quantities: {e}")
     
     # Group by Account and Symbol, sum quantities
     holdings = df.groupby(["Account", "Symbol", "Currency"]).agg({

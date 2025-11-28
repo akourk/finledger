@@ -39,6 +39,19 @@ header {
     margin-bottom: 32px;
     padding-bottom: 16px;
     border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.header-left {
+    flex: 1;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 
 header h1 {
@@ -154,8 +167,8 @@ header h1 {
     flex-direction: column;
 }
 
-.chart-container > .recent-activity,
-.chart-container > .top-movers {
+.chart-container>.recent-activity,
+.chart-container>.top-movers {
     flex: 1;
 }
 
@@ -570,7 +583,7 @@ header h1 {
     cursor: pointer;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
     color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     overflow: hidden;
     box-sizing: border-box;
     min-width: 0;
@@ -578,7 +591,7 @@ header h1 {
 
 .treemap-cell:hover {
     transform: scale(1.03);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     z-index: 10;
 }
 
@@ -1913,4 +1926,704 @@ header h1 {
 .action-badge.option {
     background: rgba(236, 72, 153, 0.15);
     color: #ec4899;
+}
+
+/* ==================== */
+/* Loading Skeletons    */
+/* ==================== */
+
+@keyframes skeleton-pulse {
+
+    0%,
+    100% {
+        opacity: 0.4;
+    }
+
+    50% {
+        opacity: 0.8;
+    }
+}
+
+.skeleton {
+    background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-hover) 50%, var(--bg-card) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+.skeleton-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    min-height: 100px;
+}
+
+.skeleton-card .skeleton-label {
+    height: 12px;
+    width: 60%;
+    margin-bottom: 12px;
+    background: linear-gradient(90deg, var(--bg-hover) 25%, #383838 50%, var(--bg-hover) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+.skeleton-card .skeleton-value {
+    height: 28px;
+    width: 80%;
+    background: linear-gradient(90deg, var(--bg-hover) 25%, #383838 50%, var(--bg-hover) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+.skeleton-chart {
+    height: 300px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.skeleton-chart::after {
+    content: '';
+    width: 200px;
+    height: 200px;
+    border-radius: 50%;
+    background: linear-gradient(90deg, var(--bg-hover) 25%, #383838 50%, var(--bg-hover) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-table {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.skeleton-table-header {
+    display: flex;
+    gap: 16px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.skeleton-table-header .skeleton {
+    height: 14px;
+    flex: 1;
+}
+
+.skeleton-table-row {
+    display: flex;
+    gap: 16px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.skeleton-table-row .skeleton {
+    height: 16px;
+    flex: 1;
+}
+
+.skeleton-table-row:last-child {
+    border-bottom: none;
+}
+
+/* Loading container */
+.loading-container {
+    display: block;
+}
+
+.loading-container.loaded {
+    display: none;
+}
+
+.content-container {
+    display: none;
+}
+
+.content-container.loaded {
+    display: block;
+}
+
+/* ==================== */
+/* Refresh Indicator    */
+/* ==================== */
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.refresh-indicator {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.refresh-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all 0.15s;
+}
+
+.refresh-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--accent-blue);
+}
+
+.refresh-btn.refreshing {
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+.refresh-btn.refreshing .refresh-icon {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.refresh-icon {
+    width: 14px;
+    height: 14px;
+    display: inline-block;
+}
+
+.refresh-status {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.refresh-status .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+}
+
+.refresh-status.success {
+    color: var(--accent-green);
+}
+
+.refresh-status.success .status-dot {
+    background: var(--accent-green);
+}
+
+.refresh-status.error {
+    color: var(--accent-red);
+}
+
+.refresh-status.error .status-dot {
+    background: var(--accent-red);
+}
+
+/* ==================== */
+/* Corporate Actions    */
+/* ==================== */
+
+#corpActionsSummary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.corp-action-stat {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+}
+
+.corp-action-stat .stat-value {
+    font-size: 1.75rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.corp-action-stat .stat-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.corp-action-stat.splits .stat-value {
+    color: var(--accent-blue);
+}
+
+.corp-action-stat.mergers .stat-value {
+    color: #a855f7;
+}
+
+.corp-action-stat.spinoffs .stat-value {
+    color: #f59e0b;
+}
+
+.corp-action-stat.liquidations .stat-value {
+    color: var(--accent-red);
+}
+
+/* Corporate Actions Timeline */
+#corpActionsTimeline {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 24px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.timeline-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--text-primary);
+}
+
+.timeline {
+    position: relative;
+    padding-left: 24px;
+}
+
+.timeline::before {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border-color);
+}
+
+.timeline-item {
+    position: relative;
+    padding-bottom: 20px;
+}
+
+.timeline-item:last-child {
+    padding-bottom: 0;
+}
+
+.timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -18px;
+    top: 4px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent-blue);
+    border: 2px solid var(--bg-card);
+}
+
+.timeline-item.split::before {
+    background: var(--accent-blue);
+}
+
+.timeline-item.merger::before {
+    background: #a855f7;
+}
+
+.timeline-item.spinoff::before {
+    background: #f59e0b;
+}
+
+.timeline-item.liquidation::before {
+    background: var(--accent-red);
+}
+
+.timeline-date {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+}
+
+.timeline-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.timeline-symbol {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.timeline-type {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+.timeline-type.split {
+    background: rgba(96, 165, 250, 0.15);
+    color: #60a5fa;
+}
+
+.timeline-type.merger {
+    background: rgba(168, 85, 247, 0.15);
+    color: #a855f7;
+}
+
+.timeline-type.spinoff {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+}
+
+.timeline-type.liquidation {
+    background: rgba(248, 113, 113, 0.15);
+    color: #f87171;
+}
+
+.timeline-details {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+/* Corporate Actions Chart */
+.corp-actions-chart-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-bottom: 24px;
+}
+
+@media (max-width: 768px) {
+    .corp-actions-chart-container {
+        grid-template-columns: 1fr;
+    }
+}
+
+.corp-actions-chart-wrapper {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.corp-actions-chart-wrapper h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--text-primary);
+}
+
+/* Corporate Actions Table */
+#corpActionsTable {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+#corpActionsTable th {
+    background: var(--bg-secondary);
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+#corpActionsTable td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.875rem;
+}
+
+#corpActionsTable tr:last-child td {
+    border-bottom: none;
+}
+
+#corpActionsTable tr:hover {
+    background: var(--bg-hover);
+}
+
+.corp-type-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.corp-type-badge.split {
+    background: rgba(96, 165, 250, 0.15);
+    color: #60a5fa;
+}
+
+.corp-type-badge.merger {
+    background: rgba(168, 85, 247, 0.15);
+    color: #a855f7;
+}
+
+.corp-type-badge.spinoff {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+}
+
+.corp-type-badge.liquidation {
+    background: rgba(248, 113, 113, 0.15);
+    color: #f87171;
+}
+
+.corp-type-badge.acquisition {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+}
+
+.corp-type-badge.reverse-split {
+    background: rgba(107, 114, 128, 0.15);
+    color: #9ca3af;
+}
+
+/* Corporate Actions Filter Row */
+.ca-filter-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.ca-filter-row select,
+.ca-filter-row input {
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+
+.ca-filter-row select:focus,
+.ca-filter-row input:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+}
+
+.ca-filter-row .search-box {
+    min-width: 200px;
+}
+
+/* Cost Basis Impact Section */
+.cost-basis-stats {
+    padding: 16px 0;
+}
+
+.cost-basis-stats .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.cost-basis-stats .stat-row:last-of-type {
+    border-bottom: none;
+}
+
+.cost-basis-stats .stat-label {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+}
+
+.cost-basis-stats .stat-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.cost-basis-stats .stat-value.positive {
+    color: var(--accent-green);
+}
+
+.cost-basis-stats .stat-note {
+    margin-top: 16px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.cost-basis-stats .stat-note p {
+    margin: 4px 0;
+}
+
+/* Corporate Actions Summary within the tab */
+.corporate-actions-summary .summary-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+}
+
+/* Empty state for corporate actions */
+.corp-actions-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-secondary);
+}
+
+.corp-actions-empty-icon {
+    font-size: 3rem;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.corp-actions-empty h3 {
+    font-size: 1rem;
+    margin-bottom: 8px;
+    color: var(--text-primary);
+}
+
+.corp-actions-empty p {
+    font-size: 0.875rem;
+}
+
+/* Loading skeleton styles */
+.loading-skeleton {
+    padding: 24px 0;
+}
+
+.skeleton-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.skeleton-tab {
+    height: 36px;
+    width: 100px;
+    background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-hover) 50%, var(--bg-card) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+.skeleton-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.skeleton-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    height: 90px;
+}
+
+.skeleton-card::before {
+    content: '';
+    display: block;
+    height: 12px;
+    width: 60%;
+    margin-bottom: 12px;
+    background: linear-gradient(90deg, var(--bg-hover) 25%, #383838 50%, var(--bg-hover) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+.skeleton-card::after {
+    content: '';
+    display: block;
+    height: 28px;
+    width: 80%;
+    background: linear-gradient(90deg, var(--bg-hover) 25%, #383838 50%, var(--bg-hover) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+    border-radius: 4px;
+}
+
+.skeleton-charts {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.skeleton-chart {
+    height: 250px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.skeleton-chart::after {
+    content: '';
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    background: linear-gradient(90deg, var(--bg-hover) 25%, #383838 50%, var(--bg-hover) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-table {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.skeleton-row {
+    height: 48px;
+    border-bottom: 1px solid var(--border-color);
+    background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-hover) 50%, var(--bg-card) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-row:last-child {
+    border-bottom: none;
+}
+
+/* Hide skeleton when data is loaded */
+.loading-skeleton.hidden {
+    display: none;
 }

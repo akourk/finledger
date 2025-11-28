@@ -5,25 +5,35 @@ Functions for fetching prices from yfinance, handling stock splits,
 and getting sector information.
 """
 
+import logging
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, List, Tuple
 
 from fin.config import DELISTED_SYMBOLS, SYMBOL_MAP, PRICE_CONVERSION_MAP
 from fin.utils.cache import save_sector_cache
 
+logger = logging.getLogger(__name__)
 
-def get_price_from_yfinance(ticker: str, date_str: str, cache: dict) -> tuple[Optional[float], bool]:
+
+def get_price_from_yfinance(ticker: str, date_str: str, cache: Dict[str, Dict[str, float]]) -> Tuple[Optional[float], bool]:
     """
     Get the closing price for a ticker on a specific date.
     Uses cache first, then fetches from yfinance if not cached.
     Handles weekends/holidays by looking at previous trading days.
     
-    Returns: (price, was_fetched) where was_fetched indicates if a new fetch was made
+    Args:
+        ticker: Stock ticker symbol
+        date_str: Date in YYYY-MM-DD format
+        cache: Nested dict of {symbol: {date: price}}
+    
+    Returns:
+        Tuple of (price, was_fetched) where was_fetched indicates if a new fetch was made
     """
     # Skip delisted symbols - they no longer trade
     if ticker in DELISTED_SYMBOLS:
+        logger.debug(f"Skipping delisted symbol: {ticker}")
         return None, False  # No fetch needed, symbol is delisted
     
     # Check cache first
@@ -31,7 +41,11 @@ def get_price_from_yfinance(ticker: str, date_str: str, cache: dict) -> tuple[Op
         return cache[ticker][date_str], False  # From cache, no fetch needed
     
     # Parse the date
-    target_date = datetime.strptime(date_str, "%Y-%m-%d")
+    try:
+        target_date = datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError as e:
+        logger.error(f"Invalid date format '{date_str}': {e}")
+        return None, False
     
     # Fetch data for a range around the target date (to handle weekends/holidays)
     start_date = target_date - timedelta(days=10)
@@ -43,6 +57,7 @@ def get_price_from_yfinance(ticker: str, date_str: str, cache: dict) -> tuple[Op
                             end=end_date.strftime("%Y-%m-%d"))
         
         if hist.empty:
+            logger.warning(f"No price data found for {ticker} around {date_str}")
             print(f"Warning: No price data found for {ticker} around {date_str}")
             return None, True
         
@@ -63,19 +78,27 @@ def get_price_from_yfinance(ticker: str, date_str: str, cache: dict) -> tuple[Op
             cache[ticker] = {}
         cache[ticker][date_str] = price
         
+        logger.debug(f"Fetched price for {ticker} on {date_str}: ${price:.2f}")
         return price, True  # New fetch was made
         
     except Exception as e:
+        logger.error(f"Error fetching price for {ticker} on {date_str}: {e}")
         print(f"Warning: Error fetching price for {ticker} on {date_str}: {e}")
         return None, True
 
 
-def get_price_changes(symbols: list, price_cache: dict) -> dict:
+def get_price_changes(symbols: List[str], price_cache: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, Optional[float]]]:
     """
     Calculate 7-day and 30-day price changes for a list of symbols.
     
-    Returns: {symbol: {"change_7d": pct, "change_30d": pct, "price_7d": price, "price_30d": price}}
+    Args:
+        symbols: List of ticker symbols
+        price_cache: Nested dict of {symbol: {date: price}}
+    
+    Returns:
+        Dict of {symbol: {"change_7d": pct, "change_30d": pct, "price_7d": price, "price_30d": price}}
     """
+    logger.info(f"Calculating price changes for {len(symbols)} symbols")
     today = datetime.now()
     date_7d = (today - timedelta(days=7)).strftime("%Y-%m-%d")
     date_30d = (today - timedelta(days=30)).strftime("%Y-%m-%d")
@@ -176,6 +199,10 @@ def adjust_for_splits(df: pd.DataFrame, split_cache: dict) -> pd.DataFrame:
     
     For StockSplit/ReverseStockSplit transactions:
     - These record the split event itself, so we don't adjust them
+    
+    For SpinOff transactions:
+    - Quantity is adjusted (parent company may have split)
+    - But only if the spinoff symbol is the same as a split stock
     """
     if df.empty:
         return df
@@ -184,15 +211,17 @@ def adjust_for_splits(df: pd.DataFrame, split_cache: dict) -> pd.DataFrame:
     
     # Actions that should have quantity/price adjusted for splits
     # Note: Options (OptionBuy, OptionSell) are excluded - they have their own strike/expiry
+    # Note: SpinOff is excluded because spinoff shares are new, not historical
     adjustable_actions = ["Buy", "Sell", "Dividend", "Transfer"]
     
     # Get unique symbols that need split checking (exclude crypto, cash, etc.)
     # Filter to only include symbols that look like stock tickers
+    # Extended to allow symbols with dots (BRK.B) and length up to 6
     mask = (
         df["Action"].isin(adjustable_actions) & 
         (df["Quantity"] != 0) &
-        (df["Symbol"].str.len() <= 5) &  # Most stock tickers are 1-5 chars
-        (df["Symbol"].str.match(r'^[A-Z]+$', na=False))  # Only letters
+        (df["Symbol"].str.len() <= 6) &  # Allow slightly longer (BRK.B)
+        (df["Symbol"].str.match(r'^[A-Z\.]+$', na=False))  # Letters and dots
     )
     
     symbols_to_check = df.loc[mask, "Symbol"].unique()
@@ -203,6 +232,8 @@ def adjust_for_splits(df: pd.DataFrame, split_cache: dict) -> pd.DataFrame:
     print(f"Checking {len(symbols_to_check)} symbols for stock splits...")
     
     adjusted_count = 0
+    split_summary = {}  # Track splits by symbol for reporting
+    
     for symbol in symbols_to_check:
         symbol_mask = mask & (df["Symbol"] == symbol)
         
@@ -226,9 +257,16 @@ def adjust_for_splits(df: pd.DataFrame, split_cache: dict) -> pd.DataFrame:
                 existing_note = df.loc[idx, "Note"]
                 df.loc[idx, "Note"] = f"{existing_note}; {split_note}" if existing_note else split_note
                 adjusted_count += 1
+                
+                # Track for summary
+                if symbol not in split_summary:
+                    split_summary[symbol] = {"count": 0, "multiplier": multiplier}
+                split_summary[symbol]["count"] += 1
     
     if adjusted_count > 0:
-        print(f"  Adjusted {adjusted_count} transactions for stock splits")
+        print(f"  Adjusted {adjusted_count} transactions for stock splits:")
+        for sym, info in sorted(split_summary.items()):
+            print(f"    - {sym}: {info['count']} transactions ({info['multiplier']:.0f}:1 split)")
     
     return df
 
