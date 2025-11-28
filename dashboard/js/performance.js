@@ -766,9 +766,9 @@ function createROIChart() {
                 label: 'Return on Investment',
                 data: roiData,
                 borderColor: '#4ade80',
-                backgroundColor: function(context) {
+                backgroundColor: function (context) {
                     var chart = context.chart;
-                    var {ctx, chartArea} = chart;
+                    var { ctx, chartArea } = chart;
                     if (!chartArea) return null;
                     var gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
                     gradient.addColorStop(0, 'rgba(248, 113, 113, 0.3)');
@@ -835,7 +835,7 @@ function createValueVsCostBasisChart() {
     var chartData = data.chart_data || [];
 
     // Filter entries that have costBasis data
-    var dataWithCostBasis = chartData.filter(function(d) {
+    var dataWithCostBasis = chartData.filter(function (d) {
         return d.costBasis !== undefined && d.value !== undefined;
     });
 
@@ -887,7 +887,7 @@ function createValueVsCostBasisChart() {
                         label: function (context) {
                             return context.dataset.label + ': ' + formatCurrency(context.raw);
                         },
-                        afterBody: function(tooltipItems) {
+                        afterBody: function (tooltipItems) {
                             var idx = tooltipItems[0].dataIndex;
                             var value = valueData[idx];
                             var cost = costBasisData[idx];
