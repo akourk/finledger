@@ -495,6 +495,8 @@ function initPerformance() {
     createPerformersComparison();
     createBenchmarkComparison();
     createBenchmarkChart();
+    createROIChart();
+    createValueVsCostBasisChart();
     createRiskMetrics();
     createBenchmarkReturnsTable();
     createAccountPerformanceTable();
@@ -525,6 +527,24 @@ function createBenchmarkComparison() {
     }
 
     var html = '<div class="benchmark-cards">';
+
+    // CAGR card (new)
+    var cagr = data.cagr;
+    var cagrClass = cagr >= 0 ? 'positive' : 'negative';
+    html += '<div class="benchmark-card">';
+    html += '<div class="benchmark-label">CAGR</div>';
+    html += '<div class="benchmark-value ' + cagrClass + '">' + (cagr !== null ? (cagr >= 0 ? '+' : '') + cagr.toFixed(2) + '%' : '—') + '</div>';
+    html += '<div class="benchmark-desc">Compound Annual Growth Rate</div>';
+    html += '</div>';
+
+    // Current ROI card (new)
+    var roi = data.current_roi;
+    var roiClass = roi >= 0 ? 'positive' : 'negative';
+    html += '<div class="benchmark-card">';
+    html += '<div class="benchmark-label">Total ROI</div>';
+    html += '<div class="benchmark-value ' + roiClass + '">' + (roi !== null ? (roi >= 0 ? '+' : '') + roi.toFixed(2) + '%' : '—') + '</div>';
+    html += '<div class="benchmark-desc">Return on current cost basis</div>';
+    html += '</div>';
 
     // Alpha card
     var alpha = data.alpha;
@@ -715,6 +735,188 @@ function createRiskMetrics() {
     html += '</div>';
 
     container.innerHTML = html;
+}
+
+// Create ROI over time chart
+function createROIChart() {
+    var ctx = document.getElementById('roiChart');
+    if (!ctx) return;
+
+    var data = getBenchmarkData();
+    var roiHistory = data.roi_history || [];
+
+    if (roiHistory.length === 0) {
+        ctx.parentElement.innerHTML = '<p class="muted" style="text-align: center; padding: 50px;">No ROI history available</p>';
+        return;
+    }
+
+    var labels = roiHistory.map(function (d) { return d.date; });
+    var roiData = roiHistory.map(function (d) { return d.roi; });
+
+    // Determine colors based on values
+    var pointColors = roiData.map(function (v) {
+        return v >= 0 ? 'rgba(74, 222, 128, 1)' : 'rgba(248, 113, 113, 1)';
+    });
+
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Return on Investment',
+                data: roiData,
+                borderColor: '#4ade80',
+                backgroundColor: function(context) {
+                    var chart = context.chart;
+                    var {ctx, chartArea} = chart;
+                    if (!chartArea) return null;
+                    var gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                    gradient.addColorStop(0, 'rgba(248, 113, 113, 0.3)');
+                    gradient.addColorStop(0.5, 'rgba(128, 128, 128, 0.1)');
+                    gradient.addColorStop(1, 'rgba(74, 222, 128, 0.3)');
+                    return gradient;
+                },
+                fill: true,
+                tension: 0.3,
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 5
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            var value = context.raw;
+                            return 'ROI: ' + (value >= 0 ? '+' : '') + value.toFixed(2) + '%';
+                        }
+                    }
+                },
+                annotation: {
+                    annotations: {
+                        zeroLine: {
+                            type: 'line',
+                            yMin: 0,
+                            yMax: 0,
+                            borderColor: 'rgba(255, 255, 255, 0.3)',
+                            borderWidth: 1,
+                            borderDash: [5, 5]
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888', maxTicksLimit: 12 },
+                    grid: { display: false }
+                },
+                y: {
+                    ticks: {
+                        color: '#888',
+                        callback: function (value) { return value + '%'; }
+                    },
+                    grid: { color: 'rgba(255,255,255,0.05)' }
+                }
+            }
+        }
+    });
+}
+
+// Create Value vs Cost Basis chart
+function createValueVsCostBasisChart() {
+    var ctx = document.getElementById('valueCostBasisChart');
+    if (!ctx) return;
+
+    var data = getBenchmarkData();
+    var chartData = data.chart_data || [];
+
+    // Filter entries that have costBasis data
+    var dataWithCostBasis = chartData.filter(function(d) {
+        return d.costBasis !== undefined && d.value !== undefined;
+    });
+
+    if (dataWithCostBasis.length === 0) {
+        ctx.parentElement.innerHTML = '<p class="muted" style="text-align: center; padding: 50px;">No cost basis history available</p>';
+        return;
+    }
+
+    var labels = dataWithCostBasis.map(function (d) { return d.date; });
+    var valueData = dataWithCostBasis.map(function (d) { return d.value; });
+    var costBasisData = dataWithCostBasis.map(function (d) { return d.costBasis; });
+
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Portfolio Value',
+                    data: valueData,
+                    borderColor: '#4ade80',
+                    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    borderWidth: 2
+                },
+                {
+                    label: 'Cost Basis',
+                    data: costBasisData,
+                    borderColor: '#9ca3af',
+                    backgroundColor: 'rgba(156, 163, 175, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                    borderWidth: 2,
+                    borderDash: [5, 5]
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: { color: '#888', font: { size: 11 } }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            return context.dataset.label + ': ' + formatCurrency(context.raw);
+                        },
+                        afterBody: function(tooltipItems) {
+                            var idx = tooltipItems[0].dataIndex;
+                            var value = valueData[idx];
+                            var cost = costBasisData[idx];
+                            var gain = value - cost;
+                            var gainPct = ((gain / cost) * 100).toFixed(2);
+                            return 'Gain: ' + formatCurrency(gain) + ' (' + (gain >= 0 ? '+' : '') + gainPct + '%)';
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#888', maxTicksLimit: 12 },
+                    grid: { display: false }
+                },
+                y: {
+                    ticks: {
+                        color: '#888',
+                        callback: function (value) {
+                            if (value >= 1000000) return '$' + (value / 1000000).toFixed(1) + 'M';
+                            if (value >= 1000) return '$' + (value / 1000).toFixed(0) + 'K';
+                            return '$' + value;
+                        }
+                    },
+                    grid: { color: 'rgba(255,255,255,0.05)' }
+                }
+            }
+        }
+    });
 }
 
 // Create benchmark returns comparison table

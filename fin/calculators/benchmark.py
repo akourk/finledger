@@ -330,6 +330,96 @@ def calculate_max_drawdown(historical_df: pd.DataFrame) -> Dict[str, any]:
     }
 
 
+def calculate_cagr(start_value: float, end_value: float, years: float) -> Optional[float]:
+    """
+    Calculate Compound Annual Growth Rate (CAGR).
+    
+    CAGR = (End Value / Start Value) ^ (1 / Years) - 1
+    
+    Args:
+        start_value: Starting value (cost basis at start)
+        end_value: Ending value (portfolio value now)
+        years: Number of years
+    
+    Returns:
+        CAGR as a percentage, or None if invalid
+    """
+    if start_value <= 0 or end_value <= 0 or years <= 0:
+        return None
+    
+    cagr = (pow(end_value / start_value, 1 / years) - 1) * 100
+    return round(cagr, 2)
+
+
+def calculate_roi_metrics(historical_df: pd.DataFrame) -> Dict:
+    """
+    Calculate Return on Investment metrics using historical cost basis.
+    
+    Args:
+        historical_df: DataFrame with Date, TotalValue, and CostBasis columns
+    
+    Returns:
+        Dict with ROI metrics and historical ROI data
+    """
+    result = {
+        'current_roi': None,
+        'cagr': None,
+        'avg_annual_return': None,
+        'roi_history': []
+    }
+    
+    if historical_df.empty:
+        return result
+    
+    df = historical_df.copy()
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.sort_values('Date')
+    
+    # Check for required columns
+    if 'CostBasis' not in df.columns or 'TotalValue' not in df.columns:
+        logger.warning("Missing CostBasis or TotalValue for ROI calculation")
+        return result
+    
+    # Current ROI
+    latest = df.iloc[-1]
+    if latest['CostBasis'] > 0:
+        current_roi = ((latest['TotalValue'] - latest['CostBasis']) / latest['CostBasis']) * 100
+        result['current_roi'] = round(current_roi, 2)
+    
+    # CAGR from first to last
+    first = df.iloc[0]
+    years = (latest['Date'] - first['Date']).days / 365.25
+    
+    if years > 0 and first['CostBasis'] > 0:
+        result['cagr'] = calculate_cagr(first['CostBasis'], latest['TotalValue'], years)
+    
+    # Average Annual Return (simple arithmetic mean of yearly returns)
+    if 'TWR' in df.columns:
+        # Use TWR if available for more accurate return
+        df['Year'] = df['Date'].dt.year
+        yearly = df.groupby('Year').last().reset_index()
+        if len(yearly) > 1:
+            yearly['YearReturn'] = yearly['TWR'].diff()
+            avg_annual = yearly['YearReturn'].dropna().mean()
+            result['avg_annual_return'] = round(avg_annual, 2)
+    
+    # Historical ROI for charting (ROI at each point in time)
+    roi_history = []
+    for _, row in df.iterrows():
+        if row['CostBasis'] > 0:
+            roi = ((row['TotalValue'] - row['CostBasis']) / row['CostBasis']) * 100
+            roi_history.append({
+                'date': row['Date'].strftime('%Y-%m-%d'),
+                'roi': round(roi, 2),
+                'value': round(row['TotalValue'], 2),
+                'costBasis': round(row['CostBasis'], 2)
+            })
+    
+    result['roi_history'] = roi_history
+    
+    return result
+
+
 def generate_benchmark_report(historical_df: pd.DataFrame,
                               portfolio_perf: Dict,
                               benchmark_symbol: str = DEFAULT_BENCHMARK) -> Dict:
@@ -432,16 +522,30 @@ def generate_benchmark_report(historical_df: pd.DataFrame,
         result['negative_days'] = int(np.sum(returns < 0))
         result['total_days'] = len(returns)
     
+    # ROI metrics using historical cost basis
+    roi_metrics = calculate_roi_metrics(hist_df)
+    result['current_roi'] = roi_metrics['current_roi']
+    result['cagr'] = roi_metrics['cagr']
+    result['avg_annual_return'] = roi_metrics['avg_annual_return']
+    result['roi_history'] = roi_metrics['roi_history']
+    
     # Historical comparison data for charting
     # Use TWR (Time-Weighted Return) if available, otherwise use TotalValue
     if not benchmark_df.empty and not hist_df.empty:
         chart_data = []
         
-        # Check if TWR column exists for proper return comparison
+        # Check for available columns
         use_twr = 'TWR' in hist_df.columns
+        use_cost_basis = 'CostBasis' in hist_df.columns
+        
+        cols_to_merge = ['Date', 'TotalValue']
+        if use_twr:
+            cols_to_merge.append('TWR')
+        if use_cost_basis:
+            cols_to_merge.append('CostBasis')
         
         merged = pd.merge(
-            hist_df[['Date', 'TotalValue'] + (['TWR'] if use_twr else [])],
+            hist_df[cols_to_merge],
             benchmark_df,
             on='Date',
             how='inner'
@@ -461,6 +565,10 @@ def generate_benchmark_report(historical_df: pd.DataFrame,
             
             merged['BenchmarkNorm'] = merged['Price'] / start_bench * 100
             
+            # Calculate ROI at each point if cost basis available
+            if use_cost_basis:
+                merged['ROI'] = ((merged['TotalValue'] - merged['CostBasis']) / merged['CostBasis']) * 100
+            
             # Sample monthly (use 'ME' for month-end)
             merged = merged.set_index('Date')
             monthly = merged.resample('ME').last().reset_index()
@@ -470,14 +578,22 @@ def generate_benchmark_report(historical_df: pd.DataFrame,
             
             for _, row in monthly.iterrows():
                 if pd.notna(row['Date']) and pd.notna(row['PortfolioNorm']) and pd.notna(row['BenchmarkNorm']):
-                    chart_data.append({
+                    entry = {
                         'date': row['Date'].strftime('%Y-%m-%d'),
                         'portfolio': round(float(row['PortfolioNorm']), 2),
                         'benchmark': round(float(row['BenchmarkNorm']), 2)
-                    })
+                    }
+                    # Add ROI if available
+                    if use_cost_basis and 'ROI' in row and pd.notna(row['ROI']):
+                        entry['roi'] = round(float(row['ROI']), 2)
+                    # Add cost basis normalized for chart
+                    if use_cost_basis and 'CostBasis' in row and pd.notna(row['CostBasis']):
+                        entry['costBasis'] = round(float(row['CostBasis']), 2)
+                        entry['value'] = round(float(row['TotalValue']), 2)
+                    chart_data.append(entry)
         
         result['chart_data'] = chart_data
     
-    print(f"   Alpha: {result.get('alpha')}%, Beta: {result.get('beta')}, Sharpe: {result.get('sharpe_ratio')}")
+    print(f"   Alpha: {result.get('alpha')}%, Beta: {result.get('beta')}, Sharpe: {result.get('sharpe_ratio')}, CAGR: {result.get('cagr')}%")
     
     return result
