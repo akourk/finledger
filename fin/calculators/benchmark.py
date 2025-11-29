@@ -50,27 +50,43 @@ def get_benchmark_prices(symbol: str, start_date: str, end_date: str = None,
     if price_cache is not None and symbol in price_cache:
         cached_dates = price_cache[symbol]
         
-        # Generate all dates in range
+        # Filter cached dates to those within our requested range
+        # Exclude metadata keys that start with '_'
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        date_range = pd.date_range(start=start_dt, end=end_dt, freq='D')
         
-        # Collect cached prices
         cached_prices = []
-        missing_dates = []
+        for date_str, price in cached_dates.items():
+            # Skip metadata keys
+            if date_str.startswith('_'):
+                continue
+            try:
+                date = datetime.strptime(date_str, "%Y-%m-%d")
+                if start_dt <= date <= end_dt:
+                    cached_prices.append({'Date': date, 'Price': price})
+            except ValueError:
+                continue
         
-        for date in date_range:
-            date_str = date.strftime("%Y-%m-%d")
-            if date_str in cached_dates:
-                cached_prices.append({'Date': date, 'Price': cached_dates[date_str]})
-            else:
-                missing_dates.append(date)
-        
-        # If we have most of the data cached, use cache and skip fetch
-        cache_coverage = len(cached_prices) / len(date_range) if len(date_range) > 0 else 0
-        if cache_coverage > 0.8:  # If >80% cached, use cached data only
-            if cached_prices:
-                logger.debug(f"Using cached data for {symbol} ({len(cached_prices)} days, {cache_coverage*100:.1f}% coverage)")
+        # If we have substantial cached data (at least 50 trading days worth),
+        # check if we have recent data. Markets have ~252 trading days/year.
+        # For benchmark comparison, we mainly need the trend, not every single day.
+        if len(cached_prices) >= 50:
+            # Sort to check date coverage
+            cached_prices.sort(key=lambda x: x['Date'])
+            oldest_cached = cached_prices[0]['Date']
+            newest_cached = cached_prices[-1]['Date']
+            
+            # Calculate how many trading days we expect (roughly 5/7 of calendar days)
+            expected_trading_days = ((end_dt - start_dt).days * 5 / 7)
+            actual_coverage = len(cached_prices) / expected_trading_days if expected_trading_days > 0 else 0
+            
+            # Use cache if:
+            # 1. We have reasonable coverage (>60% of expected trading days)
+            # 2. Our newest cached date is within 7 days of the requested end date
+            days_since_newest = (end_dt - newest_cached).days
+            
+            if actual_coverage > 0.6 and days_since_newest <= 7:
+                logger.debug(f"Using cached data for {symbol} ({len(cached_prices)} days, {actual_coverage*100:.1f}% coverage, {days_since_newest} days old)")
                 df = pd.DataFrame(cached_prices)
                 df['Date'] = pd.to_datetime(df['Date'])
                 return df
