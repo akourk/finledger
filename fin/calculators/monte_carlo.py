@@ -7,7 +7,7 @@ Useful for retirement planning and understanding risk.
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict
 
 import numpy as np
 import pandas as pd
@@ -98,7 +98,6 @@ def run_monte_carlo_simulation(
     # Time parameters (monthly steps)
     steps_per_year = 12
     total_steps = years * steps_per_year
-    dt = 1 / steps_per_year
 
     # Monthly contribution
     monthly_contribution = annual_contribution / 12
@@ -339,7 +338,7 @@ def generate_monte_carlo_report(
     Returns:
         Dict with full Monte Carlo analysis
     """
-    print(f"\n19. Running Monte Carlo simulations...")
+    print("\n19. Running Monte Carlo simulations...")
 
     # Estimate historical volatility if available
     historical_stats = estimate_historical_stats(historical_df)
@@ -364,7 +363,7 @@ def generate_monte_carlo_report(
     )
 
     # Scenario analysis
-    print(f"   Running scenario analysis...")
+    print("   Running scenario analysis...")
     scenarios = run_scenario_analysis(
         starting_value=portfolio_value,
         annual_contribution=annual_contribution,
@@ -372,7 +371,7 @@ def generate_monte_carlo_report(
     )
 
     # Safe withdrawal rate calculation (for post-retirement)
-    print(f"   Calculating safe withdrawal rate...")
+    print("   Calculating safe withdrawal rate...")
     withdrawal_analysis = calculate_safe_withdrawal(
         portfolio_value=main_simulation["final_statistics"]["median"],
         years=30,  # 30 years in retirement

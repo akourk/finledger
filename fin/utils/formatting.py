@@ -84,5 +84,5 @@ def parse_date(date_str: str, format_hint: str = "auto") -> str:
     # Last resort - try pandas
     try:
         return pd.to_datetime(date_str).strftime("%Y-%m-%d")
-    except:
+    except Exception:
         return date_str

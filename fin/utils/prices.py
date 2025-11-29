@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import yfinance as yf
 
-from fin.config import DELISTED_SYMBOLS, PRICE_CONVERSION_MAP, SYMBOL_MAP
+from fin.config import DELISTED_SYMBOLS, PRICE_CONVERSION_MAP
 from fin.utils.cache import save_sector_cache
 
 logger = logging.getLogger(__name__)

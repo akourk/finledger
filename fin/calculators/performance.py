@@ -4,12 +4,11 @@ Performance Calculator Module
 Calculates multi-period returns for assets, accounts, and portfolio.
 """
 
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 import pandas as pd
 
-from ..utils.prices import PERFORMANCE_PERIODS, get_multi_period_returns, get_price_from_yfinance
+from ..utils.prices import PERFORMANCE_PERIODS, get_multi_period_returns
 
 
 def calculate_asset_performance(

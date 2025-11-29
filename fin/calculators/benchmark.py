@@ -7,7 +7,7 @@ including alpha, beta, Sharpe ratio, and tracking error.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -73,7 +73,6 @@ def get_benchmark_prices(
         if len(cached_prices) >= 50:
             # Sort to check date coverage
             cached_prices.sort(key=lambda x: x["Date"])
-            oldest_cached = cached_prices[0]["Date"]
             newest_cached = cached_prices[-1]["Date"]
 
             # Calculate how many trading days we expect (roughly 5/7 of calendar days)
@@ -89,7 +88,8 @@ def get_benchmark_prices(
 
             if actual_coverage > 0.6 and days_since_newest <= 7:
                 logger.debug(
-                    f"Using cached data for {symbol} ({len(cached_prices)} days, {actual_coverage*100:.1f}% coverage, {days_since_newest} days old)"
+                    f"Using cached data for {symbol} ({len(cached_prices)} days, "
+                    f"{actual_coverage*100:.1f}% coverage, {days_since_newest} days old)"
                 )
                 df = pd.DataFrame(cached_prices)
                 df["Date"] = pd.to_datetime(df["Date"])
@@ -660,8 +660,10 @@ def generate_benchmark_report(
 
         result["chart_data"] = chart_data
 
-    print(
-        f"   Alpha: {result.get('alpha')}%, Beta: {result.get('beta')}, Sharpe: {result.get('sharpe_ratio')}, CAGR: {result.get('cagr')}%"
-    )
+    alpha = result.get('alpha')
+    beta = result.get('beta')
+    sharpe = result.get('sharpe_ratio')
+    cagr = result.get('cagr')
+    print(f"   Alpha: {alpha}%, Beta: {beta}, Sharpe: {sharpe}, CAGR: {cagr}%")
 
     return result

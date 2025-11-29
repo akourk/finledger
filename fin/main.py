@@ -69,38 +69,33 @@ logger = logging.getLogger(__name__)
 logging.getLogger("yfinance").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-from .calculators import (
+from .calculators import (  # noqa: E402
     add_running_balances,
     add_running_cost_basis,
     calculate_cash_balances,
     calculate_cost_basis,
     calculate_historical_holdings,
     calculate_holdings,
-    calculate_holdings_quantities_only,
     calculate_income,
     calculate_income_by_year,
     calculate_portfolio_cost_basis_history,
 )
-from .config import (
+from .config import (  # noqa: E402
     DATA_INPUT_PATH,
     DATA_OUTPUT_PATH,
-    UNIFIED_COLUMNS,
 )
-from .corporate_actions import (
-    KNOWN_MERGERS,
-    KNOWN_SPINOFFS,
+from .corporate_actions import (  # noqa: E402
     generate_corporate_actions_report,
-    identify_corporate_actions,
 )
-from .parsers import PARSER_REGISTRY, detect_source, merge_accounts
-from .parsers.base import (
+from .parsers import PARSER_REGISTRY, detect_source, merge_accounts  # noqa: E402
+from .parsers.base import (  # noqa: E402
     create_empty_dataframe,
     normalize_amounts,
     standardize_symbols,
     validate_dataframe,
 )
-from .quality import print_quality_report, run_quality_checks
-from .reports import (
+from .quality import print_quality_report, run_quality_checks  # noqa: E402
+from .reports import (  # noqa: E402
     export_account_summary_csv,
     export_cash_balances_csv,
     export_dataframe_js,
@@ -119,17 +114,16 @@ from .reports import (
     generate_retirement_summary,
     print_portfolio_summary,
 )
-from .utils.cache import (
+from .utils.cache import (  # noqa: E402
     load_price_cache,
     load_sector_cache,
     load_split_cache,
     load_unavailable_ticker_cache,
     save_price_cache,
-    save_sector_cache,
     save_split_cache,
     save_unavailable_ticker_cache,
 )
-from .utils.prices import (
+from .utils.prices import (  # noqa: E402
     adjust_for_splits,
     convert_price_based_symbols,
     get_sectors_for_holdings,
@@ -204,7 +198,7 @@ def process_file(file_path: Path) -> Optional[pd.DataFrame]:
         source = detect_source(file_path)
         if source is None:
             logger.warning(f"Unknown source for file: {file_path.name}")
-            print(f"    ⚠ Unknown source - skipping")
+            print("    ⚠ Unknown source - skipping")
             return None
 
         logger.info(f"Detected source: {source} for {file_path.name}")
@@ -222,7 +216,7 @@ def process_file(file_path: Path) -> Optional[pd.DataFrame]:
 
         if df is None or df.empty:
             logger.warning(f"Parser returned empty DataFrame for {file_path.name}")
-            print(f"    ⚠ No transactions found in file")
+            print("    ⚠ No transactions found in file")
             return None
 
         # Validate DataFrame
@@ -414,12 +408,12 @@ def process_all_files() -> pd.DataFrame:
         # Sort by date (newest first)
         master_df = master_df.sort_values("Date", ascending=False).reset_index(drop=True)
 
-        print(f"\n" + "-" * 60)
-        print(f"Summary:")
+        print("\n" + "-" * 60)
+        print("Summary:")
         print(f"  Files processed: {files_processed}")
         print(f"  Files skipped:   {files_skipped}")
         print(f"  Total transactions: {len(master_df)}")
-        print(f"-" * 60)
+        print("-" * 60)
 
         logger.info(f"Processing complete: {files_processed} files, {len(master_df)} transactions")
         return master_df
@@ -539,9 +533,11 @@ def generate_all_reports(
     if not cash_balances.empty:
         export_cash_balances_csv(cash_balances)
         for _, row in cash_balances.iterrows():
-            print(
-                f"   {row['Account']}: Balance=${row['CurrentBalance']:,.2f}, Interest=${row['TotalInterest']:,.2f} ({row['ReturnPct']:.2f}%)"
-            )
+            acct = row['Account']
+            bal = row['CurrentBalance']
+            interest = row['TotalInterest']
+            pct = row['ReturnPct']
+            print(f"   {acct}: Balance=${bal:,.2f}, Interest=${interest:,.2f} ({pct:.2f}%)")
     else:
         print("   No cash-only accounts found.")
 
@@ -838,13 +834,12 @@ def main(args: Optional[Any] = None) -> None:
         try:
             unavailable_ticker_cache = load_unavailable_ticker_cache()
             split_cache = load_split_cache()
-            reports = generate_all_reports(
+            generate_all_reports(
                 master_df, price_cache, unavailable_ticker_cache, split_cache
             )
         except Exception as e:
             logger.exception("Failed to generate reports")
             print(f"\n✗ Error generating reports: {e}")
-            reports = {}
             unavailable_ticker_cache = {}
 
         # Save caches (may have new prices and unavailable tickers from report generation)

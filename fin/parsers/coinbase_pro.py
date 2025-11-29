@@ -39,8 +39,6 @@ def parse_coinbase_pro(file_path: pathlib.Path) -> pd.DataFrame:
         unit = row["amount/balance unit"]
         time_str = row["time"]
         trade_id = row.get("trade id", "")
-        order_id = row.get("order id", "")
-        transfer_id = row.get("transfer id", "")
 
         # Parse date from ISO format
         date_str = parse_date(time_str.split("T")[0] if "T" in str(time_str) else time_str)
@@ -63,7 +61,7 @@ def parse_coinbase_pro(file_path: pathlib.Path) -> pd.DataFrame:
             action = "Fee"
             quantity = 0
             tx_amount = abs(amount)
-            note = f"Trading fee"
+            note = "Trading fee"
         else:
             # Unknown type, skip
             continue

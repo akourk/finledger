@@ -5,7 +5,6 @@ Functions for validating data quality and detecting potential issues.
 """
 
 import logging
-from datetime import datetime
 from typing import Dict, List, Tuple
 
 import pandas as pd
@@ -93,7 +92,10 @@ def check_holdings_without_buys(df: pd.DataFrame, holdings_df: pd.DataFrame) -> 
                 QualityIssue(
                     severity="warning",
                     category="holdings",
-                    message=f"Holding without buy transaction: {holding['Account']} - {holding['Symbol']} ({holding['Quantity']:.2f} shares)",
+                    message=(
+                        f"Holding without buy transaction: {holding['Account']} - "
+                        f"{holding['Symbol']} ({holding['Quantity']:.2f} shares)"
+                    ),
                     details={
                         "account": holding["Account"],
                         "symbol": holding["Symbol"],
@@ -138,7 +140,10 @@ def check_large_price_discrepancies(
                         QualityIssue(
                             severity="warning",
                             category="pricing",
-                            message=f"Large price change: {row['Symbol']} - {price_change_pct:.1f}% (${avg_cost:.2f} → ${row['CurrentPrice']:.2f})",
+                            message=(
+                                f"Large price change: {row['Symbol']} - "
+                                f"{price_change_pct:.1f}% (${avg_cost:.2f} → ${row['CurrentPrice']:.2f})"
+                            ),
                             details={
                                 "symbol": row["Symbol"],
                                 "avg_cost": avg_cost,
@@ -310,7 +315,10 @@ def check_orphaned_sells(df: pd.DataFrame) -> List[QualityIssue]:
                     QualityIssue(
                         severity="error",
                         category="transactions",
-                        message=f"Sell without sufficient buy: {account} - {symbol} on {row['Date']} (deficit: {abs(cumulative):.4f} shares)",
+                        message=(
+                            f"Sell without sufficient buy: {account} - {symbol} on "
+                            f"{row['Date']} (deficit: {abs(cumulative):.4f} shares)"
+                        ),
                         details={
                             "account": account,
                             "symbol": symbol,
@@ -345,7 +353,10 @@ def check_duplicate_detection_quality(df: pd.DataFrame, dupes_removed: int) -> L
                 QualityIssue(
                     severity="info",
                     category="data_quality",
-                    message=f"High duplicate rate: {dupes_removed} duplicates removed ({dupe_pct:.1f}% of original data)",
+                    message=(
+                        f"High duplicate rate: {dupes_removed} duplicates removed "
+                        f"({dupe_pct:.1f}% of original data)"
+                    ),
                     details={"duplicates": dupes_removed, "percentage": dupe_pct},
                 )
             )
@@ -414,7 +425,10 @@ def check_corporate_action_basis(df: pd.DataFrame, holdings_df: pd.DataFrame) ->
                 QualityIssue(
                     severity="info",
                     category="corporate_action",
-                    message=f"SpinOff ({special_type}): {account} - {symbol} ({qty:.4f} shares) - typically $0 cost basis",
+                    message=(
+                        f"SpinOff ({special_type}): {account} - {symbol} ({qty:.4f} shares) "
+                        f"- typically $0 cost basis"
+                    ),
                     details={
                         "account": account,
                         "symbol": symbol,
@@ -581,7 +595,8 @@ def print_quality_report(issues: List[QualityIssue], summary: Dict[str, int]) ->
 
     # Summary
     print(f"\n{'='*60}")
-    print(
-        f"Total Issues: {summary['total']} ({summary['errors']} errors, {summary['warnings']} warnings, {summary['info']} info)"
-    )
+    errs = summary['errors']
+    warns = summary['warnings']
+    infos = summary['info']
+    print(f"Total Issues: {summary['total']} ({errs} errors, {warns} warnings, {infos} info)")
     print("=" * 60)

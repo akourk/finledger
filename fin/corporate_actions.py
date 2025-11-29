@@ -14,7 +14,7 @@ Corporate Action Types:
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -295,8 +295,6 @@ def calculate_spinoff_basis_allocation(
         # No basis allocated to spinoff (e.g., warrants)
         return parent_cost_basis, 0.0
 
-    spinoff_shares = parent_shares * spinoff.ratio
-
     # Allocate based on percentages
     new_parent_basis = parent_cost_basis * (spinoff.parent_allocation_pct / 100)
     spinoff_basis = parent_cost_basis * (spinoff.spinoff_allocation_pct / 100)
@@ -472,7 +470,6 @@ def calculate_merger_basis(
 
         # Boot (cash) is taxable up to gain
         per_share_basis = acquired_cost_basis / acquired_shares
-        gain_per_share = cash_per_share + (exchange_ratio * 0)  # simplified
 
         # Recognize gain to extent of boot received
         recognized_gain = min(

@@ -48,19 +48,19 @@ def create_parser() -> argparse.ArgumentParser:
 Examples:
   # Process all files with default settings
   python detectAndClean.py
-  
+
   # Verbose output for debugging
   python detectAndClean.py --verbose
-  
+
   # Custom input/output paths
   python detectAndClean.py --input /path/to/csvs --output /path/to/reports
-  
+
   # Skip specific reports
   python detectAndClean.py --no-dashboard
-  
+
   # Show version
   python detectAndClean.py --version
-  
+
 For more information, visit: https://github.com/akourk/fin
         """,
     )

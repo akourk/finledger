@@ -6,8 +6,7 @@ Functions for loading and saving various caches (prices, splits, sectors, etc.)
 
 import json
 import logging
-from pathlib import Path
-from typing import Any, Dict
+from typing import Dict
 
 from fin.config import (
     COST_BASIS_CACHE_PATH,
@@ -248,7 +247,8 @@ def validate_price_cache_against_splits(
         # If split count changed, invalidate all cached prices for this symbol
         if current_split_count != cached_split_count:
             logger.info(
-                f"Split detected for {symbol}: {cached_split_count} -> {current_split_count} splits. Invalidating cached prices."
+                f"Split detected for {symbol}: {cached_split_count} -> {current_split_count} splits. "
+                "Invalidating cached prices."
             )
             symbols_to_invalidate.append(symbol)
             invalidated_count += 1

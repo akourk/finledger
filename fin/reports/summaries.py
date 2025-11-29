@@ -29,7 +29,6 @@ def calculate_daily_portfolio_change(
 
     today = datetime.now()
     yesterday = today - timedelta(days=1)
-    today_str = today.strftime("%Y-%m-%d")
     yesterday_str = yesterday.strftime("%Y-%m-%d")
 
     total_change = 0.0
@@ -367,9 +366,12 @@ def print_holdings_summary(holdings: pd.DataFrame):
     print("\nTop 10 Holdings by Value:")
     top_holdings = holdings.nlargest(10, value_col)
     for _, row in top_holdings.iterrows():
-        print(
-            f"  {row['Symbol']:12} {row['Quantity']:>12.4f} @ ${row[price_col]:>10.2f} = ${row[value_col]:>12,.2f}  ({row['Account']})"
-        )
+        sym = row['Symbol']
+        qty = row['Quantity']
+        price = row[price_col]
+        value = row[value_col]
+        acct = row['Account']
+        print(f"  {sym:12} {qty:>12.4f} @ ${price:>10.2f} = ${value:>12,.2f}  ({acct})")
 
 
 def print_portfolio_summary(summary: dict):
@@ -389,9 +391,9 @@ def print_portfolio_summary(summary: dict):
         print(f"    └─ Cash/Savings:          ${summary.get('CashValue', 0):>15,.2f}")
 
     print(f"  Total Cost Basis:           ${summary.get('TotalCostBasis', 0):>15,.2f}")
-    print(
-        f"  Unrealized Gain/Loss:       ${summary.get('TotalUnrealizedGain', 0):>15,.2f} ({summary.get('UnrealizedGainPct', 0):>+.2f}%)"
-    )
+    unrealized = summary.get('TotalUnrealizedGain', 0)
+    unrealized_pct = summary.get('UnrealizedGainPct', 0)
+    print(f"  Unrealized Gain/Loss:       ${unrealized:>15,.2f} ({unrealized_pct:>+.2f}%)")
     print(f"  Number of Positions:        {summary.get('NumPositions', 0):>15}")
     print(f"  Number of Accounts:         {summary.get('NumAccounts', 0):>15}")
 
@@ -420,14 +422,14 @@ def print_portfolio_summary(summary: dict):
     print(f"\n{'─'*40}")
     print("TOTAL RETURN")
     print(f"{'─'*40}")
-    print(
-        f"  Total Return (All-Time):    ${summary.get('TotalReturn', 0):>15,.2f} ({summary.get('TotalReturnPct', 0):>+.2f}%)"
-    )
+    total_ret = summary.get('TotalReturn', 0)
+    total_ret_pct = summary.get('TotalReturnPct', 0)
+    print(f"  Total Return (All-Time):    ${total_ret:>15,.2f} ({total_ret_pct:>+.2f}%)")
 
     if "AllTimeGrowth" in summary:
-        print(
-            f"  Portfolio Growth:           ${summary.get('AllTimeGrowth', 0):>15,.2f} ({summary.get('AllTimeGrowthPct', 0):>+.2f}%)"
-        )
+        growth = summary.get('AllTimeGrowth', 0)
+        growth_pct = summary.get('AllTimeGrowthPct', 0)
+        print(f"  Portfolio Growth:           ${growth:>15,.2f} ({growth_pct:>+.2f}%)")
 
     # Account allocation
     if "AccountAllocation" in summary and summary["AccountAllocation"]:

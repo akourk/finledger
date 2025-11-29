@@ -30,7 +30,6 @@ def get_signed_quantity(row: pd.Series) -> float:
     qty = row["Quantity"]
     amount = row["Amount"]
     source = row["Source"]
-    note = str(row["Note"]).lower() if pd.notna(row["Note"]) else ""
 
     if action == "Buy":
         return abs(qty)

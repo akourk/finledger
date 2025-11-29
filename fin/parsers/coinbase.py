@@ -71,12 +71,10 @@ def parse_coinbase(file_path: pathlib.Path) -> pd.DataFrame:
     for idx, row in df_filtered.iterrows():
         tx_type = str(row["Transaction Type"]).lower() if pd.notna(row["Transaction Type"]) else ""
         notes = str(row["Notes"]) if pd.notna(row["Notes"]) else ""
-        asset = str(row["Asset"]).upper() if pd.notna(row["Asset"]) else ""
 
         if tx_type == "convert" and notes:
             match = convert_pattern.search(notes)
             if match:
-                from_qty = float(match.group(1))
                 from_symbol = match.group(2).upper()
                 to_qty = float(match.group(3))
                 to_symbol = match.group(4).upper()

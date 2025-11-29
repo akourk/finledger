@@ -5,8 +5,8 @@ Calculates historical holdings over time with proper valuations.
 Includes time-weighted return and S&P 500 comparison calculations.
 """
 
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Dict, Optional, Tuple
 
 import pandas as pd
 
@@ -167,8 +167,6 @@ def calculate_what_if_sp500(historical_results: list, df: pd.DataFrame, price_ca
     """
     if not historical_results or len(historical_results) < 2:
         return historical_results
-
-    sp500_symbol = "^GSPC"
 
     # Build list of cost basis changes with dates
     cost_basis_changes = calculate_cost_basis_changes(df, price_cache)
@@ -338,8 +336,8 @@ def calculate_cost_basis_changes(df: pd.DataFrame, price_cache: dict) -> list:
 
         elif effect == "merger_remove":
             if lots.get(key):
-                total_cost = sum(l["remaining_cost"] for l in lots[key])
-                total_qty = sum(l["remaining_qty"] for l in lots[key])
+                total_cost = sum(lot["remaining_cost"] for lot in lots[key])
+                total_qty = sum(lot["remaining_qty"] for lot in lots[key])
                 pending_mergers[key] = {"cost_basis": total_cost, "qty": total_qty, "date": date}
                 lots[key] = []
 
@@ -603,8 +601,8 @@ def calculate_portfolio_cost_basis_history(df: pd.DataFrame) -> pd.DataFrame:
 
         elif effect == "merger_remove":
             if lots[key]:
-                total_cost = sum(l["remaining_cost"] for l in lots[key])
-                total_qty = sum(l["remaining_qty"] for l in lots[key])
+                total_cost = sum(lot["remaining_cost"] for lot in lots[key])
+                total_qty = sum(lot["remaining_qty"] for lot in lots[key])
                 pending_mergers[key] = {"cost_basis": total_cost, "qty": total_qty, "date": date}
                 lots[key] = []
 

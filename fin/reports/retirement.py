@@ -226,16 +226,8 @@ def calculate_contribution_tracking(
     if master_df.empty:
         return result
 
-    # 401k contribution limits by year
-    LIMIT_401K = {
-        2019: 19000,
-        2020: 19500,
-        2021: 19500,
-        2022: 20500,
-        2023: 22500,
-        2024: 23000,
-        2025: 23500,
-    }
+    # 401k contribution limits by year (for reference)
+    # 2019: 19000, 2020: 19500, 2021: 19500, 2022: 20500, 2023: 22500, 2024: 23000, 2025: 23500
 
     # Filter to current year contributions
     df = master_df.copy()
