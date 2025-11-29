@@ -181,4 +181,5 @@ if __name__ == "__main__":
     print("Press Ctrl+C to stop")
     print(f"{'='*60}\n")
 
-    app.run(host="localhost", port=5000, debug=True)
+    debug_mode = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true")
+    app.run(host="localhost", port=5000, debug=debug_mode)
