@@ -6,12 +6,16 @@ Functions for loading and saving various caches (prices, splits, sectors, etc.)
 
 import json
 import logging
-from typing import Dict, Any
 from pathlib import Path
+from typing import Any, Dict
 
 from fin.config import (
-    PRICE_CACHE_PATH, SPLIT_CACHE_PATH, COST_BASIS_CACHE_PATH,
-    HISTORICAL_HOLDINGS_CACHE_PATH, SECTOR_CACHE_PATH, UNAVAILABLE_TICKER_CACHE_PATH
+    COST_BASIS_CACHE_PATH,
+    HISTORICAL_HOLDINGS_CACHE_PATH,
+    PRICE_CACHE_PATH,
+    SECTOR_CACHE_PATH,
+    SPLIT_CACHE_PATH,
+    UNAVAILABLE_TICKER_CACHE_PATH,
 )
 
 logger = logging.getLogger(__name__)
@@ -20,10 +24,10 @@ logger = logging.getLogger(__name__)
 def load_price_cache() -> Dict[str, Dict[str, float]]:
     """
     Load price cache from disk.
-    
+
     Returns:
         Nested dict of {symbol: {date: price, '_split_count': count, '_last_validated': timestamp}}
-        
+
         Note: '_split_count' tracks how many splits were known when prices were cached.
         If a new split occurs, all cached prices for that symbol should be invalidated.
     """
@@ -46,7 +50,7 @@ def load_price_cache() -> Dict[str, Dict[str, float]]:
 def save_price_cache(cache: Dict[str, Dict[str, float]]) -> None:
     """
     Save price cache to disk.
-    
+
     Args:
         cache: Nested dict of {symbol: {date: price}}
     """
@@ -62,7 +66,7 @@ def save_price_cache(cache: Dict[str, Dict[str, float]]) -> None:
 def load_split_cache() -> Dict[str, Dict[str, float]]:
     """
     Load split cache from disk.
-    
+
     Returns:
         Nested dict of {symbol: {date: split_ratio}}
     """
@@ -85,7 +89,7 @@ def load_split_cache() -> Dict[str, Dict[str, float]]:
 def save_split_cache(cache: Dict[str, Dict[str, float]]) -> None:
     """
     Save split cache to disk.
-    
+
     Args:
         cache: Nested dict of {symbol: {date: split_ratio}}
     """
@@ -135,7 +139,7 @@ def save_historical_holdings_cache(cache: dict) -> None:
 def load_sector_cache() -> Dict[str, str]:
     """
     Load sector cache from disk.
-    
+
     Returns:
         Dict of {symbol: sector}
     """
@@ -158,7 +162,7 @@ def load_sector_cache() -> Dict[str, str]:
 def save_sector_cache(cache: Dict[str, str]) -> None:
     """
     Save sector cache to disk.
-    
+
     Args:
         cache: Dict of {symbol: sector}
     """
@@ -175,7 +179,7 @@ def load_unavailable_ticker_cache() -> Dict[str, Dict[str, str]]:
     """
     Load unavailable ticker cache from disk.
     This tracks tickers that don't have historical data available (e.g., not yet listed).
-    
+
     Returns:
         Dict of {ticker: {date: "unavailable"}}
     """
@@ -198,7 +202,7 @@ def load_unavailable_ticker_cache() -> Dict[str, Dict[str, str]]:
 def save_unavailable_ticker_cache(cache: Dict[str, Dict[str, str]]) -> None:
     """
     Save unavailable ticker cache to disk.
-    
+
     Args:
         cache: Dict of {ticker: {date: "unavailable"}}
     """
@@ -211,44 +215,47 @@ def save_unavailable_ticker_cache(cache: Dict[str, Dict[str, str]]) -> None:
         raise
 
 
-def validate_price_cache_against_splits(price_cache: Dict[str, Dict[str, float]], 
-                                       split_cache: Dict[str, Dict[str, float]]) -> int:
+def validate_price_cache_against_splits(
+    price_cache: Dict[str, Dict[str, float]], split_cache: Dict[str, Dict[str, float]]
+) -> int:
     """
     Validate price cache against split cache and invalidate stale prices.
-    
+
     When a stock splits, yfinance retroactively adjusts all historical prices.
     If we detect a new split (split_count increased), we must invalidate all
     cached prices for that symbol.
-    
+
     Args:
         price_cache: Price cache dictionary (modified in-place)
         split_cache: Split cache dictionary
-    
+
     Returns:
         Number of symbols with invalidated caches
     """
     invalidated_count = 0
     symbols_to_invalidate = []
-    
+
     for symbol in list(price_cache.keys()):
-        if symbol.startswith('_'):  # Skip metadata keys
+        if symbol.startswith("_"):  # Skip metadata keys
             continue
-            
+
         # Get current split count from split cache
         current_split_count = len(split_cache.get(symbol, {}))
-        
+
         # Get cached split count (when prices were last fetched)
-        cached_split_count = price_cache[symbol].get('_split_count', 0)
-        
+        cached_split_count = price_cache[symbol].get("_split_count", 0)
+
         # If split count changed, invalidate all cached prices for this symbol
         if current_split_count != cached_split_count:
-            logger.info(f"Split detected for {symbol}: {cached_split_count} -> {current_split_count} splits. Invalidating cached prices.")
+            logger.info(
+                f"Split detected for {symbol}: {cached_split_count} -> {current_split_count} splits. Invalidating cached prices."
+            )
             symbols_to_invalidate.append(symbol)
             invalidated_count += 1
-    
+
     # Remove invalidated symbols
     for symbol in symbols_to_invalidate:
         del price_cache[symbol]
         print(f"   Invalidated price cache for {symbol} due to stock split")
-    
+
     return invalidated_count
