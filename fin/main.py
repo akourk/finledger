@@ -17,18 +17,20 @@ Supported Sources:
 
 import logging
 import sys
-from pathlib import Path
-from typing import Optional, Dict, Any, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from datetime import datetime
 
 try:
     from tqdm import tqdm
+
     TQDM_AVAILABLE = True
 except ImportError:
     TQDM_AVAILABLE = False
+
     # Fallback: simple progress indicator
     class tqdm:
         def __init__(self, iterable=None, desc=None, total=None, disable=False, **kwargs):
@@ -37,83 +39,107 @@ except ImportError:
             self.total = total or (len(iterable) if iterable else 0)
             self.disable = disable
             self.n = 0
-        
+
         def __iter__(self):
             for item in self.iterable:
                 yield item
                 self.update()
-        
+
         def update(self, n=1):
             self.n += n
             if not self.disable and self.n % 5 == 0:
                 print(f"  Progress: {self.n}/{self.total}")
-        
+
         def __enter__(self):
             return self
-        
+
         def __exit__(self, *args):
             pass
+
 
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
 # Suppress noisy loggers
-logging.getLogger('yfinance').setLevel(logging.WARNING)
-logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger("yfinance").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-from .config import (
-    DATA_INPUT_PATH, DATA_OUTPUT_PATH, UNIFIED_COLUMNS,
-)
-from .utils.cache import (
-    load_price_cache, save_price_cache,
-    load_split_cache, save_split_cache,
-    load_sector_cache, save_sector_cache,
-    load_unavailable_ticker_cache, save_unavailable_ticker_cache,
-)
-from .utils.prices import (
-    convert_price_based_symbols, adjust_for_splits,
-    get_sectors_for_holdings,
-)
-from .parsers import detect_source, PARSER_REGISTRY, merge_accounts
-from .parsers.base import normalize_amounts, create_empty_dataframe, standardize_symbols, validate_dataframe
 from .calculators import (
-    calculate_holdings, calculate_holdings_quantities_only, add_running_balances,
-    calculate_cost_basis, add_running_cost_basis,
-    calculate_income, calculate_income_by_year,
+    add_running_balances,
+    add_running_cost_basis,
     calculate_cash_balances,
-    calculate_historical_holdings, calculate_portfolio_cost_basis_history,
+    calculate_cost_basis,
+    calculate_historical_holdings,
+    calculate_holdings,
+    calculate_holdings_quantities_only,
+    calculate_income,
+    calculate_income_by_year,
+    calculate_portfolio_cost_basis_history,
 )
-from .reports import (
-    generate_account_summary, generate_portfolio_summary,
-    print_portfolio_summary,
-    export_master_csv, export_holdings_csv, export_holdings_detail_csv,
-    export_realized_gains_csv, export_tax_lots_csv,
-    export_income_report_csv, export_income_by_year_csv,
-    export_account_summary_csv, export_historical_holdings_csv,
-    export_cash_balances_csv,
-    export_portfolio_summary_js, export_dataframe_js,
-    generate_retirement_summary, export_retirement_data_js,
+from .config import (
+    DATA_INPUT_PATH,
+    DATA_OUTPUT_PATH,
+    UNIFIED_COLUMNS,
 )
-from .quality import run_quality_checks, print_quality_report
 from .corporate_actions import (
+    KNOWN_MERGERS,
+    KNOWN_SPINOFFS,
     generate_corporate_actions_report,
     identify_corporate_actions,
-    KNOWN_SPINOFFS,
-    KNOWN_MERGERS,
+)
+from .parsers import PARSER_REGISTRY, detect_source, merge_accounts
+from .parsers.base import (
+    create_empty_dataframe,
+    normalize_amounts,
+    standardize_symbols,
+    validate_dataframe,
+)
+from .quality import print_quality_report, run_quality_checks
+from .reports import (
+    export_account_summary_csv,
+    export_cash_balances_csv,
+    export_dataframe_js,
+    export_historical_holdings_csv,
+    export_holdings_csv,
+    export_holdings_detail_csv,
+    export_income_by_year_csv,
+    export_income_report_csv,
+    export_master_csv,
+    export_portfolio_summary_js,
+    export_realized_gains_csv,
+    export_retirement_data_js,
+    export_tax_lots_csv,
+    generate_account_summary,
+    generate_portfolio_summary,
+    generate_retirement_summary,
+    print_portfolio_summary,
+)
+from .utils.cache import (
+    load_price_cache,
+    load_sector_cache,
+    load_split_cache,
+    load_unavailable_ticker_cache,
+    save_price_cache,
+    save_sector_cache,
+    save_split_cache,
+    save_unavailable_ticker_cache,
+)
+from .utils.prices import (
+    adjust_for_splits,
+    convert_price_based_symbols,
+    get_sectors_for_holdings,
 )
 
 
 def _process_files_sequential(files: List[Path], results: List[pd.DataFrame]) -> None:
     """
     Process files sequentially with progress bar.
-    
+
     Args:
         files: List of file paths to process
         results: List to append successful results to
@@ -128,10 +154,12 @@ def _process_files_sequential(files: List[Path], results: List[pd.DataFrame]) ->
             print(f"  ✗ Unexpected error with {file_path.name}: {e}")
 
 
-def _process_files_parallel(files: List[Path], results: List[pd.DataFrame], max_workers: int = 4) -> None:
+def _process_files_parallel(
+    files: List[Path], results: List[pd.DataFrame], max_workers: int = 4
+) -> None:
     """
     Process files in parallel with progress bar.
-    
+
     Args:
         files: List of file paths to process
         results: List to append successful results to
@@ -140,9 +168,11 @@ def _process_files_parallel(files: List[Path], results: List[pd.DataFrame], max_
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all jobs
         future_to_file = {executor.submit(process_file, f): f for f in files}
-        
+
         # Process completed jobs with progress bar
-        with tqdm(total=len(files), desc="Processing files", unit="file", disable=not TQDM_AVAILABLE) as pbar:
+        with tqdm(
+            total=len(files), desc="Processing files", unit="file", disable=not TQDM_AVAILABLE
+        ) as pbar:
             for future in as_completed(future_to_file):
                 file_path = future_to_file[future]
                 try:
@@ -159,16 +189,16 @@ def _process_files_parallel(files: List[Path], results: List[pd.DataFrame], max_
 def process_file(file_path: Path) -> Optional[pd.DataFrame]:
     """
     Process a single input file and return normalized DataFrame.
-    
+
     Args:
         file_path: Path to CSV file to process
-    
+
     Returns:
         DataFrame with normalized transactions, or None if processing failed
     """
     logger.info(f"Processing: {file_path.name}")
     print(f"  Processing: {file_path.name}")
-    
+
     try:
         # Detect source
         source = detect_source(file_path)
@@ -176,38 +206,38 @@ def process_file(file_path: Path) -> Optional[pd.DataFrame]:
             logger.warning(f"Unknown source for file: {file_path.name}")
             print(f"    ⚠ Unknown source - skipping")
             return None
-        
+
         logger.info(f"Detected source: {source} for {file_path.name}")
         print(f"    ✓ Detected source: {source}")
-        
+
         # Get parser
         parser = PARSER_REGISTRY.get(source)
         if parser is None:
             logger.error(f"No parser available for source: {source}")
             print(f"    ⚠ No parser available for source: {source}")
             return None
-        
+
         # Parse file
         df = parser(file_path)
-        
+
         if df is None or df.empty:
             logger.warning(f"Parser returned empty DataFrame for {file_path.name}")
             print(f"    ⚠ No transactions found in file")
             return None
-        
+
         # Validate DataFrame
         is_valid, errors = validate_dataframe(df)
         if not is_valid:
             logger.error(f"Validation failed for {file_path.name}: {errors}")
             print(f"    ✗ Validation errors: {', '.join(errors)}")
             return None
-        
+
         # Add source filename for deduplication across files
         df["_SourceFile"] = file_path.name
         logger.info(f"Successfully parsed {len(df)} transactions from {file_path.name}")
         print(f"    ✓ Parsed {len(df)} transactions")
         return df
-        
+
     except FileNotFoundError as e:
         logger.error(f"File not found: {file_path.name} - {e}")
         print(f"    ✗ File not found: {e}")
@@ -225,106 +255,105 @@ def process_file(file_path: Path) -> Optional[pd.DataFrame]:
 def process_all_files() -> pd.DataFrame:
     """
     Process all CSV files in the input directory.
-    
+
     Returns:
         DataFrame containing all normalized transactions
     """
     logger.info("Starting transaction data aggregation")
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Transaction Data Aggregator")
-    print("="*60 + "\n")
-    
+    print("=" * 60 + "\n")
+
     all_transactions = []
     files_processed = 0
     files_skipped = 0
-    
+
     # Validate input directory exists
     if not DATA_INPUT_PATH.exists():
         logger.error(f"Input directory does not exist: {DATA_INPUT_PATH}")
         print(f"\n✗ Error: Input directory not found: {DATA_INPUT_PATH}")
         return create_empty_dataframe()
-    
+
     # Load caches
     try:
         price_cache = load_price_cache()
         split_cache = load_split_cache()
         unavailable_ticker_cache = load_unavailable_ticker_cache()
         logger.info("Loaded caches successfully")
-        
+
         # Validate price cache against split cache (invalidate prices if splits occurred)
         from .utils.cache import validate_price_cache_against_splits
+
         invalidated = validate_price_cache_against_splits(price_cache, split_cache)
         if invalidated > 0:
             print(f"\n⚠ Invalidated price cache for {invalidated} symbol(s) due to stock splits")
-            
+
     except Exception as e:
         logger.error(f"Failed to load caches: {e}")
         print(f"\n✗ Error loading caches: {e}")
         price_cache = {}
         split_cache = {}
         unavailable_ticker_cache = {}
-    
+
     # Process each CSV file
-    csv_files = [f for f in DATA_INPUT_PATH.iterdir() 
-                 if f.is_file() and f.suffix.lower() == ".csv"]
-    
+    csv_files = [f for f in DATA_INPUT_PATH.iterdir() if f.is_file() and f.suffix.lower() == ".csv"]
+
     if not csv_files:
         logger.warning(f"No CSV files found in {DATA_INPUT_PATH}")
         print(f"\n⚠ No CSV files found in {DATA_INPUT_PATH}")
         return create_empty_dataframe()
-    
+
     logger.info(f"Found {len(csv_files)} CSV files to process")
     print(f"Found {len(csv_files)} CSV files to process\n")
-    
+
     # Process files (use environment variable or default)
-    use_parallel = getattr(process_all_files, '_parallel', True)
-    max_workers = getattr(process_all_files, '_workers', 4)
-    
+    use_parallel = getattr(process_all_files, "_parallel", True)
+    max_workers = getattr(process_all_files, "_workers", 4)
+
     if use_parallel and len(csv_files) > 1:
         logger.info(f"Using parallel processing with {max_workers} workers")
         _process_files_parallel(sorted(csv_files), all_transactions, max_workers)
     else:
         logger.info("Using sequential processing")
         _process_files_sequential(sorted(csv_files), all_transactions)
-    
+
     files_processed = len(all_transactions)
     files_skipped = len(csv_files) - files_processed
-    
+
     # Combine all transactions
     if all_transactions:
         try:
             master_df = pd.concat(all_transactions, ignore_index=True)
-            logger.info(f"Combined {len(master_df)} total transactions from {len(all_transactions)} files")
+            logger.info(
+                f"Combined {len(master_df)} total transactions from {len(all_transactions)} files"
+            )
         except Exception as e:
             logger.exception("Failed to combine transaction DataFrames")
             print(f"\n✗ Error combining transactions: {e}")
             return create_empty_dataframe()
-        
+
         # Remove duplicate transactions (from overlapping date ranges in input files)
         dupe_cols = ["Date", "Account", "Symbol", "Action", "Quantity", "Amount"]
         initial_count = len(master_df)
-        
+
         # Step 1: Within each file, number occurrences of each transaction
-        master_df["_OccurrenceInFile"] = master_df.groupby(
-            ["_SourceFile"] + dupe_cols
-        ).cumcount()
-        
+        master_df["_OccurrenceInFile"] = master_df.groupby(["_SourceFile"] + dupe_cols).cumcount()
+
         # Step 2: Now dedupe across files - keep first occurrence
         master_df = master_df.drop_duplicates(
-            subset=dupe_cols + ["_OccurrenceInFile"], 
-            keep="first"
+            subset=dupe_cols + ["_OccurrenceInFile"], keep="first"
         )
-        
+
         # Remove helper columns
         master_df = master_df.drop(columns=["_SourceFile", "_OccurrenceInFile"])
-        
+
         dupes_removed = initial_count - len(master_df)
         # Store for quality checks
         master_df._dupes_removed = dupes_removed
         if dupes_removed > 0:
             logger.info(f"Removed {dupes_removed} duplicate transactions")
             print(f"Removed {dupes_removed} duplicate transactions (from overlapping files)")
-        
+
         # Normalize amounts to be consistently positive
         try:
             master_df = normalize_amounts(master_df)
@@ -332,7 +361,7 @@ def process_all_files() -> pd.DataFrame:
         except Exception as e:
             logger.error(f"Error normalizing amounts: {e}")
             print(f"⚠ Warning: Error normalizing amounts: {e}")
-        
+
         # Standardize fund names to ticker symbols
         try:
             master_df = standardize_symbols(master_df)
@@ -340,7 +369,7 @@ def process_all_files() -> pd.DataFrame:
         except Exception as e:
             logger.error(f"Error standardizing symbols: {e}")
             print(f"⚠ Warning: Error standardizing symbols: {e}")
-        
+
         # Merge accounts that have been transferred/rolled over
         try:
             master_df = merge_accounts(master_df)
@@ -348,7 +377,7 @@ def process_all_files() -> pd.DataFrame:
         except Exception as e:
             logger.error(f"Error merging accounts: {e}")
             print(f"⚠ Warning: Error merging accounts: {e}")
-        
+
         # Convert price-based symbols (e.g., VANG TR II 2055 → VFFVX)
         try:
             master_df = convert_price_based_symbols(master_df, price_cache)
@@ -356,7 +385,7 @@ def process_all_files() -> pd.DataFrame:
         except Exception as e:
             logger.error(f"Error converting price-based symbols: {e}")
             print(f"⚠ Warning: Error converting symbols: {e}")
-        
+
         # Adjust historical transactions for stock splits
         try:
             master_df = adjust_for_splits(master_df, split_cache)
@@ -364,14 +393,14 @@ def process_all_files() -> pd.DataFrame:
         except Exception as e:
             logger.error(f"Error adjusting for splits: {e}")
             print(f"⚠ Warning: Error adjusting for splits: {e}")
-        
+
         # Reload price cache to capture any additions from parsers
         final_price_cache = load_price_cache()
         for symbol, dates in price_cache.items():
             if symbol not in final_price_cache:
                 final_price_cache[symbol] = {}
             final_price_cache[symbol].update(dates)
-        
+
         # Save updated caches
         try:
             save_price_cache(final_price_cache)
@@ -381,17 +410,17 @@ def process_all_files() -> pd.DataFrame:
         except Exception as e:
             logger.error(f"Failed to save caches: {e}")
             print(f"⚠ Warning: Failed to save caches: {e}")
-        
+
         # Sort by date (newest first)
         master_df = master_df.sort_values("Date", ascending=False).reset_index(drop=True)
-        
-        print(f"\n" + "-"*60)
+
+        print(f"\n" + "-" * 60)
         print(f"Summary:")
         print(f"  Files processed: {files_processed}")
         print(f"  Files skipped:   {files_skipped}")
         print(f"  Total transactions: {len(master_df)}")
-        print(f"-"*60)
-        
+        print(f"-" * 60)
+
         logger.info(f"Processing complete: {files_processed} files, {len(master_df)} transactions")
         return master_df
     else:
@@ -400,12 +429,15 @@ def process_all_files() -> pd.DataFrame:
         return create_empty_dataframe()
 
 
-def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]], 
-                        unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
-                        split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> Dict[str, Any]:
+def generate_all_reports(
+    master_df: pd.DataFrame,
+    price_cache: Dict[str, Dict[str, float]],
+    unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+    split_cache: Optional[Dict[str, Dict[str, float]]] = None,
+) -> Dict[str, Any]:
     """
     Generate all reports from the master transaction data.
-    
+
     Reports generated:
     1. holdings.csv - Simple current holdings (Account, Symbol, Quantity, Price, Value)
     2. holdings_detail.csv - Detailed holdings with cost basis and returns
@@ -417,37 +449,41 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
     8. account_summary.csv - Summary metrics per account
     9. historical_holdings.csv - Portfolio value over time
     10. portfolio_summary.json - Overall portfolio metrics
-    
+
     Args:
         master_df: Master transaction DataFrame
         price_cache: Price cache dictionary
         unavailable_ticker_cache: Optional cache of tickers without historical data
     """
     logger.info("Starting report generation")
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Generating Reports")
-    print("="*60)
-    
+    print("=" * 60)
+
     if master_df.empty:
         logger.warning("Cannot generate reports from empty DataFrame")
         print("\n⚠ No data to generate reports")
         return {}
-    
+
     # 1. Simple holdings (for backwards compatibility)
     print("\n1. Calculating current holdings...")
     try:
-        simple_holdings = calculate_holdings(master_df, price_cache, unavailable_ticker_cache, split_cache)
+        simple_holdings = calculate_holdings(
+            master_df, price_cache, unavailable_ticker_cache, split_cache
+        )
         export_holdings_csv(simple_holdings)
         logger.info(f"Generated simple holdings report with {len(simple_holdings)} positions")
     except Exception as e:
         logger.exception("Failed to calculate holdings")
         print(f"✗ Error calculating holdings: {e}")
         simple_holdings = pd.DataFrame()
-    
+
     # 2. Detailed holdings with cost basis and tax lots
     print("\n2. Calculating cost basis (FIFO method) and tax lots...")
     try:
-        holdings_detail, realized_gains, tax_lots = calculate_cost_basis(master_df, price_cache, unavailable_ticker_cache, split_cache)
+        holdings_detail, realized_gains, tax_lots = calculate_cost_basis(
+            master_df, price_cache, unavailable_ticker_cache, split_cache
+        )
         logger.info(f"Calculated cost basis for {len(holdings_detail)} holdings")
     except Exception as e:
         logger.exception("Failed to calculate cost basis")
@@ -455,7 +491,7 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
         holdings_detail = pd.DataFrame()
         realized_gains = pd.DataFrame()
         tax_lots = pd.DataFrame()
-    
+
     # Add sector information to holdings
     if not holdings_detail.empty:
         print("\n2b. Adding sector information...")
@@ -463,7 +499,7 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
         sectors = get_sectors_for_holdings(holdings_detail, sector_cache)
         holdings_detail["Sector"] = holdings_detail["Symbol"].map(sectors)
         export_holdings_detail_csv(holdings_detail)
-    
+
     # 3. Tax lots
     print("\n3. Exporting tax lots...")
     if not tax_lots.empty:
@@ -473,7 +509,7 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
         print(f"   Long-term lots: {len(long_term)}, Short-term lots: {len(short_term)}")
     else:
         print("   No tax lots to export.")
-    
+
     # 4. Realized gains
     print("\n4. Exporting realized gains...")
     if not realized_gains.empty:
@@ -481,7 +517,7 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
         print(f"   Total realized gains: ${realized_gains['RealizedGain'].sum():,.2f}")
     else:
         print("   No realized gains to export.")
-    
+
     # 5. Income report
     print("\n5. Calculating income...")
     income_report = calculate_income(master_df)
@@ -490,78 +526,94 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
         print(f"   Total income transactions: {len(income_report)}")
     else:
         print("   No income to report.")
-    
+
     # 6. Income by year
     print("\n6. Summarizing income by year...")
     income_by_year = calculate_income_by_year(master_df)
     if not income_by_year.empty:
         export_income_by_year_csv(income_by_year)
-    
+
     # 7. Cash balances (for USD-only accounts like Apple Savings)
     print("\n7. Calculating cash account balances...")
     cash_balances = calculate_cash_balances(master_df)
     if not cash_balances.empty:
         export_cash_balances_csv(cash_balances)
         for _, row in cash_balances.iterrows():
-            print(f"   {row['Account']}: Balance=${row['CurrentBalance']:,.2f}, Interest=${row['TotalInterest']:,.2f} ({row['ReturnPct']:.2f}%)")
+            print(
+                f"   {row['Account']}: Balance=${row['CurrentBalance']:,.2f}, Interest=${row['TotalInterest']:,.2f} ({row['ReturnPct']:.2f}%)"
+            )
     else:
         print("   No cash-only accounts found.")
-    
+
     # 8. Account summary
     print("\n8. Generating account summary...")
-    account_summary = generate_account_summary(holdings_detail, income_report, realized_gains, cash_balances)
+    account_summary = generate_account_summary(
+        holdings_detail, income_report, realized_gains, cash_balances
+    )
     if not account_summary.empty:
         export_account_summary_csv(account_summary)
-    
+
     # 9. Historical holdings (with per-account breakdown)
     print("\n9. Calculating historical holdings...")
     historical_summary, historical_details = calculate_historical_holdings(
-        master_df, price_cache, include_cash=cash_balances, unavailable_ticker_cache=unavailable_ticker_cache, split_cache=split_cache
+        master_df,
+        price_cache,
+        include_cash=cash_balances,
+        unavailable_ticker_cache=unavailable_ticker_cache,
+        split_cache=split_cache,
     )
-    
+
     # Calculate cost basis history and merge with historical holdings
     print("   Adding historical cost basis...")
     cost_basis_history = calculate_portfolio_cost_basis_history(master_df)
     if not cost_basis_history.empty and not historical_summary.empty:
         # Merge cost basis into historical summary
         # For each snapshot date, find the cost basis at or before that date
-        cost_basis_history['Date'] = pd.to_datetime(cost_basis_history['Date'])
-        historical_summary['Date'] = pd.to_datetime(historical_summary['Date'])
-        
+        cost_basis_history["Date"] = pd.to_datetime(cost_basis_history["Date"])
+        historical_summary["Date"] = pd.to_datetime(historical_summary["Date"])
+
         # Create a function to get cost basis for each snapshot date
         def get_cost_basis_at_date(snapshot_date):
-            prior = cost_basis_history[cost_basis_history['Date'] <= snapshot_date]
+            prior = cost_basis_history[cost_basis_history["Date"] <= snapshot_date]
             if not prior.empty:
-                return prior.iloc[-1]['TotalCostBasis']
+                return prior.iloc[-1]["TotalCostBasis"]
             return 0.0
-        
-        historical_summary['CostBasis'] = historical_summary['Date'].apply(get_cost_basis_at_date)
-        historical_summary['Date'] = historical_summary['Date'].dt.strftime('%Y-%m-%d')
-    
+
+        historical_summary["CostBasis"] = historical_summary["Date"].apply(get_cost_basis_at_date)
+        historical_summary["Date"] = historical_summary["Date"].dt.strftime("%Y-%m-%d")
+
     if not historical_summary.empty:
         export_historical_holdings_csv(historical_summary)
-    
+
     # 10. Portfolio summary
     print("\n10. Generating portfolio summary...")
     portfolio_summary = generate_portfolio_summary(
-        holdings_detail, account_summary, historical_summary, income_by_year, cash_balances,
-        price_cache, unavailable_ticker_cache, split_cache
+        holdings_detail,
+        account_summary,
+        historical_summary,
+        income_by_year,
+        cash_balances,
+        price_cache,
+        unavailable_ticker_cache,
+        split_cache,
     )
     portfolio_summary["GeneratedAt"] = datetime.now().isoformat()
-    
+
     # Add tax lot summary to portfolio summary
     if not tax_lots.empty:
         long_term_value = tax_lots[tax_lots["HoldingPeriod"] == "Long-term"]["CurrentValue"].sum()
         short_term_value = tax_lots[tax_lots["HoldingPeriod"] == "Short-term"]["CurrentValue"].sum()
         long_term_gain = tax_lots[tax_lots["HoldingPeriod"] == "Long-term"]["UnrealizedGain"].sum()
-        short_term_gain = tax_lots[tax_lots["HoldingPeriod"] == "Short-term"]["UnrealizedGain"].sum()
+        short_term_gain = tax_lots[tax_lots["HoldingPeriod"] == "Short-term"][
+            "UnrealizedGain"
+        ].sum()
         portfolio_summary["LongTermValue"] = round(long_term_value, 2)
         portfolio_summary["ShortTermValue"] = round(short_term_value, 2)
         portfolio_summary["LongTermUnrealizedGain"] = round(long_term_gain, 2)
         portfolio_summary["ShortTermUnrealizedGain"] = round(short_term_gain, 2)
-    
+
     export_portfolio_summary_js(portfolio_summary)
-    
+
     # Export additional data as JS for the dashboard
     print("\n11. Exporting JavaScript data files for dashboard...")
     if not holdings_detail.empty:
@@ -576,28 +628,30 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
         export_dataframe_js(realized_gains, "realizedGainsData", "realized_gains.js")
     if not cash_balances.empty:
         export_dataframe_js(cash_balances, "cashBalancesData", "cash_balances.js")
-    
+
     # Export master transactions with running balances for transaction detail view
     print("\n12. Adding running balances to transactions...")
     master_with_balances = add_running_balances(master_df, simple_holdings)
-    
+
     # Add running cost basis using FIFO
     print("\n13. Adding running cost basis to transactions...")
     master_with_balances = add_running_cost_basis(master_with_balances)
     export_dataframe_js(master_with_balances, "masterTransactionsData", "master_transactions.js")
-    
+
     # Calculate and export portfolio cost basis history
     print("\n14. Calculating portfolio cost basis history...")
     portfolio_cost_basis = calculate_portfolio_cost_basis_history(master_df)
     if not portfolio_cost_basis.empty:
-        export_dataframe_js(portfolio_cost_basis, "portfolioCostBasisData", "portfolio_cost_basis.js")
+        export_dataframe_js(
+            portfolio_cost_basis, "portfolioCostBasisData", "portfolio_cost_basis.js"
+        )
         print(f"   Exported {len(portfolio_cost_basis)} cost basis data points")
-    
+
     # 15. Retirement data (salary, bonuses, contribution tracking)
     print("\n15. Generating retirement summary...")
     retirement_summary = generate_retirement_summary(master_df, holdings_detail)
     export_retirement_data_js(retirement_summary)
-    
+
     # 16. Corporate actions report
     print("\n16. Generating corporate actions report...")
     corporate_actions = generate_corporate_actions_report(master_df)
@@ -606,38 +660,45 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
         ca_path = DATA_OUTPUT_PATH / "corporate_actions.csv"
         corporate_actions.to_csv(ca_path, index=False)
         print(f"   Found {len(corporate_actions)} corporate actions")
-        
+
         # Export to JS for dashboard
         export_dataframe_js(corporate_actions, "corporateActionsData", "corporate_actions.js")
-        
+
         # Print summary
-        action_counts = corporate_actions['Type'].value_counts()
+        action_counts = corporate_actions["Type"].value_counts()
         for action_type, count in action_counts.items():
             print(f"     - {action_type}: {count}")
-    
+
     # 17. Multi-period performance report
     print("\n17. Calculating multi-period performance...")
     from .calculators.performance import generate_performance_report
     from .reports.exporters import export_performance_data_js
+
     performance_report = None
     if not holdings_detail.empty:
-        performance_report = generate_performance_report(holdings_detail, price_cache, unavailable_ticker_cache, split_cache)
+        performance_report = generate_performance_report(
+            holdings_detail, price_cache, unavailable_ticker_cache, split_cache
+        )
         export_performance_data_js(performance_report)
-    
+
     # 18. Benchmark comparison report
     print("\n18. Generating benchmark comparison...")
     from .calculators.benchmark import generate_benchmark_report
     from .reports.exporters import export_benchmark_data_js
+
     benchmark_report = None
     if not historical_summary.empty and performance_report:
         portfolio_perf = performance_report.get("portfolio", {})
-        benchmark_report = generate_benchmark_report(historical_summary, portfolio_perf, price_cache=price_cache)
+        benchmark_report = generate_benchmark_report(
+            historical_summary, portfolio_perf, price_cache=price_cache
+        )
         export_benchmark_data_js(benchmark_report)
-    
+
     # 19. Monte Carlo simulation report
     print("\n19. Running Monte Carlo projections...")
     from .calculators.monte_carlo import generate_monte_carlo_report
     from .reports.exporters import export_monte_carlo_data_js
+
     monte_carlo_report = None
     if portfolio_summary.get("TotalValue", 0) > 0:
         # Get annual contribution from retirement data
@@ -645,40 +706,38 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
         if retirement_summary:
             contributions = retirement_summary.get("contributions", {})
             annual_contribution = (
-                contributions.get("traditional_401k", 0) + 
-                contributions.get("roth_ira", 0) + 
-                retirement_summary.get("employer_match", 0)
+                contributions.get("traditional_401k", 0)
+                + contributions.get("roth_ira", 0)
+                + retirement_summary.get("employer_match", 0)
             )
-        
+
         # Get years to retirement
         years_to_retirement = 30
         if retirement_summary:
             personal = retirement_summary.get("personal", {})
             years_to_retirement = personal.get("years_to_retirement", 30)
-        
+
         monte_carlo_report = generate_monte_carlo_report(
             portfolio_value=portfolio_summary.get("TotalValue", 0),
             annual_contribution=annual_contribution,
             historical_df=historical_summary,
             years_to_retirement=years_to_retirement,
-            retirement_data=retirement_summary
+            retirement_data=retirement_summary,
         )
         export_monte_carlo_data_js(monte_carlo_report)
-    
+
     # Print summary to console
     print_portfolio_summary(portfolio_summary)
-    
+
     # Run data quality checks if enabled
-    run_quality = getattr(generate_all_reports, '_quality_check', True)
+    run_quality = getattr(generate_all_reports, "_quality_check", True)
     if run_quality:
-        dupes = getattr(master_df, '_dupes_removed', 0)
+        dupes = getattr(master_df, "_dupes_removed", 0)
         issues, summary = run_quality_checks(
-            master_df, 
-            holdings_detail if not holdings_detail.empty else None,
-            dupes
+            master_df, holdings_detail if not holdings_detail.empty else None, dupes
         )
         print_quality_report(issues, summary)
-    
+
     return {
         "simple_holdings": simple_holdings,
         "holdings_detail": holdings_detail,
@@ -689,23 +748,23 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
         "cash_balances": cash_balances,
         "account_summary": account_summary,
         "historical_summary": historical_summary,
-        "portfolio_summary": portfolio_summary
+        "portfolio_summary": portfolio_summary,
     }
 
 
 def main(args: Optional[Any] = None) -> None:
     """
     Main entry point for the transaction aggregator.
-    
+
     Args:
         args: Parsed CLI arguments (from argparse.Namespace)
     """
-    from .cli import parse_args, setup_logging, print_banner
-    
+    from .cli import parse_args, print_banner, setup_logging
+
     # Parse arguments if not provided
     if args is None:
         args = parse_args()
-    
+
     # Setup logging based on verbosity
     if args.quiet:
         logging.getLogger().setLevel(logging.ERROR)
@@ -713,45 +772,44 @@ def main(args: Optional[Any] = None) -> None:
         setup_logging(verbose=True)
     else:
         setup_logging(verbose=False)
-    
+
     # Print banner unless quiet
     if not args.quiet:
         print_banner(args.verbose)
-    
-    logger.info("="*60)
+
+    logger.info("=" * 60)
     logger.info("Financial Portfolio Aggregator Starting")
-    logger.info("="*60)
-    
+    logger.info("=" * 60)
+
     # Configure processing options
     process_all_files._parallel = args.parallel
     process_all_files._workers = args.workers
     generate_all_reports._quality_check = args.quality_check
-    
+
     # Override paths if provided
     if args.input:
         global DATA_INPUT_PATH
         DATA_INPUT_PATH = args.input
         logger.info(f"Using custom input path: {DATA_INPUT_PATH}")
-    
+
     if args.output:
         global DATA_OUTPUT_PATH
         DATA_OUTPUT_PATH = args.output
         logger.info(f"Using custom output path: {DATA_OUTPUT_PATH}")
-    
+
     # Clear caches if requested
     if args.clear_cache:
         logger.info("Clearing caches...")
         try:
-            from .utils.cache import (
-                PRICE_CACHE_PATH, SPLIT_CACHE_PATH, SECTOR_CACHE_PATH
-            )
+            from .utils.cache import PRICE_CACHE_PATH, SECTOR_CACHE_PATH, SPLIT_CACHE_PATH
+
             for cache_path in [PRICE_CACHE_PATH, SPLIT_CACHE_PATH, SECTOR_CACHE_PATH]:
                 if cache_path.exists():
                     cache_path.unlink()
                     logger.info(f"Cleared {cache_path.name}")
         except Exception as e:
             logger.error(f"Error clearing caches: {e}")
-    
+
     try:
         # Process all input files
         master_df = process_all_files()
@@ -759,7 +817,7 @@ def main(args: Optional[Any] = None) -> None:
         logger.exception("Fatal error during file processing")
         print(f"\n✗ Fatal error: {e}")
         sys.exit(1)
-    
+
     # Export to CSV
     if len(master_df) > 0:
         try:
@@ -768,42 +826,46 @@ def main(args: Optional[Any] = None) -> None:
         except Exception as e:
             logger.exception("Failed to export master CSV")
             print(f"\n✗ Error exporting master CSV: {e}")
-        
+
         # Reload price cache after processing (parsers may have added entries)
         try:
             price_cache = load_price_cache()
         except Exception as e:
             logger.error(f"Failed to reload price cache: {e}")
             price_cache = {}
-        
+
         # Generate all reports
         try:
             unavailable_ticker_cache = load_unavailable_ticker_cache()
             split_cache = load_split_cache()
-            reports = generate_all_reports(master_df, price_cache, unavailable_ticker_cache, split_cache)
+            reports = generate_all_reports(
+                master_df, price_cache, unavailable_ticker_cache, split_cache
+            )
         except Exception as e:
             logger.exception("Failed to generate reports")
             print(f"\n✗ Error generating reports: {e}")
             reports = {}
             unavailable_ticker_cache = {}
-        
+
         # Save caches (may have new prices and unavailable tickers from report generation)
         try:
             save_price_cache(price_cache)
             save_unavailable_ticker_cache(unavailable_ticker_cache)
             if unavailable_ticker_cache:
-                print(f"\n✓ Saved unavailable ticker cache with {len(unavailable_ticker_cache)} tickers")
+                print(
+                    f"\n✓ Saved unavailable ticker cache with {len(unavailable_ticker_cache)} tickers"
+                )
             logger.info("Saved final caches")
         except Exception as e:
             logger.error(f"Failed to save final caches: {e}")
-        
+
         # Show sample of output
         print("\nSample of master transactions (first 10 rows):")
         print(master_df.head(10).to_string())
     else:
         logger.warning("No transactions to export")
         print("\nNo transactions to export.")
-    
+
     logger.info("Processing completed successfully")
 
 

@@ -40,17 +40,17 @@ UNAVAILABLE_TICKER_CACHE_PATH = DATA_PATH / "unavailable_ticker_cache.json"
 
 # All parsers must output DataFrames with these columns
 UNIFIED_COLUMNS = [
-    "Date",       # YYYY-MM-DD format
-    "Account",    # Source account name
-    "Symbol",     # Ticker symbol
-    "Action",     # Standardized: Buy, Sell, Dividend, Transfer, Interest, Fee, Staking, Contribution
-    "Quantity",   # Number of shares/units
-    "Price",      # Unit price
-    "Fee",        # Transaction fees
-    "Amount",     # Total transaction amount
-    "Currency",   # Currency code (USD, etc.)
-    "Note",       # Additional details
-    "Source",     # Original data source identifier
+    "Date",  # YYYY-MM-DD format
+    "Account",  # Source account name
+    "Symbol",  # Ticker symbol
+    "Action",  # Standardized: Buy, Sell, Dividend, Transfer, Interest, Fee, Staking, Contribution
+    "Quantity",  # Number of shares/units
+    "Price",  # Unit price
+    "Fee",  # Transaction fees
+    "Amount",  # Total transaction amount
+    "Currency",  # Currency code (USD, etc.)
+    "Note",  # Additional details
+    "Source",  # Original data source identifier
 ]
 
 # =============================================================================
@@ -122,9 +122,9 @@ ACTION_MAP = {
     "sxch": "Exchange",
     # Mergers & Acquisitions
     "mrgc": "MergerCash",  # Robinhood: Cash received from merger/acquisition
-    "mrgs": "MergerOut",   # Robinhood: Shares removed or received in merger
+    "mrgs": "MergerOut",  # Robinhood: Shares removed or received in merger
     "liq": "Liquidation",
-    "cil": "CashInLieu",    # Fractional share cash payment
+    "cil": "CashInLieu",  # Fractional share cash payment
     "rec": "Receive",
 }
 
@@ -181,15 +181,15 @@ ACCOUNT_MERGE_MAP = {
 # Delisted/acquired symbols - skip price lookups for these
 # These companies were acquired, merged, or delisted and no longer trade
 DELISTED_SYMBOLS = {
-    "XLNX",      # Xilinx - acquired by AMD (Feb 2022)
-    "TWTR",      # Twitter - taken private by Elon Musk (Oct 2022)
-    "TPTX",      # Turning Point Therapeutics - acquired by Bristol-Myers (Aug 2022)
-    "VRNA",      # Verona Pharma - acquired by Merck (Oct 2025)
-    "EYEN",      # Eyenovia - delisted
-    "FREQ",      # Frequency Therapeutics - delisted
-    "FREQ^",     # Frequency Therapeutics preferred - delisted
-    "S",         # Sprint - merged with T-Mobile (Apr 2020)
-    "GME+",      # GameStop units - converted
+    "XLNX",  # Xilinx - acquired by AMD (Feb 2022)
+    "TWTR",  # Twitter - taken private by Elon Musk (Oct 2022)
+    "TPTX",  # Turning Point Therapeutics - acquired by Bristol-Myers (Aug 2022)
+    "VRNA",  # Verona Pharma - acquired by Merck (Oct 2025)
+    "EYEN",  # Eyenovia - delisted
+    "FREQ",  # Frequency Therapeutics - delisted
+    "FREQ^",  # Frequency Therapeutics preferred - delisted
+    "S",  # Sprint - merged with T-Mobile (Apr 2020)
+    "GME+",  # GameStop units - converted
 }
 
 # =============================================================================

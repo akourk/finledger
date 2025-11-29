@@ -5,9 +5,10 @@ Calculates current holdings quantities and values from transactions.
 """
 
 import logging
-import pandas as pd
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Dict, Optional
+
+import pandas as pd
 
 from ..utils.prices import get_price_from_yfinance
 
@@ -18,10 +19,10 @@ def get_signed_quantity(row: pd.Series) -> float:
     """
     Calculate signed quantity based on action type.
     Positive = shares acquired, Negative = shares disposed.
-    
+
     Args:
         row: Transaction row from DataFrame
-    
+
     Returns:
         Signed quantity (positive for acquisitions, negative for disposals)
     """
@@ -30,7 +31,7 @@ def get_signed_quantity(row: pd.Series) -> float:
     amount = row["Amount"]
     source = row["Source"]
     note = str(row["Note"]).lower() if pd.notna(row["Note"]) else ""
-    
+
     if action == "Buy":
         return abs(qty)
     elif action in ["StockSplit", "ReverseStockSplit"]:
@@ -129,90 +130,95 @@ def get_signed_quantity(row: pd.Series) -> float:
         return 0
 
 
-def calculate_holdings(df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]],
-                       unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
-                       split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> pd.DataFrame:
+def calculate_holdings(
+    df: pd.DataFrame,
+    price_cache: Dict[str, Dict[str, float]],
+    unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+    split_cache: Optional[Dict[str, Dict[str, float]]] = None,
+) -> pd.DataFrame:
     """
     Calculate current holdings for each account and asset combination.
-    
+
     Holdings are calculated by summing up quantity changes from all transactions:
     - Buy/Contribution: +quantity
-    - Sell: -quantity  
+    - Sell: -quantity
     - Transfer: +/- based on source-specific logic and context
     - Dividend/Interest/Staking: +quantity (if reinvested, otherwise 0)
     - StockSplit: The split adjustment already modified historical quantities
-    
+
     Args:
         df: DataFrame with transaction data
         price_cache: Nested dict of {symbol: {date: price}}
         unavailable_ticker_cache: Optional cache of tickers without historical data
-    
+
     Returns:
         DataFrame with columns: Account, Symbol, Quantity, CurrentPrice, Value, Currency
     """
     if df.empty:
         logger.warning("Empty DataFrame passed to calculate_holdings")
-        return pd.DataFrame(columns=["Account", "Symbol", "Quantity", "CurrentPrice", "Value", "Currency"])
-    
+        return pd.DataFrame(
+            columns=["Account", "Symbol", "Quantity", "CurrentPrice", "Value", "Currency"]
+        )
+
     logger.info("Calculating current holdings")
-    
+
     # Create a copy to work with
     df = df.copy()
-    
+
     try:
         df["SignedQty"] = df.apply(get_signed_quantity, axis=1)
     except Exception as e:
         logger.exception("Error calculating signed quantities")
         raise ValueError(f"Failed to calculate signed quantities: {e}")
-    
+
     # Group by Account and Symbol, sum quantities
-    holdings = df.groupby(["Account", "Symbol", "Currency"]).agg({
-        "SignedQty": "sum"
-    }).reset_index()
-    
+    holdings = df.groupby(["Account", "Symbol", "Currency"]).agg({"SignedQty": "sum"}).reset_index()
+
     holdings = holdings.rename(columns={"SignedQty": "Quantity"})
-    
+
     # Filter out zero or negligible holdings (less than 0.0001)
     holdings = holdings[holdings["Quantity"].abs() > 0.0001]
-    
+
     # Filter out cash/empty symbols
     holdings = holdings[holdings["Symbol"] != ""]
     holdings = holdings[holdings["Symbol"] != "USD"]
-    
+
     # Get current prices for each symbol
     print("\nFetching current prices for holdings...")
     holdings["CurrentPrice"] = 0.0
     holdings["Value"] = 0.0
-    
+
     unique_symbols = holdings["Symbol"].unique()
     current_prices = {}
-    
+
     for symbol in unique_symbols:
         try:
             # Use today's date for current price
             today = datetime.now().strftime("%Y-%m-%d")
-            price, _ = get_price_from_yfinance(symbol, today, price_cache, unavailable_ticker_cache, split_cache)
+            price, _ = get_price_from_yfinance(
+                symbol, today, price_cache, unavailable_ticker_cache, split_cache
+            )
             if price is not None:
                 current_prices[symbol] = price
         except Exception as e:
             print(f"  Warning: Could not get price for {symbol}: {e}")
-    
+
     # Apply prices and calculate values
     for idx in holdings.index:
         symbol = holdings.loc[idx, "Symbol"]
         qty = holdings.loc[idx, "Quantity"]
-        
+
         if symbol in current_prices:
             price = current_prices[symbol]
             holdings.loc[idx, "CurrentPrice"] = round(price, 4)
             holdings.loc[idx, "Value"] = round(qty * price, 2)
-    
+
     # Sort by value descending
     holdings = holdings.sort_values("Value", ascending=False).reset_index(drop=True)
-    
+
     # Round quantity for display
     holdings["Quantity"] = holdings["Quantity"].round(6)
-    
+
     return holdings
 
 
@@ -223,15 +229,13 @@ def calculate_holdings_quantities_only(df: pd.DataFrame) -> pd.DataFrame:
     """
     if df.empty:
         return pd.DataFrame(columns=["Account", "Symbol", "Quantity", "Currency"])
-    
+
     df = df.copy()
-    
+
     df["SignedQty"] = df.apply(get_signed_quantity, axis=1)
-    
-    holdings = df.groupby(["Account", "Symbol", "Currency"]).agg({
-        "SignedQty": "sum"
-    }).reset_index()
-    
+
+    holdings = df.groupby(["Account", "Symbol", "Currency"]).agg({"SignedQty": "sum"}).reset_index()
+
     holdings = holdings.rename(columns={"SignedQty": "Quantity"})
     holdings = holdings[holdings["Quantity"].abs() > 0.0001]
     holdings = holdings[holdings["Symbol"] != ""]
@@ -239,35 +243,35 @@ def calculate_holdings_quantities_only(df: pd.DataFrame) -> pd.DataFrame:
     holdings["Quantity"] = holdings["Quantity"].round(6)
     holdings["Price"] = 0.0
     holdings["Value"] = 0.0
-    
+
     return holdings
 
 
 def add_running_balances(df: pd.DataFrame, holdings_df: pd.DataFrame) -> pd.DataFrame:
     """
     Add running balance columns to master transactions DataFrame.
-    
+
     For each transaction, calculates:
     - RunningBalance: The quantity held AFTER this transaction
     - RunningValue: The value at that time (balance × price at transaction)
-    
+
     Calculations are done per (Account, Symbol) combination.
     Transactions are processed chronologically (oldest first) to accumulate balances.
-    
+
     Uses the same get_signed_quantity logic as calculate_holdings for consistency.
     """
     if df.empty:
         return df
-    
+
     df = df.copy()
-    
+
     # Get current holdings for final balance reference
     current_holdings = {}
     if not holdings_df.empty:
         for _, row in holdings_df.iterrows():
             key = (row["Account"], row["Symbol"])
             current_holdings[key] = row["Quantity"]
-    
+
     # Define get_signed_quantity for running balance (same as in calculate_holdings)
     def get_signed_qty_for_balance(row):
         action = row["Action"]
@@ -275,7 +279,7 @@ def add_running_balances(df: pd.DataFrame, holdings_df: pd.DataFrame) -> pd.Data
         amount = row["Amount"]
         source = row["Source"]
         symbol = row["Symbol"]
-        
+
         # For cash accounts (USD symbol)
         if symbol == "USD":
             if action == "Buy":
@@ -290,7 +294,7 @@ def add_running_balances(df: pd.DataFrame, holdings_df: pd.DataFrame) -> pd.Data
                 else:
                     return -(abs(qty) if qty != 0 else abs(amount))
             return 0
-        
+
         if action == "Buy":
             return abs(qty)
         elif action in ["StockSplit", "ReverseStockSplit"]:
@@ -340,28 +344,30 @@ def add_running_balances(df: pd.DataFrame, holdings_df: pd.DataFrame) -> pd.Data
             return abs(qty)
         else:
             return 0
-    
+
     # Sort chronologically (oldest first) for running balance calculation
-    df = df.sort_values(["Account", "Symbol", "Date"], ascending=[True, True, True]).reset_index(drop=True)
-    
+    df = df.sort_values(["Account", "Symbol", "Date"], ascending=[True, True, True]).reset_index(
+        drop=True
+    )
+
     # Calculate running balance for each (Account, Symbol) group
     df["RunningBalance"] = 0.0
     df["RunningValue"] = 0.0
-    
+
     # Group by Account and Symbol
     for (account, symbol), group in df.groupby(["Account", "Symbol"]):
         balance = 0.0
-        
+
         for idx in group.index:
             row = df.loc[idx]
             signed_qty = get_signed_qty_for_balance(row)
             balance += signed_qty
-            
+
             # Round to avoid floating point issues
             balance = round(balance, 6)
-            
+
             df.loc[idx, "RunningBalance"] = balance
-            
+
             # Calculate value at transaction time
             price = row["Price"]
             if price > 0:
@@ -369,8 +375,8 @@ def add_running_balances(df: pd.DataFrame, holdings_df: pd.DataFrame) -> pd.Data
             else:
                 # No price available, leave as 0
                 df.loc[idx, "RunningValue"] = 0.0
-    
+
     # Sort back to newest first (original order for display)
     df = df.sort_values("Date", ascending=False).reset_index(drop=True)
-    
+
     return df
