@@ -8,6 +8,10 @@ tqdm>=4.66.0
 requests>=2.32.0
 beautifulsoup4>=4.14.0
 
+# Dashboard server (optional)
+flask>=3.0.0
+flask-cors>=4.0.0
+
 # Development dependencies (optional)
 # Uncomment to enable testing and code quality tools:
 # pytest>=7.4.0

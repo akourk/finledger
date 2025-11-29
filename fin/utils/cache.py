@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fin.config import (
     PRICE_CACHE_PATH, SPLIT_CACHE_PATH, COST_BASIS_CACHE_PATH,
-    HISTORICAL_HOLDINGS_CACHE_PATH, SECTOR_CACHE_PATH
+    HISTORICAL_HOLDINGS_CACHE_PATH, SECTOR_CACHE_PATH, UNAVAILABLE_TICKER_CACHE_PATH
 )
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,10 @@ def load_price_cache() -> Dict[str, Dict[str, float]]:
     Load price cache from disk.
     
     Returns:
-        Nested dict of {symbol: {date: price}}
+        Nested dict of {symbol: {date: price, '_split_count': count, '_last_validated': timestamp}}
+        
+        Note: '_split_count' tracks how many splits were known when prices were cached.
+        If a new split occurs, all cached prices for that symbol should be invalidated.
     """
     if PRICE_CACHE_PATH.exists():
         try:
@@ -166,3 +169,86 @@ def save_sector_cache(cache: Dict[str, str]) -> None:
     except IOError as e:
         logger.error(f"Failed to save sector cache: {e}")
         raise
+
+
+def load_unavailable_ticker_cache() -> Dict[str, Dict[str, str]]:
+    """
+    Load unavailable ticker cache from disk.
+    This tracks tickers that don't have historical data available (e.g., not yet listed).
+    
+    Returns:
+        Dict of {ticker: {date: "unavailable"}}
+    """
+    if UNAVAILABLE_TICKER_CACHE_PATH.exists():
+        try:
+            with open(UNAVAILABLE_TICKER_CACHE_PATH, "r") as f:
+                cache = json.load(f)
+                logger.debug(f"Loaded unavailable ticker cache with {len(cache)} tickers")
+                return cache
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse unavailable ticker cache JSON: {e}")
+            return {}
+        except IOError as e:
+            logger.error(f"Failed to read unavailable ticker cache file: {e}")
+            return {}
+    logger.debug("No existing unavailable ticker cache found")
+    return {}
+
+
+def save_unavailable_ticker_cache(cache: Dict[str, Dict[str, str]]) -> None:
+    """
+    Save unavailable ticker cache to disk.
+    
+    Args:
+        cache: Dict of {ticker: {date: "unavailable"}}
+    """
+    try:
+        with open(UNAVAILABLE_TICKER_CACHE_PATH, "w") as f:
+            json.dump(cache, f, indent=2, sort_keys=True)
+        logger.debug(f"Saved unavailable ticker cache with {len(cache)} tickers")
+    except IOError as e:
+        logger.error(f"Failed to save unavailable ticker cache: {e}")
+        raise
+
+
+def validate_price_cache_against_splits(price_cache: Dict[str, Dict[str, float]], 
+                                       split_cache: Dict[str, Dict[str, float]]) -> int:
+    """
+    Validate price cache against split cache and invalidate stale prices.
+    
+    When a stock splits, yfinance retroactively adjusts all historical prices.
+    If we detect a new split (split_count increased), we must invalidate all
+    cached prices for that symbol.
+    
+    Args:
+        price_cache: Price cache dictionary (modified in-place)
+        split_cache: Split cache dictionary
+    
+    Returns:
+        Number of symbols with invalidated caches
+    """
+    invalidated_count = 0
+    symbols_to_invalidate = []
+    
+    for symbol in list(price_cache.keys()):
+        if symbol.startswith('_'):  # Skip metadata keys
+            continue
+            
+        # Get current split count from split cache
+        current_split_count = len(split_cache.get(symbol, {}))
+        
+        # Get cached split count (when prices were last fetched)
+        cached_split_count = price_cache[symbol].get('_split_count', 0)
+        
+        # If split count changed, invalidate all cached prices for this symbol
+        if current_split_count != cached_split_count:
+            logger.info(f"Split detected for {symbol}: {cached_split_count} -> {current_split_count} splits. Invalidating cached prices.")
+            symbols_to_invalidate.append(symbol)
+            invalidated_count += 1
+    
+    # Remove invalidated symbols
+    for symbol in symbols_to_invalidate:
+        del price_cache[symbol]
+        print(f"   Invalidated price cache for {symbol} due to stock split")
+    
+    return invalidated_count

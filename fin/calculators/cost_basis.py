@@ -116,7 +116,9 @@ def get_action_order(row: pd.Series) -> int:
         return 1  # Other actions in the middle
 
 
-def calculate_cost_basis(df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def calculate_cost_basis(df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]],
+                         unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                         split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Calculate cost basis for all holdings using FIFO (First In, First Out) method.
     
@@ -129,6 +131,7 @@ def calculate_cost_basis(df: pd.DataFrame, price_cache: Dict[str, Dict[str, floa
     Args:
         df: DataFrame with transaction data
         price_cache: Nested dict of {symbol: {date: price}}
+        unavailable_ticker_cache: Optional cache of tickers without historical data
     
     Returns:
         Tuple of (holdings_df, realized_gains_df, tax_lots_df)
@@ -315,7 +318,7 @@ def calculate_cost_basis(df: pd.DataFrame, price_cache: Dict[str, Dict[str, floa
                                if sum(lot["remaining_qty"] for lot in lots[(account, symbol)]) >= 0.0001))
     
     # Fetch 7d and 30d price changes for all symbols
-    price_changes = get_price_changes(unique_symbols, price_cache)
+    price_changes = get_price_changes(unique_symbols, price_cache, unavailable_ticker_cache, split_cache)
     
     for (account, symbol), symbol_lots in lots.items():
         if not symbol_lots:
@@ -330,7 +333,7 @@ def calculate_cost_basis(df: pd.DataFrame, price_cache: Dict[str, Dict[str, floa
         avg_cost = total_cost / total_qty if total_qty > 0 else 0
         
         # Get current price
-        current_price, _ = get_price_from_yfinance(symbol, today, price_cache)
+        current_price, _ = get_price_from_yfinance(symbol, today, price_cache, unavailable_ticker_cache, split_cache)
         if current_price is None:
             current_price = 0
         
@@ -383,7 +386,7 @@ def calculate_cost_basis(df: pd.DataFrame, price_cache: Dict[str, Dict[str, floa
             is_long_term = holding_days > 365
             
             # Get current price for unrealized calculation
-            current_price, _ = get_price_from_yfinance(symbol, today_dt.strftime("%Y-%m-%d"), price_cache)
+            current_price, _ = get_price_from_yfinance(symbol, today_dt.strftime("%Y-%m-%d"), price_cache, unavailable_ticker_cache, split_cache)
             current_price = current_price or 0
             
             current_value = lot["remaining_qty"] * current_price

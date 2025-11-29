@@ -55,7 +55,7 @@ def parse_vanguard_sf401k(file_path: pathlib.Path) -> pd.DataFrame:
         
         if needs_price_lookup and symbol and amount > 0:
             # Fetch actual price from yfinance
-            actual_price, was_fetched = get_price_from_yfinance(symbol, date_str, price_cache)
+            actual_price, was_fetched = get_price_from_yfinance(symbol, date_str, price_cache, None)
             if actual_price and actual_price > 0:
                 cache_updated = cache_updated or was_fetched
                 price = actual_price
@@ -71,7 +71,7 @@ def parse_vanguard_sf401k(file_path: pathlib.Path) -> pd.DataFrame:
         else:
             # Quantity is valid, but still verify/fetch the correct price
             if symbol and amount > 0:
-                actual_price, was_fetched = get_price_from_yfinance(symbol, date_str, price_cache)
+                actual_price, was_fetched = get_price_from_yfinance(symbol, date_str, price_cache, None)
                 if actual_price and actual_price > 0:
                     cache_updated = cache_updated or was_fetched
                     price = actual_price

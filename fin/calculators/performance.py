@@ -11,7 +11,9 @@ from typing import Dict, List, Optional, Tuple
 from ..utils.prices import get_price_from_yfinance, get_multi_period_returns, PERFORMANCE_PERIODS
 
 
-def calculate_asset_performance(holdings_df: pd.DataFrame, price_cache: dict) -> pd.DataFrame:
+def calculate_asset_performance(holdings_df: pd.DataFrame, price_cache: dict,
+                                unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                                split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> pd.DataFrame:
     """
     Calculate multi-period returns for each holding.
     
@@ -24,7 +26,7 @@ def calculate_asset_performance(holdings_df: pd.DataFrame, price_cache: dict) ->
     symbols = holdings_df["Symbol"].unique().tolist()
     
     # Get multi-period returns for all symbols
-    returns_data = get_multi_period_returns(symbols, price_cache)
+    returns_data = get_multi_period_returns(symbols, price_cache, unavailable_ticker_cache, split_cache)
     
     # Build result dataframe
     results = []
@@ -52,7 +54,9 @@ def calculate_asset_performance(holdings_df: pd.DataFrame, price_cache: dict) ->
     return df
 
 
-def calculate_account_performance(holdings_df: pd.DataFrame, price_cache: dict) -> pd.DataFrame:
+def calculate_account_performance(holdings_df: pd.DataFrame, price_cache: dict,
+                                  unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                                  split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> pd.DataFrame:
     """
     Calculate multi-period returns for each account.
     
@@ -62,7 +66,7 @@ def calculate_account_performance(holdings_df: pd.DataFrame, price_cache: dict) 
         return pd.DataFrame()
     
     # Get asset-level performance first
-    asset_perf = calculate_asset_performance(holdings_df, price_cache)
+    asset_perf = calculate_asset_performance(holdings_df, price_cache, unavailable_ticker_cache, split_cache)
     
     if asset_perf.empty:
         return pd.DataFrame()
@@ -110,7 +114,9 @@ def calculate_account_performance(holdings_df: pd.DataFrame, price_cache: dict) 
     return df.sort_values("CurrentValue", ascending=False).reset_index(drop=True)
 
 
-def calculate_portfolio_performance(holdings_df: pd.DataFrame, price_cache: dict) -> dict:
+def calculate_portfolio_performance(holdings_df: pd.DataFrame, price_cache: dict,
+                                    unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                                    split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> dict:
     """
     Calculate multi-period returns for the total portfolio.
     
@@ -120,7 +126,7 @@ def calculate_portfolio_performance(holdings_df: pd.DataFrame, price_cache: dict
         return {}
     
     # Get asset-level performance
-    asset_perf = calculate_asset_performance(holdings_df, price_cache)
+    asset_perf = calculate_asset_performance(holdings_df, price_cache, unavailable_ticker_cache, split_cache)
     
     if asset_perf.empty:
         return {}
@@ -153,7 +159,9 @@ def calculate_portfolio_performance(holdings_df: pd.DataFrame, price_cache: dict
     return result
 
 
-def calculate_sector_performance(holdings_df: pd.DataFrame, price_cache: dict) -> pd.DataFrame:
+def calculate_sector_performance(holdings_df: pd.DataFrame, price_cache: dict,
+                                 unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                                 split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> pd.DataFrame:
     """
     Calculate multi-period returns grouped by sector.
     """
@@ -161,7 +169,7 @@ def calculate_sector_performance(holdings_df: pd.DataFrame, price_cache: dict) -
         return pd.DataFrame()
     
     # Get asset-level performance
-    asset_perf = calculate_asset_performance(holdings_df, price_cache)
+    asset_perf = calculate_asset_performance(holdings_df, price_cache, unavailable_ticker_cache, split_cache)
     
     if asset_perf.empty:
         return pd.DataFrame()
@@ -208,7 +216,9 @@ def calculate_sector_performance(holdings_df: pd.DataFrame, price_cache: dict) -
     return df.sort_values("CurrentValue", ascending=False).reset_index(drop=True)
 
 
-def generate_performance_report(holdings_df: pd.DataFrame, price_cache: dict) -> dict:
+def generate_performance_report(holdings_df: pd.DataFrame, price_cache: dict,
+                                unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                                split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> dict:
     """
     Generate a comprehensive performance report with all levels of analysis.
     
@@ -221,10 +231,10 @@ def generate_performance_report(holdings_df: pd.DataFrame, price_cache: dict) ->
     """
     print("\n16. Calculating multi-period performance...")
     
-    portfolio_perf = calculate_portfolio_performance(holdings_df, price_cache)
-    account_perf = calculate_account_performance(holdings_df, price_cache)
-    sector_perf = calculate_sector_performance(holdings_df, price_cache)
-    asset_perf = calculate_asset_performance(holdings_df, price_cache)
+    portfolio_perf = calculate_portfolio_performance(holdings_df, price_cache, unavailable_ticker_cache, split_cache)
+    account_perf = calculate_account_performance(holdings_df, price_cache, unavailable_ticker_cache, split_cache)
+    sector_perf = calculate_sector_performance(holdings_df, price_cache, unavailable_ticker_cache, split_cache)
+    asset_perf = calculate_asset_performance(holdings_df, price_cache, unavailable_ticker_cache, split_cache)
     
     periods = list(PERFORMANCE_PERIODS.keys())
     

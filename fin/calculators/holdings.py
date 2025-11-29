@@ -129,7 +129,9 @@ def get_signed_quantity(row: pd.Series) -> float:
         return 0
 
 
-def calculate_holdings(df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]]) -> pd.DataFrame:
+def calculate_holdings(df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]],
+                       unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                       split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> pd.DataFrame:
     """
     Calculate current holdings for each account and asset combination.
     
@@ -143,6 +145,7 @@ def calculate_holdings(df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]
     Args:
         df: DataFrame with transaction data
         price_cache: Nested dict of {symbol: {date: price}}
+        unavailable_ticker_cache: Optional cache of tickers without historical data
     
     Returns:
         DataFrame with columns: Account, Symbol, Quantity, CurrentPrice, Value, Currency
@@ -188,7 +191,7 @@ def calculate_holdings(df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]
         try:
             # Use today's date for current price
             today = datetime.now().strftime("%Y-%m-%d")
-            price, _ = get_price_from_yfinance(symbol, today, price_cache)
+            price, _ = get_price_from_yfinance(symbol, today, price_cache, unavailable_ticker_cache, split_cache)
             if price is not None:
                 current_prices[symbol] = price
         except Exception as e:

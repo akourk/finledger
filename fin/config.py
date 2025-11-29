@@ -32,6 +32,7 @@ SPLIT_CACHE_PATH = DATA_PATH / "split_cache.json"
 COST_BASIS_CACHE_PATH = DATA_PATH / "cost_basis_cache.json"
 HISTORICAL_HOLDINGS_CACHE_PATH = DATA_PATH / "historical_holdings_cache.json"
 SECTOR_CACHE_PATH = DATA_PATH / "sector_cache.json"
+UNAVAILABLE_TICKER_CACHE_PATH = DATA_PATH / "unavailable_ticker_cache.json"
 
 # =============================================================================
 # Unified Output Schema

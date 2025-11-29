@@ -6,10 +6,12 @@ Generates account and portfolio summary reports.
 
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 
 
-def calculate_daily_portfolio_change(holdings_df: pd.DataFrame, price_cache: Dict) -> Tuple[float, float]:
+def calculate_daily_portfolio_change(holdings_df: pd.DataFrame, price_cache: Dict,
+                                      unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                                      split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> Tuple[float, float]:
     """
     Calculate the portfolio's change from yesterday to today.
     
@@ -38,7 +40,7 @@ def calculate_daily_portfolio_change(holdings_df: pd.DataFrame, price_cache: Dic
             continue
         
         # Get yesterday's price
-        yesterday_price, _ = get_price_from_yfinance(symbol, yesterday_str, price_cache)
+        yesterday_price, _ = get_price_from_yfinance(symbol, yesterday_str, price_cache, unavailable_ticker_cache, split_cache)
         
         if yesterday_price is None or yesterday_price == 0:
             # Fall back to current price (no change)
@@ -169,7 +171,9 @@ def generate_account_summary(holdings_df: pd.DataFrame, income_df: pd.DataFrame,
 def generate_portfolio_summary(holdings_df: pd.DataFrame, account_summary_df: pd.DataFrame,
                                 historical_df: pd.DataFrame, income_by_year_df: pd.DataFrame,
                                 cash_balances_df: pd.DataFrame = None,
-                                price_cache: Dict = None) -> dict:
+                                price_cache: Dict = None,
+                                unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                                split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> dict:
     """
     Generate overall portfolio summary with key metrics.
     Includes cash savings accounts in total portfolio value.
@@ -270,7 +274,7 @@ def generate_portfolio_summary(holdings_df: pd.DataFrame, account_summary_df: pd
     
     # Daily change (if price_cache provided)
     if price_cache is not None and not holdings_df.empty:
-        daily_change, daily_change_pct = calculate_daily_portfolio_change(holdings_df, price_cache)
+        daily_change, daily_change_pct = calculate_daily_portfolio_change(holdings_df, price_cache, unavailable_ticker_cache, split_cache)
         summary["DailyChange"] = daily_change
         summary["DailyChangePct"] = daily_change_pct
     else:

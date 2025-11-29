@@ -7,7 +7,7 @@ Includes time-weighted return and S&P 500 comparison calculations.
 
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 from ..utils.prices import get_price_from_yfinance
 from .holdings import calculate_holdings_quantities_only
@@ -365,7 +365,7 @@ def calculate_cost_basis_changes(df: pd.DataFrame, price_cache: dict) -> list:
         # Accumulate delta for same day, or record if date changed
         if prev_date is not None and date != prev_date and pending_delta != 0:
             date_str = prev_date.strftime("%Y-%m-%d")
-            sp500_price, _ = get_price_from_yfinance(sp500_symbol, date_str, price_cache)
+            sp500_price, _ = get_price_from_yfinance(sp500_symbol, date_str, price_cache, None, None)
             cost_basis_changes.append({
                 "date": prev_date,
                 "delta": pending_delta,
@@ -380,7 +380,7 @@ def calculate_cost_basis_changes(df: pd.DataFrame, price_cache: dict) -> list:
     # Record final pending delta
     if prev_date is not None and pending_delta != 0:
         date_str = prev_date.strftime("%Y-%m-%d")
-        sp500_price, _ = get_price_from_yfinance(sp500_symbol, date_str, price_cache)
+        sp500_price, _ = get_price_from_yfinance(sp500_symbol, date_str, price_cache, None, None)
         cost_basis_changes.append({
             "date": prev_date,
             "delta": pending_delta,
@@ -649,7 +649,9 @@ def calculate_portfolio_cost_basis_history(df: pd.DataFrame) -> pd.DataFrame:
 
 def calculate_historical_holdings(df: pd.DataFrame, price_cache: dict, 
                                    snapshot_dates: list = None,
-                                   include_cash: pd.DataFrame = None) -> Tuple[pd.DataFrame, list]:
+                                   include_cash: pd.DataFrame = None,
+                                   unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                                   split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> Tuple[pd.DataFrame, list]:
     """
     Calculate holdings at specific points in time with per-account breakdown.
     Uses historical prices for accurate point-in-time valuations.
@@ -733,7 +735,7 @@ def calculate_historical_holdings(df: pd.DataFrame, price_cache: dict,
             qty = holdings.loc[idx, "Quantity"]
             
             # Get historical price for this date
-            price, _ = get_price_from_yfinance(symbol, snapshot_date_str, price_cache)
+            price, _ = get_price_from_yfinance(symbol, snapshot_date_str, price_cache, unavailable_ticker_cache, split_cache)
             
             if price is not None:
                 value = qty * price
@@ -779,7 +781,7 @@ def calculate_historical_holdings(df: pd.DataFrame, price_cache: dict,
     sp500_symbol = "^GSPC"
     for result in results:
         date_str = result["Date"]
-        sp500_price, _ = get_price_from_yfinance(sp500_symbol, date_str, price_cache)
+        sp500_price, _ = get_price_from_yfinance(sp500_symbol, date_str, price_cache, unavailable_ticker_cache, split_cache)
         result["SP500"] = round(sp500_price, 2) if sp500_price else None
     
     # Calculate Time-Weighted Return

@@ -147,25 +147,110 @@ function initRefreshIndicator() {
 
     if (!refreshBtn) return;
 
-    var lastRefresh = localStorage.getItem('dashboardLastRefresh');
-    if (lastRefresh) {
-        updateRefreshStatus(new Date(parseInt(lastRefresh)));
+    // Check if we're running from server or local file
+    var isServerMode = window.location.protocol === 'http:' || window.location.protocol === 'https:';
+
+    // Load initial status
+    if (isServerMode) {
+        fetchDataStatus();
     } else {
-        localStorage.setItem('dashboardLastRefresh', Date.now().toString());
-        if (lastUpdatedText) lastUpdatedText.textContent = 'Just updated';
-        if (refreshStatus) refreshStatus.classList.add('success');
+        // Local file mode - use localStorage
+        var lastRefresh = localStorage.getItem('dashboardLastRefresh');
+        if (lastRefresh) {
+            updateRefreshStatus(new Date(parseInt(lastRefresh)));
+        } else {
+            localStorage.setItem('dashboardLastRefresh', Date.now().toString());
+            if (lastUpdatedText) lastUpdatedText.textContent = 'Just updated';
+            if (refreshStatus) refreshStatus.classList.add('success');
+        }
     }
 
     refreshBtn.addEventListener('click', function () {
-        refreshBtn.classList.add('refreshing');
-        if (lastUpdatedText) lastUpdatedText.textContent = 'Refreshing...';
-        if (refreshStatus) refreshStatus.classList.remove('success', 'error');
+        if (isServerMode) {
+            // Server mode - trigger actual data refresh
+            triggerDataRefresh();
+        } else {
+            // Local file mode - just reload
+            refreshBtn.classList.add('refreshing');
+            if (lastUpdatedText) lastUpdatedText.textContent = 'Refreshing...';
+            if (refreshStatus) refreshStatus.classList.remove('success', 'error');
 
-        setTimeout(function () {
-            localStorage.setItem('dashboardLastRefresh', Date.now().toString());
-            window.location.reload();
-        }, 500);
+            setTimeout(function () {
+                localStorage.setItem('dashboardLastRefresh', Date.now().toString());
+                window.location.reload();
+            }, 500);
+        }
     });
+
+    // Auto-refresh status every 30 seconds if in server mode
+    if (isServerMode) {
+        setInterval(fetchDataStatus, 30000);
+    }
+}
+
+function fetchDataStatus() {
+    var refreshStatus = document.getElementById('refreshStatus');
+    var lastUpdatedText = document.getElementById('lastUpdatedText');
+    if (!refreshStatus || !lastUpdatedText) return;
+
+    fetch('/api/status')
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+            if (data.status === 'success' && data.generated_at) {
+                var date = new Date(data.generated_at);
+                updateRefreshStatus(date);
+            } else {
+                lastUpdatedText.textContent = 'Status unknown';
+            }
+        })
+        .catch(function (error) {
+            console.error('Error fetching status:', error);
+            lastUpdatedText.textContent = 'Status unavailable';
+        });
+}
+
+function triggerDataRefresh() {
+    var refreshBtn = document.getElementById('refreshBtn');
+    var refreshStatus = document.getElementById('refreshStatus');
+    var lastUpdatedText = document.getElementById('lastUpdatedText');
+
+    refreshBtn.classList.add('refreshing');
+    refreshBtn.disabled = true;
+    if (lastUpdatedText) lastUpdatedText.textContent = 'Refreshing data...';
+    if (refreshStatus) refreshStatus.classList.remove('success', 'error');
+
+    fetch('/api/refresh', {
+        method: 'POST'
+    })
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+            if (data.status === 'success') {
+                if (refreshStatus) refreshStatus.classList.add('success');
+                if (lastUpdatedText) lastUpdatedText.textContent = 'Refresh complete!';
+
+                // Reload the page after a short delay to show new data
+                setTimeout(function () {
+                    window.location.reload();
+                }, 1000);
+            } else {
+                if (refreshStatus) refreshStatus.classList.add('error');
+                if (lastUpdatedText) lastUpdatedText.textContent = 'Refresh failed';
+                refreshBtn.classList.remove('refreshing');
+                refreshBtn.disabled = false;
+
+                console.error('Refresh error:', data.message);
+                alert('Error refreshing data: ' + data.message);
+            }
+        })
+        .catch(function (error) {
+            console.error('Refresh request failed:', error);
+            if (refreshStatus) refreshStatus.classList.add('error');
+            if (lastUpdatedText) lastUpdatedText.textContent = 'Connection error';
+            refreshBtn.classList.remove('refreshing');
+            refreshBtn.disabled = false;
+
+            alert('Could not connect to server. Make sure server.py is running.');
+        });
 }
 
 function updateRefreshStatus(date) {

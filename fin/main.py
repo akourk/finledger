@@ -75,6 +75,7 @@ from .utils.cache import (
     load_price_cache, save_price_cache,
     load_split_cache, save_split_cache,
     load_sector_cache, save_sector_cache,
+    load_unavailable_ticker_cache, save_unavailable_ticker_cache,
 )
 from .utils.prices import (
     convert_price_based_symbols, adjust_for_splits,
@@ -247,12 +248,21 @@ def process_all_files() -> pd.DataFrame:
     try:
         price_cache = load_price_cache()
         split_cache = load_split_cache()
+        unavailable_ticker_cache = load_unavailable_ticker_cache()
         logger.info("Loaded caches successfully")
+        
+        # Validate price cache against split cache (invalidate prices if splits occurred)
+        from .utils.cache import validate_price_cache_against_splits
+        invalidated = validate_price_cache_against_splits(price_cache, split_cache)
+        if invalidated > 0:
+            print(f"\n⚠ Invalidated price cache for {invalidated} symbol(s) due to stock splits")
+            
     except Exception as e:
         logger.error(f"Failed to load caches: {e}")
         print(f"\n✗ Error loading caches: {e}")
         price_cache = {}
         split_cache = {}
+        unavailable_ticker_cache = {}
     
     # Process each CSV file
     csv_files = [f for f in DATA_INPUT_PATH.iterdir() 
@@ -366,6 +376,7 @@ def process_all_files() -> pd.DataFrame:
         try:
             save_price_cache(final_price_cache)
             save_split_cache(split_cache)
+            save_unavailable_ticker_cache(unavailable_ticker_cache)
             logger.info("Saved updated caches")
         except Exception as e:
             logger.error(f"Failed to save caches: {e}")
@@ -389,7 +400,9 @@ def process_all_files() -> pd.DataFrame:
         return create_empty_dataframe()
 
 
-def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]]) -> Dict[str, Any]:
+def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[str, float]], 
+                        unavailable_ticker_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                        split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> Dict[str, Any]:
     """
     Generate all reports from the master transaction data.
     
@@ -404,6 +417,11 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
     8. account_summary.csv - Summary metrics per account
     9. historical_holdings.csv - Portfolio value over time
     10. portfolio_summary.json - Overall portfolio metrics
+    
+    Args:
+        master_df: Master transaction DataFrame
+        price_cache: Price cache dictionary
+        unavailable_ticker_cache: Optional cache of tickers without historical data
     """
     logger.info("Starting report generation")
     print("\n" + "="*60)
@@ -418,7 +436,7 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
     # 1. Simple holdings (for backwards compatibility)
     print("\n1. Calculating current holdings...")
     try:
-        simple_holdings = calculate_holdings(master_df, price_cache)
+        simple_holdings = calculate_holdings(master_df, price_cache, unavailable_ticker_cache, split_cache)
         export_holdings_csv(simple_holdings)
         logger.info(f"Generated simple holdings report with {len(simple_holdings)} positions")
     except Exception as e:
@@ -429,7 +447,7 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
     # 2. Detailed holdings with cost basis and tax lots
     print("\n2. Calculating cost basis (FIFO method) and tax lots...")
     try:
-        holdings_detail, realized_gains, tax_lots = calculate_cost_basis(master_df, price_cache)
+        holdings_detail, realized_gains, tax_lots = calculate_cost_basis(master_df, price_cache, unavailable_ticker_cache, split_cache)
         logger.info(f"Calculated cost basis for {len(holdings_detail)} holdings")
     except Exception as e:
         logger.exception("Failed to calculate cost basis")
@@ -498,7 +516,7 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
     # 9. Historical holdings (with per-account breakdown)
     print("\n9. Calculating historical holdings...")
     historical_summary, historical_details = calculate_historical_holdings(
-        master_df, price_cache, include_cash=cash_balances
+        master_df, price_cache, include_cash=cash_balances, unavailable_ticker_cache=unavailable_ticker_cache, split_cache=split_cache
     )
     
     # Calculate cost basis history and merge with historical holdings
@@ -527,7 +545,7 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
     print("\n10. Generating portfolio summary...")
     portfolio_summary = generate_portfolio_summary(
         holdings_detail, account_summary, historical_summary, income_by_year, cash_balances,
-        price_cache
+        price_cache, unavailable_ticker_cache, split_cache
     )
     portfolio_summary["GeneratedAt"] = datetime.now().isoformat()
     
@@ -603,7 +621,7 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
     from .reports.exporters import export_performance_data_js
     performance_report = None
     if not holdings_detail.empty:
-        performance_report = generate_performance_report(holdings_detail, price_cache)
+        performance_report = generate_performance_report(holdings_detail, price_cache, unavailable_ticker_cache, split_cache)
         export_performance_data_js(performance_report)
     
     # 18. Benchmark comparison report
@@ -613,7 +631,7 @@ def generate_all_reports(master_df: pd.DataFrame, price_cache: Dict[str, Dict[st
     benchmark_report = None
     if not historical_summary.empty and performance_report:
         portfolio_perf = performance_report.get("portfolio", {})
-        benchmark_report = generate_benchmark_report(historical_summary, portfolio_perf)
+        benchmark_report = generate_benchmark_report(historical_summary, portfolio_perf, price_cache=price_cache)
         export_benchmark_data_js(benchmark_report)
     
     # 19. Monte Carlo simulation report
@@ -760,18 +778,24 @@ def main(args: Optional[Any] = None) -> None:
         
         # Generate all reports
         try:
-            reports = generate_all_reports(master_df, price_cache)
+            unavailable_ticker_cache = load_unavailable_ticker_cache()
+            split_cache = load_split_cache()
+            reports = generate_all_reports(master_df, price_cache, unavailable_ticker_cache, split_cache)
         except Exception as e:
             logger.exception("Failed to generate reports")
             print(f"\n✗ Error generating reports: {e}")
             reports = {}
+            unavailable_ticker_cache = {}
         
-        # Save price cache (may have new prices from report generation)
+        # Save caches (may have new prices and unavailable tickers from report generation)
         try:
             save_price_cache(price_cache)
-            logger.info("Saved final price cache")
+            save_unavailable_ticker_cache(unavailable_ticker_cache)
+            if unavailable_ticker_cache:
+                print(f"\n✓ Saved unavailable ticker cache with {len(unavailable_ticker_cache)} tickers")
+            logger.info("Saved final caches")
         except Exception as e:
-            logger.error(f"Failed to save final price cache: {e}")
+            logger.error(f"Failed to save final caches: {e}")
         
         # Show sample of output
         print("\nSample of master transactions (first 10 rows):")

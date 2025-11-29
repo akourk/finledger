@@ -336,8 +336,8 @@ def lookup_spinoff_fmv(
     
     from .utils.prices import get_price_from_yfinance
     
-    parent_fmv, _ = get_price_from_yfinance(parent_symbol, lookup_date, price_cache)
-    spinoff_fmv, _ = get_price_from_yfinance(spinoff_symbol, lookup_date, price_cache)
+    parent_fmv, _ = get_price_from_yfinance(parent_symbol, lookup_date, price_cache, None)
+    spinoff_fmv, _ = get_price_from_yfinance(spinoff_symbol, lookup_date, price_cache, None)
     
     return parent_fmv or 0.0, spinoff_fmv or 0.0
 

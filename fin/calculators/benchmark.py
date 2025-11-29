@@ -29,22 +29,55 @@ DEFAULT_BENCHMARK = "SPY"
 RISK_FREE_RATE = 0.045  # 4.5% annual
 
 
-def get_benchmark_prices(symbol: str, start_date: str, end_date: str = None) -> pd.DataFrame:
+def get_benchmark_prices(symbol: str, start_date: str, end_date: str = None, 
+                        price_cache: Optional[Dict[str, Dict[str, float]]] = None) -> pd.DataFrame:
     """
-    Fetch historical prices for a benchmark symbol.
+    Fetch historical prices for a benchmark symbol, using cache when available.
     
     Args:
         symbol: Benchmark ticker (e.g., 'SPY')
         start_date: Start date in YYYY-MM-DD format
         end_date: End date (defaults to today)
+        price_cache: Optional price cache to check before fetching
     
     Returns:
-        DataFrame with Date and Close columns
+        DataFrame with Date and Price columns
     """
     if end_date is None:
         end_date = datetime.now().strftime("%Y-%m-%d")
     
+    # Try to get prices from cache first
+    if price_cache is not None and symbol in price_cache:
+        cached_dates = price_cache[symbol]
+        
+        # Generate all dates in range
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        date_range = pd.date_range(start=start_dt, end=end_dt, freq='D')
+        
+        # Collect cached prices
+        cached_prices = []
+        missing_dates = []
+        
+        for date in date_range:
+            date_str = date.strftime("%Y-%m-%d")
+            if date_str in cached_dates:
+                cached_prices.append({'Date': date, 'Price': cached_dates[date_str]})
+            else:
+                missing_dates.append(date)
+        
+        # If we have most of the data cached, use cache and skip fetch
+        cache_coverage = len(cached_prices) / len(date_range) if len(date_range) > 0 else 0
+        if cache_coverage > 0.8:  # If >80% cached, use cached data only
+            if cached_prices:
+                logger.debug(f"Using cached data for {symbol} ({len(cached_prices)} days, {cache_coverage*100:.1f}% coverage)")
+                df = pd.DataFrame(cached_prices)
+                df['Date'] = pd.to_datetime(df['Date'])
+                return df
+    
+    # Need to fetch from yfinance
     try:
+        logger.debug(f"Fetching {symbol} data from yfinance for {start_date} to {end_date}")
         ticker = yf.Ticker(symbol)
         hist = ticker.history(start=start_date, end=end_date)
         
@@ -56,6 +89,15 @@ def get_benchmark_prices(symbol: str, start_date: str, end_date: str = None) -> 
         hist = hist.reset_index()
         hist['Date'] = pd.to_datetime(hist['Date']).dt.tz_localize(None)
         hist = hist[['Date', 'Close']].rename(columns={'Close': 'Price'})
+        
+        # Cache the fetched data
+        if price_cache is not None:
+            if symbol not in price_cache:
+                price_cache[symbol] = {}
+            for _, row in hist.iterrows():
+                date_str = row['Date'].strftime("%Y-%m-%d")
+                price_cache[symbol][date_str] = float(row['Price'])
+            logger.debug(f"Cached {len(hist)} prices for {symbol}")
         
         return hist
         
@@ -422,7 +464,8 @@ def calculate_roi_metrics(historical_df: pd.DataFrame) -> Dict:
 
 def generate_benchmark_report(historical_df: pd.DataFrame,
                               portfolio_perf: Dict,
-                              benchmark_symbol: str = DEFAULT_BENCHMARK) -> Dict:
+                              benchmark_symbol: str = DEFAULT_BENCHMARK,
+                              price_cache: Optional[Dict[str, Dict[str, float]]] = None) -> Dict:
     """
     Generate a comprehensive benchmark comparison report.
     
@@ -430,6 +473,7 @@ def generate_benchmark_report(historical_df: pd.DataFrame,
         historical_df: Historical portfolio values (from historical_holdings)
         portfolio_perf: Portfolio performance data (from performance calculator)
         benchmark_symbol: Benchmark to compare against
+        price_cache: Optional price cache to reduce API calls
     
     Returns:
         Dict with benchmark comparison metrics
@@ -452,9 +496,9 @@ def generate_benchmark_report(historical_df: pd.DataFrame,
     start_date = hist_df['Date'].min().strftime('%Y-%m-%d')
     end_date = hist_df['Date'].max().strftime('%Y-%m-%d')
     
-    # Fetch benchmark data
-    print(f"   Fetching {benchmark_symbol} data from {start_date} to {end_date}...")
-    benchmark_df = get_benchmark_prices(benchmark_symbol, start_date, end_date)
+    # Fetch benchmark data (using cache if available)
+    print(f"   Getting {benchmark_symbol} data from {start_date} to {end_date}...")
+    benchmark_df = get_benchmark_prices(benchmark_symbol, start_date, end_date, price_cache)
     
     if benchmark_df.empty:
         logger.warning(f"Could not fetch benchmark data for {benchmark_symbol}")

@@ -17,7 +17,9 @@ from fin.utils.cache import save_sector_cache
 logger = logging.getLogger(__name__)
 
 
-def get_price_from_yfinance(ticker: str, date_str: str, cache: Dict[str, Dict[str, float]]) -> Tuple[Optional[float], bool]:
+def get_price_from_yfinance(ticker: str, date_str: str, cache: Dict[str, Dict[str, float]], 
+                           unavailable_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                           split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> Tuple[Optional[float], bool]:
     """
     Get the closing price for a ticker on a specific date.
     Uses cache first, then fetches from yfinance if not cached.
@@ -26,7 +28,9 @@ def get_price_from_yfinance(ticker: str, date_str: str, cache: Dict[str, Dict[st
     Args:
         ticker: Stock ticker symbol
         date_str: Date in YYYY-MM-DD format
-        cache: Nested dict of {symbol: {date: price}}
+        cache: Nested dict of {symbol: {date: price, '_split_count': count}}
+        unavailable_cache: Optional dict of {symbol: {date: "unavailable"}} to track tickers without data
+        split_cache: Optional dict to track current split count for validation
     
     Returns:
         Tuple of (price, was_fetched) where was_fetched indicates if a new fetch was made
@@ -36,7 +40,13 @@ def get_price_from_yfinance(ticker: str, date_str: str, cache: Dict[str, Dict[st
         logger.debug(f"Skipping delisted symbol: {ticker}")
         return None, False  # No fetch needed, symbol is delisted
     
-    # Check cache first
+    # Check unavailable cache - skip if we already know this ticker+date combo doesn't have data
+    if unavailable_cache is not None and ticker in unavailable_cache:
+        if date_str in unavailable_cache[ticker]:
+            logger.debug(f"Skipping unavailable ticker/date: {ticker} on {date_str}")
+            return None, False  # No fetch needed, we know it's unavailable
+    
+    # Check price cache
     if ticker in cache and date_str in cache[ticker]:
         return cache[ticker][date_str], False  # From cache, no fetch needed
     
@@ -57,8 +67,18 @@ def get_price_from_yfinance(ticker: str, date_str: str, cache: Dict[str, Dict[st
                             end=end_date.strftime("%Y-%m-%d"))
         
         if hist.empty:
-            logger.warning(f"No price data found for {ticker} around {date_str}")
-            print(f"Warning: No price data found for {ticker} around {date_str}")
+            logger.warning(f"No price data found for {ticker} around {date_str} - caching as unavailable")
+            print(f"Warning: No price data found for {ticker} around {date_str} (will skip in future)")
+            
+            # Cache this as unavailable to avoid repeated API calls
+            if unavailable_cache is not None:
+                if ticker not in unavailable_cache:
+                    unavailable_cache[ticker] = {}
+                unavailable_cache[ticker][date_str] = "unavailable"
+                logger.debug(f"Added {ticker}@{date_str} to unavailable cache (cache now has {len(unavailable_cache)} tickers)")
+            else:
+                logger.debug(f"Unavailable cache is None, cannot cache {ticker}@{date_str}")
+            
             return None, True
         
         # Find the closest trading day on or before target date
@@ -73,10 +93,15 @@ def get_price_from_yfinance(ticker: str, date_str: str, cache: Dict[str, Dict[st
         
         price = float(hist.loc[closest_date, "Close"])
         
-        # Cache the result
+        # Cache the result with split count metadata
         if ticker not in cache:
             cache[ticker] = {}
         cache[ticker][date_str] = price
+        
+        # Store current split count to detect future splits
+        if split_cache is not None:
+            current_split_count = len(split_cache.get(ticker, {}))
+            cache[ticker]['_split_count'] = current_split_count
         
         logger.debug(f"Fetched price for {ticker} on {date_str}: ${price:.2f}")
         return price, True  # New fetch was made
@@ -87,13 +112,17 @@ def get_price_from_yfinance(ticker: str, date_str: str, cache: Dict[str, Dict[st
         return None, True
 
 
-def get_price_changes(symbols: List[str], price_cache: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, Optional[float]]]:
+def get_price_changes(symbols: List[str], price_cache: Dict[str, Dict[str, float]], 
+                     unavailable_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                     split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> Dict[str, Dict[str, Optional[float]]]:
     """
     Calculate 7-day and 30-day price changes for a list of symbols.
     
     Args:
         symbols: List of ticker symbols
         price_cache: Nested dict of {symbol: {date: price}}
+        unavailable_cache: Optional dict of {symbol: {date: "unavailable"}} to track tickers without data
+        split_cache: Optional dict to track splits for cache validation
     
     Returns:
         Dict of {symbol: {"change_7d": pct, "change_30d": pct, "price_7d": price, "price_30d": price}}
@@ -110,7 +139,7 @@ def get_price_changes(symbols: List[str], price_cache: Dict[str, Dict[str, float
     
     for symbol in symbols:
         # Get current price
-        current_price, _ = get_price_from_yfinance(symbol, today_str, price_cache)
+        current_price, _ = get_price_from_yfinance(symbol, today_str, price_cache, unavailable_cache, split_cache)
         
         if current_price is None or current_price == 0:
             results[symbol] = {
@@ -122,13 +151,13 @@ def get_price_changes(symbols: List[str], price_cache: Dict[str, Dict[str, float
             continue
         
         # Get 7-day ago price
-        price_7d, _ = get_price_from_yfinance(symbol, date_7d, price_cache)
+        price_7d, _ = get_price_from_yfinance(symbol, date_7d, price_cache, unavailable_cache, split_cache)
         change_7d = None
         if price_7d is not None and price_7d > 0:
             change_7d = ((current_price - price_7d) / price_7d) * 100
         
         # Get 30-day ago price
-        price_30d, _ = get_price_from_yfinance(symbol, date_30d, price_cache)
+        price_30d, _ = get_price_from_yfinance(symbol, date_30d, price_cache, unavailable_cache, split_cache)
         change_30d = None
         if price_30d is not None and price_30d > 0:
             change_30d = ((current_price - price_30d) / price_30d) * 100
@@ -157,7 +186,9 @@ PERFORMANCE_PERIODS = {
 }
 
 
-def get_multi_period_returns(symbols: List[str], price_cache: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, Optional[float]]]:
+def get_multi_period_returns(symbols: List[str], price_cache: Dict[str, Dict[str, float]], 
+                            unavailable_cache: Optional[Dict[str, Dict[str, str]]] = None,
+                            split_cache: Optional[Dict[str, Dict[str, float]]] = None) -> Dict[str, Dict[str, Optional[float]]]:
     """
     Calculate returns for multiple time periods for a list of symbols.
     
@@ -166,6 +197,8 @@ def get_multi_period_returns(symbols: List[str], price_cache: Dict[str, Dict[str
     Args:
         symbols: List of ticker symbols
         price_cache: Nested dict of {symbol: {date: price}}
+        unavailable_cache: Optional dict of {symbol: {date: "unavailable"}} to track tickers without data
+        split_cache: Optional dict to track splits for cache validation
     
     Returns:
         Dict of {symbol: {"return_1d": pct, "return_1w": pct, ..., "price_current": price, "price_1d": price, ...}}
@@ -182,7 +215,7 @@ def get_multi_period_returns(symbols: List[str], price_cache: Dict[str, Dict[str
         symbol_data = {"price_current": None}
         
         # Get current price
-        current_price, _ = get_price_from_yfinance(symbol, today_str, price_cache)
+        current_price, _ = get_price_from_yfinance(symbol, today_str, price_cache, unavailable_cache, split_cache)
         
         if current_price is None or current_price == 0:
             # Set all periods to None
@@ -197,7 +230,7 @@ def get_multi_period_returns(symbols: List[str], price_cache: Dict[str, Dict[str
         # Calculate return for each period
         for period_name, days in PERFORMANCE_PERIODS.items():
             period_date = (today - timedelta(days=days)).strftime("%Y-%m-%d")
-            period_price, _ = get_price_from_yfinance(symbol, period_date, price_cache)
+            period_price, _ = get_price_from_yfinance(symbol, period_date, price_cache, unavailable_cache, split_cache)
             
             if period_price is not None and period_price > 0:
                 period_return = ((current_price - period_price) / period_price) * 100
