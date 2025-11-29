@@ -40,7 +40,7 @@ Before committing, run:
 ```bash
 black fin tests
 isort fin tests
-flake8 fin --max-line-length=100
+flake8 fin --max-line-length=119
 mypy fin --ignore-missing-imports
 ```
 

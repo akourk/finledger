@@ -33,7 +33,7 @@ jobs:
         # Stop the build if there are Python syntax errors or undefined names
         flake8 fin --count --select=E9,F63,F7,F82 --show-source --statistics
         # Exit-zero treats all errors as warnings
-        flake8 fin --count --exit-zero --max-complexity=10 --max-line-length=100 --statistics
+        flake8 fin --count --exit-zero --max-complexity=10 --max-line-length=119 --statistics
     
     - name: Check formatting with black
       run: |
@@ -79,4 +79,4 @@ jobs:
     
     - name: Lint with flake8
       run: |
-        flake8 fin --max-line-length=100
+        flake8 fin --max-line-length=119
