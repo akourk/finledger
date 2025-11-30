@@ -660,10 +660,10 @@ def generate_benchmark_report(
 
         result["chart_data"] = chart_data
 
-    alpha = result.get('alpha')
-    beta = result.get('beta')
-    sharpe = result.get('sharpe_ratio')
-    cagr = result.get('cagr')
+    alpha = result.get("alpha")
+    beta = result.get("beta")
+    sharpe = result.get("sharpe_ratio")
+    cagr = result.get("cagr")
     print(f"   Alpha: {alpha}%, Beta: {beta}, Sharpe: {sharpe}, CAGR: {cagr}%")
 
     return result

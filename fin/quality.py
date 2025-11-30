@@ -595,8 +595,8 @@ def print_quality_report(issues: List[QualityIssue], summary: Dict[str, int]) ->
 
     # Summary
     print(f"\n{'='*60}")
-    errs = summary['errors']
-    warns = summary['warnings']
-    infos = summary['info']
+    errs = summary["errors"]
+    warns = summary["warnings"]
+    infos = summary["info"]
     print(f"Total Issues: {summary['total']} ({errs} errors, {warns} warnings, {infos} info)")
     print("=" * 60)

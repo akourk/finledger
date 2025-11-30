@@ -366,11 +366,11 @@ def print_holdings_summary(holdings: pd.DataFrame):
     print("\nTop 10 Holdings by Value:")
     top_holdings = holdings.nlargest(10, value_col)
     for _, row in top_holdings.iterrows():
-        sym = row['Symbol']
-        qty = row['Quantity']
+        sym = row["Symbol"]
+        qty = row["Quantity"]
         price = row[price_col]
         value = row[value_col]
-        acct = row['Account']
+        acct = row["Account"]
         print(f"  {sym:12} {qty:>12.4f} @ ${price:>10.2f} = ${value:>12,.2f}  ({acct})")
 
 
@@ -391,8 +391,8 @@ def print_portfolio_summary(summary: dict):
         print(f"    └─ Cash/Savings:          ${summary.get('CashValue', 0):>15,.2f}")
 
     print(f"  Total Cost Basis:           ${summary.get('TotalCostBasis', 0):>15,.2f}")
-    unrealized = summary.get('TotalUnrealizedGain', 0)
-    unrealized_pct = summary.get('UnrealizedGainPct', 0)
+    unrealized = summary.get("TotalUnrealizedGain", 0)
+    unrealized_pct = summary.get("UnrealizedGainPct", 0)
     print(f"  Unrealized Gain/Loss:       ${unrealized:>15,.2f} ({unrealized_pct:>+.2f}%)")
     print(f"  Number of Positions:        {summary.get('NumPositions', 0):>15}")
     print(f"  Number of Accounts:         {summary.get('NumAccounts', 0):>15}")
@@ -422,13 +422,13 @@ def print_portfolio_summary(summary: dict):
     print(f"\n{'─'*40}")
     print("TOTAL RETURN")
     print(f"{'─'*40}")
-    total_ret = summary.get('TotalReturn', 0)
-    total_ret_pct = summary.get('TotalReturnPct', 0)
+    total_ret = summary.get("TotalReturn", 0)
+    total_ret_pct = summary.get("TotalReturnPct", 0)
     print(f"  Total Return (All-Time):    ${total_ret:>15,.2f} ({total_ret_pct:>+.2f}%)")
 
     if "AllTimeGrowth" in summary:
-        growth = summary.get('AllTimeGrowth', 0)
-        growth_pct = summary.get('AllTimeGrowthPct', 0)
+        growth = summary.get("AllTimeGrowth", 0)
+        growth_pct = summary.get("AllTimeGrowthPct", 0)
         print(f"  Portfolio Growth:           ${growth:>15,.2f} ({growth_pct:>+.2f}%)")
 
     # Account allocation

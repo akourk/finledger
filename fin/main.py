@@ -533,10 +533,10 @@ def generate_all_reports(
     if not cash_balances.empty:
         export_cash_balances_csv(cash_balances)
         for _, row in cash_balances.iterrows():
-            acct = row['Account']
-            bal = row['CurrentBalance']
-            interest = row['TotalInterest']
-            pct = row['ReturnPct']
+            acct = row["Account"]
+            bal = row["CurrentBalance"]
+            interest = row["TotalInterest"]
+            pct = row["ReturnPct"]
             print(f"   {acct}: Balance=${bal:,.2f}, Interest=${interest:,.2f} ({pct:.2f}%)")
     else:
         print("   No cash-only accounts found.")
@@ -834,9 +834,7 @@ def main(args: Optional[Any] = None) -> None:
         try:
             unavailable_ticker_cache = load_unavailable_ticker_cache()
             split_cache = load_split_cache()
-            generate_all_reports(
-                master_df, price_cache, unavailable_ticker_cache, split_cache
-            )
+            generate_all_reports(master_df, price_cache, unavailable_ticker_cache, split_cache)
         except Exception as e:
             logger.exception("Failed to generate reports")
             print(f"\n✗ Error generating reports: {e}")
