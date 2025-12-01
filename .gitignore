@@ -2,7 +2,7 @@
 /dashboard/data/*
 /data/input/*
 /data/output/*
-/data/*.json
+# /data/*.json
 
 # System files
 .DS_Store
