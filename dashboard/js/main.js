@@ -44,6 +44,7 @@ function loadTabContent(tabId) {
             createAllHoldingsTable();
             initHoldingsSearch();
             setTimeout(function () {
+                createHoldingsDonutCharts();
                 createHoldingsTreemap();
                 createHoldingsHeatmap();
             }, 100);

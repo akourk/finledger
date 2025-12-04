@@ -219,6 +219,22 @@
             <div id="holdings" class="tab-content">
                 <input type="text" class="search-box" id="holdingsSearch" placeholder="Search by symbol or account...">
 
+                <!-- Asset Breakdown Donut Charts -->
+                <div class="charts-grid" style="margin-bottom: 24px;">
+                    <div class="chart-container third-width">
+                        <h3 class="chart-title">By Sector</h3>
+                        <div id="sectorDonutChart" style="height: 300px;"></div>
+                    </div>
+                    <div class="chart-container third-width">
+                        <h3 class="chart-title">By Account</h3>
+                        <div id="accountDonutChart" style="height: 300px;"></div>
+                    </div>
+                    <div class="chart-container third-width">
+                        <h3 class="chart-title">Top Holdings</h3>
+                        <div id="topHoldingsDonutChart" style="height: 300px;"></div>
+                    </div>
+                </div>
+
                 <div class="charts-grid" style="margin-bottom: 24px;">
                     <div class="chart-container full-width">
                         <h3 class="chart-title">Holdings Treemap (by Value)</h3>
@@ -350,9 +366,11 @@
                                         <th class="sortable" data-sort="Account">Account <span class="sort-icon"></span>
                                         </th>
                                         <th class="sortable" data-sort="CurrentValue" style="text-align: right;">Value
-                                            <span class="sort-icon"></span></th>
+                                            <span class="sort-icon"></span>
+                                        </th>
                                         <th class="sortable" data-sort="TotalReturn" style="text-align: right;">Total
-                                            <span class="sort-icon"></span></th>
+                                            <span class="sort-icon"></span>
+                                        </th>
                                         <th class="sortable" data-sort="Return_1D" style="text-align: right;">1D <span
                                                 class="sort-icon"></span></th>
                                         <th class="sortable" data-sort="Return_1W" style="text-align: right;">1W <span
@@ -388,9 +406,11 @@
                                         <th class="sortable" data-sort="Sector">Sector <span class="sort-icon"></span>
                                         </th>
                                         <th class="sortable" data-sort="CurrentValue" style="text-align: right;">Value
-                                            <span class="sort-icon"></span></th>
+                                            <span class="sort-icon"></span>
+                                        </th>
                                         <th class="sortable" data-sort="TotalReturn" style="text-align: right;">Total
-                                            <span class="sort-icon"></span></th>
+                                            <span class="sort-icon"></span>
+                                        </th>
                                         <th class="sortable" data-sort="Return_1D" style="text-align: right;">1D <span
                                                 class="sort-icon"></span></th>
                                         <th class="sortable" data-sort="Return_1W" style="text-align: right;">1W <span
@@ -436,9 +456,11 @@
                                         <th class="sortable" data-sort="Account">Account <span class="sort-icon"></span>
                                         </th>
                                         <th class="sortable" data-sort="CurrentValue" style="text-align: right;">Value
-                                            <span class="sort-icon"></span></th>
+                                            <span class="sort-icon"></span>
+                                        </th>
                                         <th class="sortable" data-sort="TotalReturn" style="text-align: right;">Total
-                                            <span class="sort-icon"></span></th>
+                                            <span class="sort-icon"></span>
+                                        </th>
                                         <th class="sortable" data-sort="Return_1D" style="text-align: right;">1D <span
                                                 class="sort-icon"></span></th>
                                         <th class="sortable" data-sort="Return_1W" style="text-align: right;">1W <span

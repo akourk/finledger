@@ -673,7 +673,12 @@ def generate_all_reports(
     performance_report = None
     if not holdings_detail.empty:
         performance_report = generate_performance_report(
-            holdings_detail, price_cache, unavailable_ticker_cache, split_cache
+            holdings_detail,
+            price_cache,
+            unavailable_ticker_cache,
+            split_cache,
+            cash_balances_df=cash_balances,
+            master_df=master_df,
         )
         export_performance_data_js(performance_report)
 

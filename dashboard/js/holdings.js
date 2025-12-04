@@ -603,3 +603,252 @@ function loadTransactionsForHolding(symbol, account, container) {
     container.innerHTML = html;
 }
 
+// Donut chart color palette
+var DONUT_COLORS = [
+    '#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6',
+    '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
+    '#14b8a6', '#eab308', '#a855f7', '#0ea5e9', '#10b981'
+];
+
+// Create sector breakdown donut chart
+function createSectorDonutChart() {
+    var container = document.getElementById('sectorDonutChart');
+    if (!container) return;
+
+    var holdings = getHoldingsDetail();
+    var cashBalances = getCashBalances();
+
+    if (holdings.length === 0 && cashBalances.length === 0) return;
+
+    // Aggregate by sector
+    var bySector = {};
+    holdings.forEach(function (h) {
+        var sector = h.sector || 'Other';
+        if (!bySector[sector]) {
+            bySector[sector] = 0;
+        }
+        bySector[sector] += h.current_value || 0;
+    });
+
+    // Add cash accounts as "Cash" sector
+    cashBalances.forEach(function (c) {
+        if (!bySector['Cash']) {
+            bySector['Cash'] = 0;
+        }
+        bySector['Cash'] += c.balance || 0;
+    });
+
+    // Convert to array and sort by value
+    var data = Object.keys(bySector).map(function (sector) {
+        return { name: sector, value: bySector[sector] };
+    }).filter(function (d) {
+        return d.value > 0;
+    }).sort(function (a, b) {
+        return b.value - a.value;
+    });
+
+    createDonutChart(container, data, 'Sector Allocation');
+}
+
+// Create account breakdown donut chart
+function createAccountDonutChart() {
+    var container = document.getElementById('accountDonutChart');
+    if (!container) return;
+
+    var holdings = getHoldingsDetail();
+    var cashBalances = getCashBalances();
+
+    if (holdings.length === 0 && cashBalances.length === 0) return;
+
+    // Aggregate by account
+    var byAccount = {};
+    holdings.forEach(function (h) {
+        var account = h.account || 'Unknown';
+        if (!byAccount[account]) {
+            byAccount[account] = 0;
+        }
+        byAccount[account] += h.current_value || 0;
+    });
+
+    // Add cash accounts
+    cashBalances.forEach(function (c) {
+        var account = c.account || 'Unknown';
+        if (!byAccount[account]) {
+            byAccount[account] = 0;
+        }
+        byAccount[account] += c.balance || 0;
+    });
+
+    // Convert to array and sort by value
+    var data = Object.keys(byAccount).map(function (account) {
+        return { name: account, value: byAccount[account] };
+    }).filter(function (d) {
+        return d.value > 0;
+    }).sort(function (a, b) {
+        return b.value - a.value;
+    });
+
+    createDonutChart(container, data, 'Account Allocation');
+}
+
+// Create top holdings donut chart
+function createTopHoldingsDonutChart() {
+    var container = document.getElementById('topHoldingsDonutChart');
+    if (!container) return;
+
+    var holdings = getHoldingsDetail();
+    var cashBalances = getCashBalances();
+
+    if (holdings.length === 0 && cashBalances.length === 0) return;
+
+    // Aggregate by symbol (combine same symbol across accounts)
+    var bySymbol = {};
+    holdings.forEach(function (h) {
+        var symbol = h.symbol || 'Unknown';
+        if (!bySymbol[symbol]) {
+            bySymbol[symbol] = 0;
+        }
+        bySymbol[symbol] += h.current_value || 0;
+    });
+
+    // Add cash as USD
+    var totalCash = 0;
+    cashBalances.forEach(function (c) {
+        totalCash += c.balance || 0;
+    });
+    if (totalCash > 0) {
+        bySymbol['USD (Cash)'] = totalCash;
+    }
+
+    // Convert to array and sort by value
+    var allHoldings = Object.keys(bySymbol).map(function (symbol) {
+        return { name: symbol, value: bySymbol[symbol] };
+    }).filter(function (d) {
+        return d.value > 0;
+    }).sort(function (a, b) {
+        return b.value - a.value;
+    });
+
+    // Take top 10 and group rest as "Other"
+    var top10 = allHoldings.slice(0, 10);
+    var otherTotal = allHoldings.slice(10).reduce(function (sum, h) {
+        return sum + h.value;
+    }, 0);
+
+    if (otherTotal > 0) {
+        top10.push({ name: 'Other (' + (allHoldings.length - 10) + ')', value: otherTotal });
+    }
+
+    createDonutChart(container, top10, 'Top Holdings');
+}
+
+// Generic donut chart creator using ECharts
+function createDonutChart(container, data, title) {
+    // Dispose existing chart if any
+    var existingChart = echarts.getInstanceByDom(container);
+    if (existingChart) existingChart.dispose();
+
+    var chart = echarts.init(container);
+
+    // Calculate total for percentage
+    var total = data.reduce(function (sum, d) { return sum + d.value; }, 0);
+
+    var option = {
+        tooltip: {
+            trigger: 'item',
+            formatter: function (params) {
+                var pct = ((params.value / total) * 100).toFixed(1);
+                return '<strong>' + params.name + '</strong><br/>' +
+                    formatCurrency(params.value) + ' (' + pct + '%)';
+            },
+            backgroundColor: 'rgba(20, 20, 35, 0.95)',
+            borderColor: '#333',
+            textStyle: { color: '#fff' }
+        },
+        series: [{
+            type: 'pie',
+            radius: ['40%', '75%'],
+            center: ['50%', '42%'],
+            avoidLabelOverlap: true,
+            itemStyle: {
+                borderRadius: 4,
+                borderColor: '#1a1a2e',
+                borderWidth: 2
+            },
+            label: {
+                show: true,
+                position: 'outside',
+                formatter: function (params) {
+                    var pct = ((params.value / total) * 100).toFixed(1);
+                    if (pct < 3) return '';  // Hide labels for very small slices
+                    return params.name + '\n' + pct + '%';
+                },
+                color: '#ccc',
+                fontSize: 10,
+                lineHeight: 14
+            },
+            labelLine: {
+                show: true,
+                length: 10,
+                length2: 8,
+                lineStyle: {
+                    color: '#555'
+                }
+            },
+            emphasis: {
+                label: {
+                    show: true,
+                    fontSize: 11,
+                    fontWeight: 'bold',
+                    color: '#fff'
+                },
+                itemStyle: {
+                    shadowBlur: 10,
+                    shadowOffsetX: 0,
+                    shadowColor: 'rgba(0, 0, 0, 0.5)'
+                }
+            },
+            data: data.map(function (d, i) {
+                return {
+                    name: d.name,
+                    value: d.value,
+                    itemStyle: { color: DONUT_COLORS[i % DONUT_COLORS.length] }
+                };
+            })
+        }],
+        graphic: [{
+            type: 'text',
+            left: 'center',
+            top: '37%',
+            style: {
+                text: formatCurrency(total),
+                fontSize: 14,
+                fontWeight: 'bold',
+                fill: '#fff',
+                textAlign: 'center'
+            }
+        }, {
+            type: 'text',
+            left: 'center',
+            top: '45%',
+            style: {
+                text: 'Total',
+                fontSize: 10,
+                fill: '#888',
+                textAlign: 'center'
+            }
+        }]
+    };
+
+    chart.setOption(option);
+    window.addEventListener('resize', function () { chart.resize(); });
+}
+
+// Initialize all donut charts
+function createHoldingsDonutCharts() {
+    createSectorDonutChart();
+    createAccountDonutChart();
+    createTopHoldingsDonutChart();
+}
+
+
