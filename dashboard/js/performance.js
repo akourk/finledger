@@ -18,6 +18,14 @@ var PERIOD_LABELS = {
 
 var PERIOD_ORDER = ['1D', '1W', '2W', '1M', '3M', '6M', '1Y', '2Y', '5Y'];
 
+// Sorting state for performance tables
+var accountPerfSortColumn = 'CurrentValue';
+var accountPerfSortDirection = 'desc';
+var sectorPerfSortColumn = 'CurrentValue';
+var sectorPerfSortDirection = 'desc';
+var assetPerfSortColumn = 'CurrentValue';
+var assetPerfSortDirection = 'desc';
+
 // Get performance data
 function getPerformanceData() {
     if (typeof performanceData !== 'undefined') {
@@ -54,6 +62,39 @@ function getReturnColor(value, maxAbs) {
         var intensity = -normalized;
         return 'rgba(239, 68, 68, ' + (0.2 + intensity * 0.8) + ')';
     }
+}
+
+// Sort performance data
+function sortPerformanceData(data, column, direction) {
+    return data.slice().sort(function (a, b) {
+        var aVal = a[column];
+        var bVal = b[column];
+
+        // Handle null/undefined values
+        if (aVal === null || aVal === undefined) aVal = direction === 'asc' ? Infinity : -Infinity;
+        if (bVal === null || bVal === undefined) bVal = direction === 'asc' ? Infinity : -Infinity;
+
+        // String comparison for text columns
+        if (column === 'Account' || column === 'Sector' || column === 'Symbol') {
+            aVal = (aVal || '').toString().toLowerCase();
+            bVal = (bVal || '').toString().toLowerCase();
+            return direction === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+        }
+
+        // Numeric comparison
+        return direction === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+}
+
+// Update sort indicators for a table
+function updatePerfSortIndicators(tableId, column, direction) {
+    var headers = document.querySelectorAll('#' + tableId + ' th.sortable');
+    headers.forEach(function (th) {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (th.getAttribute('data-sort') === column) {
+            th.classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+        }
+    });
 }
 
 // Create portfolio performance summary cards
@@ -187,19 +228,10 @@ function createAssetPerformanceHeatmap() {
     window.addEventListener('resize', function () { chart.resize(); });
 }
 
-// Create account performance table
-function createAccountPerformanceTable() {
+// Render account performance table rows
+function renderAccountPerformanceRows(accounts, portfolio) {
     var container = document.getElementById('accountPerformanceBody');
     if (!container) return;
-
-    var data = getPerformanceData();
-    var accounts = data.accounts || [];
-    var portfolio = data.portfolio || {};
-
-    if (accounts.length === 0) {
-        container.innerHTML = '<tr><td colspan="12" class="muted">No account data</td></tr>';
-        return;
-    }
 
     var html = '';
 
@@ -213,7 +245,7 @@ function createAccountPerformanceTable() {
     });
     html += '</tr>';
 
-    // Individual accounts
+    // Individual accounts (sorted)
     accounts.forEach(function (account) {
         html += '<tr>';
         html += '<td>' + account.Account + '</td>';
@@ -230,18 +262,54 @@ function createAccountPerformanceTable() {
     container.innerHTML = html;
 }
 
-// Create sector performance table
-function createSectorPerformanceTable() {
-    var container = document.getElementById('sectorPerformanceBody');
+// Initialize sortable headers for account performance
+function initAccountPerformanceSort() {
+    var headers = document.querySelectorAll('#accountPerformanceTable th.sortable');
+    var data = getPerformanceData();
+
+    headers.forEach(function (th) {
+        th.addEventListener('click', function () {
+            var column = th.getAttribute('data-sort');
+
+            if (column === accountPerfSortColumn) {
+                accountPerfSortDirection = accountPerfSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                accountPerfSortColumn = column;
+                accountPerfSortDirection = column === 'Account' ? 'asc' : 'desc';
+            }
+
+            var sorted = sortPerformanceData(data.accounts || [], accountPerfSortColumn, accountPerfSortDirection);
+            renderAccountPerformanceRows(sorted, data.portfolio || {});
+            updatePerfSortIndicators('accountPerformanceTable', accountPerfSortColumn, accountPerfSortDirection);
+        });
+    });
+
+    updatePerfSortIndicators('accountPerformanceTable', accountPerfSortColumn, accountPerfSortDirection);
+}
+
+// Create account performance table
+function createAccountPerformanceTable() {
+    var container = document.getElementById('accountPerformanceBody');
     if (!container) return;
 
     var data = getPerformanceData();
-    var sectors = data.sectors || [];
+    var accounts = data.accounts || [];
+    var portfolio = data.portfolio || {};
 
-    if (sectors.length === 0) {
-        container.innerHTML = '<tr><td colspan="12" class="muted">No sector data</td></tr>';
+    if (accounts.length === 0) {
+        container.innerHTML = '<tr><td colspan="12" class="muted">No account data</td></tr>';
         return;
     }
+
+    var sorted = sortPerformanceData(accounts, accountPerfSortColumn, accountPerfSortDirection);
+    renderAccountPerformanceRows(sorted, portfolio);
+    initAccountPerformanceSort();
+}
+
+// Render sector performance table rows
+function renderSectorPerformanceRows(sectors) {
+    var container = document.getElementById('sectorPerformanceBody');
+    if (!container) return;
 
     var html = '';
     sectors.forEach(function (sector) {
@@ -258,6 +326,49 @@ function createSectorPerformanceTable() {
     });
 
     container.innerHTML = html;
+}
+
+// Initialize sortable headers for sector performance
+function initSectorPerformanceSort() {
+    var headers = document.querySelectorAll('#sectorPerformanceTable th.sortable');
+    var data = getPerformanceData();
+
+    headers.forEach(function (th) {
+        th.addEventListener('click', function () {
+            var column = th.getAttribute('data-sort');
+
+            if (column === sectorPerfSortColumn) {
+                sectorPerfSortDirection = sectorPerfSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sectorPerfSortColumn = column;
+                sectorPerfSortDirection = column === 'Sector' ? 'asc' : 'desc';
+            }
+
+            var sorted = sortPerformanceData(data.sectors || [], sectorPerfSortColumn, sectorPerfSortDirection);
+            renderSectorPerformanceRows(sorted);
+            updatePerfSortIndicators('sectorPerformanceTable', sectorPerfSortColumn, sectorPerfSortDirection);
+        });
+    });
+
+    updatePerfSortIndicators('sectorPerformanceTable', sectorPerfSortColumn, sectorPerfSortDirection);
+}
+
+// Create sector performance table
+function createSectorPerformanceTable() {
+    var container = document.getElementById('sectorPerformanceBody');
+    if (!container) return;
+
+    var data = getPerformanceData();
+    var sectors = data.sectors || [];
+
+    if (sectors.length === 0) {
+        container.innerHTML = '<tr><td colspan="12" class="muted">No sector data</td></tr>';
+        return;
+    }
+
+    var sorted = sortPerformanceData(sectors, sectorPerfSortColumn, sectorPerfSortDirection);
+    renderSectorPerformanceRows(sorted);
+    initSectorPerformanceSort();
 }
 
 // Create top/bottom performers comparison
@@ -431,25 +542,13 @@ function createPeriodComparisonChart() {
 }
 
 // Create full asset performance table
-function createAssetPerformanceTable() {
+// Render asset performance table rows
+function renderAssetPerformanceRows(assets) {
     var container = document.getElementById('assetPerformanceBody');
     if (!container) return;
 
-    var data = getPerformanceData();
-    var assets = data.assets || [];
-
-    if (assets.length === 0) {
-        container.innerHTML = '<tr><td colspan="13" class="muted">No asset data</td></tr>';
-        return;
-    }
-
-    // Sort by value by default
-    var sorted = assets.slice().sort(function (a, b) {
-        return (b.CurrentValue || 0) - (a.CurrentValue || 0);
-    });
-
     var html = '';
-    sorted.forEach(function (asset) {
+    assets.forEach(function (asset) {
         html += '<tr>';
         html += '<td><span class="symbol-badge">' + asset.Symbol + '</span></td>';
         html += '<td>' + (asset.Account || '') + '</td>';
@@ -464,6 +563,49 @@ function createAssetPerformanceTable() {
     });
 
     container.innerHTML = html;
+}
+
+// Initialize sortable headers for asset performance
+function initAssetPerformanceSort() {
+    var headers = document.querySelectorAll('#assetPerformanceTable th.sortable');
+    var data = getPerformanceData();
+
+    headers.forEach(function (th) {
+        th.addEventListener('click', function () {
+            var column = th.getAttribute('data-sort');
+
+            if (column === assetPerfSortColumn) {
+                assetPerfSortDirection = assetPerfSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                assetPerfSortColumn = column;
+                assetPerfSortDirection = (column === 'Symbol' || column === 'Account') ? 'asc' : 'desc';
+            }
+
+            var sorted = sortPerformanceData(data.assets || [], assetPerfSortColumn, assetPerfSortDirection);
+            renderAssetPerformanceRows(sorted);
+            updatePerfSortIndicators('assetPerformanceTable', assetPerfSortColumn, assetPerfSortDirection);
+        });
+    });
+
+    updatePerfSortIndicators('assetPerformanceTable', assetPerfSortColumn, assetPerfSortDirection);
+}
+
+// Create full asset performance table
+function createAssetPerformanceTable() {
+    var container = document.getElementById('assetPerformanceBody');
+    if (!container) return;
+
+    var data = getPerformanceData();
+    var assets = data.assets || [];
+
+    if (assets.length === 0) {
+        container.innerHTML = '<tr><td colspan="13" class="muted">No asset data</td></tr>';
+        return;
+    }
+
+    var sorted = sortPerformanceData(assets, assetPerfSortColumn, assetPerfSortDirection);
+    renderAssetPerformanceRows(sorted);
+    initAssetPerformanceSort();
 }
 
 // Search/filter functionality
