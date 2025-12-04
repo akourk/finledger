@@ -210,9 +210,14 @@ def calculate_cost_basis(
             qty_to_sell = qty
             proceeds = amount - fee
             cost_basis_sold = 0
+            oldest_lot_date = None  # Track oldest lot date for holding period
 
             while qty_to_sell > 0 and lots[key]:
                 lot = lots[key][0]
+
+                # Track the oldest lot date (first lot sold determines holding period for FIFO)
+                if oldest_lot_date is None:
+                    oldest_lot_date = lot["date"]
 
                 if lot["remaining_qty"] <= qty_to_sell:
                     # Sell entire lot
@@ -228,6 +233,26 @@ def calculate_cost_basis(
                     lot["remaining_cost"] -= cost_from_lot
                     qty_to_sell = 0
 
+            # Calculate holding period
+            holding_period = "Short-term"
+            if oldest_lot_date:
+                try:
+                    sale_date = (
+                        datetime.strptime(date, "%Y-%m-%d")
+                        if isinstance(date, str)
+                        else date
+                    )
+                    purchase_date = (
+                        datetime.strptime(oldest_lot_date, "%Y-%m-%d")
+                        if isinstance(oldest_lot_date, str)
+                        else oldest_lot_date
+                    )
+                    days_held = (sale_date - purchase_date).days
+                    if days_held > 365:
+                        holding_period = "Long-term"
+                except (ValueError, TypeError):
+                    pass  # Default to short-term if date parsing fails
+
             # Record realized gain/loss
             gain = proceeds - cost_basis_sold
             realized_gains.append(
@@ -239,6 +264,7 @@ def calculate_cost_basis(
                     "Proceeds": round(proceeds, 2),
                     "CostBasis": round(cost_basis_sold, 2),
                     "RealizedGain": round(gain, 2),
+                    "HoldingPeriod": holding_period,
                 }
             )
 
@@ -270,6 +296,7 @@ def calculate_cost_basis(
                     "Proceeds": round(amount, 2),
                     "CostBasis": round(cost_basis, 2),
                     "RealizedGain": round(gain, 2),
+                    "HoldingPeriod": "Long-term",  # Mergers typically involve long-held positions
                 }
             )
 
@@ -314,6 +341,7 @@ def calculate_cost_basis(
                         "Proceeds": round(amount, 2),
                         "CostBasis": 0,
                         "RealizedGain": round(amount, 2),
+                        "HoldingPeriod": "Short-term",  # Fractional shares, assume short-term
                     }
                 )
 
