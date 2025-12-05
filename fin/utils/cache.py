@@ -6,7 +6,8 @@ Functions for loading and saving various caches (prices, splits, sectors, etc.)
 
 import json
 import logging
-from typing import Dict
+from datetime import datetime
+from typing import Dict, List, Set
 
 from fin.config import (
     COST_BASIS_CACHE_PATH,
@@ -14,6 +15,8 @@ from fin.config import (
     PRICE_CACHE_PATH,
     SECTOR_CACHE_PATH,
     SPLIT_CACHE_PATH,
+    SPLIT_CACHE_METADATA_PATH,
+    SPLIT_CACHE_REFRESH_DAYS,
     UNAVAILABLE_TICKER_CACHE_PATH,
 )
 
@@ -99,6 +102,91 @@ def save_split_cache(cache: Dict[str, Dict[str, float]]) -> None:
     except IOError as e:
         logger.error(f"Failed to save split cache: {e}")
         raise
+
+
+def load_split_cache_metadata() -> Dict[str, str]:
+    """
+    Load split cache metadata from disk.
+
+    Returns:
+        Dict of {symbol: last_checked_date} where date is YYYY-MM-DD format
+    """
+    if SPLIT_CACHE_METADATA_PATH.exists():
+        try:
+            with open(SPLIT_CACHE_METADATA_PATH, "r") as f:
+                metadata = json.load(f)
+                logger.debug(f"Loaded split cache metadata with {len(metadata)} symbols")
+                return metadata
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse split cache metadata JSON: {e}")
+            return {}
+        except IOError as e:
+            logger.error(f"Failed to read split cache metadata file: {e}")
+            return {}
+    logger.debug("No existing split cache metadata found")
+    return {}
+
+
+def save_split_cache_metadata(metadata: Dict[str, str]) -> None:
+    """
+    Save split cache metadata to disk.
+
+    Args:
+        metadata: Dict of {symbol: last_checked_date}
+    """
+    try:
+        with open(SPLIT_CACHE_METADATA_PATH, "w") as f:
+            json.dump(metadata, f, indent=2, sort_keys=True)
+        logger.debug(f"Saved split cache metadata with {len(metadata)} symbols")
+    except IOError as e:
+        logger.error(f"Failed to save split cache metadata: {e}")
+        raise
+
+
+def get_stale_split_tickers(
+    split_cache: Dict[str, Dict[str, float]],
+    metadata: Dict[str, str],
+    tickers_to_check: Set[str],
+) -> List[str]:
+    """
+    Get list of tickers that need their split data refreshed.
+
+    A ticker is considered stale if:
+    - It's not in the metadata (never checked with timestamp tracking)
+    - It hasn't been checked in SPLIT_CACHE_REFRESH_DAYS days
+
+    Args:
+        split_cache: Current split cache
+        metadata: Split cache metadata with last-checked timestamps
+        tickers_to_check: Set of tickers we're interested in
+
+    Returns:
+        List of ticker symbols that need refreshing
+    """
+    today = datetime.now()
+    stale_tickers = []
+
+    for ticker in tickers_to_check:
+        # If ticker not in metadata, it needs refresh
+        if ticker not in metadata:
+            stale_tickers.append(ticker)
+            continue
+
+        # Check if last refresh is older than threshold
+        try:
+            last_checked = datetime.strptime(metadata[ticker], "%Y-%m-%d")
+            days_since_check = (today - last_checked).days
+
+            if days_since_check >= SPLIT_CACHE_REFRESH_DAYS:
+                stale_tickers.append(ticker)
+                logger.debug(
+                    f"{ticker}: Split data is {days_since_check} days old, needs refresh"
+                )
+        except ValueError:
+            # Invalid date format, needs refresh
+            stale_tickers.append(ticker)
+
+    return stale_tickers
 
 
 def load_cost_basis_cache() -> dict:

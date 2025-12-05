@@ -217,7 +217,6 @@
 
             <!-- Holdings Tab -->
             <div id="holdings" class="tab-content">
-                <input type="text" class="search-box" id="holdingsSearch" placeholder="Search by symbol or account...">
 
                 <!-- Asset Breakdown Donut Charts -->
                 <div class="charts-grid" style="margin-bottom: 24px;">
@@ -235,15 +234,10 @@
                     </div>
                 </div>
 
-                <div class="charts-grid" style="margin-bottom: 24px;">
-                    <div class="chart-container full-width">
-                        <h3 class="chart-title">Holdings Treemap (by Value)</h3>
-                        <div class="treemap-container" id="holdingsTreemap" style="height: 620px;"></div>
-                    </div>
-                </div>
-
                 <div class="chart-container full-width" style="margin-bottom: 24px;">
                     <h3 class="chart-title">All Holdings</h3>
+                    <input type="text" class="search-box" id="holdingsSearch"
+                        placeholder="Search by symbol or account..." style="margin-bottom: 12px;">
                     <div style="max-height: 600px; overflow-y: auto;">
                         <table class="holdings-table sortable-table" id="allHoldingsTable">
                             <thead>
@@ -283,6 +277,13 @@
                         <div class="heatmap-container" id="holdingsHeatmap" style="height: 350px;"></div>
                     </div>
                 </div>
+
+                <div class="charts-grid" style="margin-bottom: 24px;">
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Holdings Treemap (by Value)</h3>
+                        <div class="treemap-container" id="holdingsTreemap" style="height: 620px;"></div>
+                    </div>
+                </div>
             </div>
 
             <!-- Performance Tab -->
@@ -291,6 +292,12 @@
                 <div class="chart-container full-width" style="margin-bottom: 24px;">
                     <h3 class="chart-title">Portfolio Performance Summary</h3>
                     <div id="portfolioPerformance"></div>
+                </div>
+
+                <!-- Benchmark Comparison Section -->
+                <div class="chart-container full-width" style="margin-bottom: 24px;">
+                    <h3 class="chart-title">Benchmark Comparison (S&P 500)</h3>
+                    <div id="benchmarkComparison"></div>
                 </div>
 
                 <div class="charts-grid">
@@ -314,10 +321,48 @@
                         <div id="bottomPerformers"></div>
                     </div>
 
-                    <!-- Benchmark Comparison Section -->
+                    <!-- Full Asset Performance Table -->
                     <div class="chart-container full-width">
-                        <h3 class="chart-title">Benchmark Comparison (S&P 500)</h3>
-                        <div id="benchmarkComparison"></div>
+                        <h3 class="chart-title">All Assets Performance</h3>
+                        <input type="text" class="search-box" id="performanceSearch"
+                            placeholder="Search by symbol or account...">
+                        <div style="max-height: 500px; overflow-y: auto; overflow-x: auto;">
+                            <table class="holdings-table" id="assetPerformanceTable">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" data-sort="Symbol">Symbol <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="Account">Account <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="CurrentValue" style="text-align: right;">Value
+                                            <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="TotalReturn" style="text-align: right;">Total
+                                            <span class="sort-icon"></span>
+                                        </th>
+                                        <th class="sortable" data-sort="Return_1D" style="text-align: right;">1D <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="Return_1W" style="text-align: right;">1W <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="Return_2W" style="text-align: right;">2W <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="Return_1M" style="text-align: right;">1M <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="Return_3M" style="text-align: right;">3M <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="Return_6M" style="text-align: right;">6M <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="Return_1Y" style="text-align: right;">1Y <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="Return_2Y" style="text-align: right;">2Y <span
+                                                class="sort-icon"></span></th>
+                                        <th class="sortable" data-sort="Return_5Y" style="text-align: right;">5Y <span
+                                                class="sort-icon"></span></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="assetPerformanceBody"></tbody>
+                            </table>
+                        </div>
                     </div>
 
                     <!-- Portfolio vs Benchmark Chart -->
@@ -440,50 +485,6 @@
                     <div class="chart-container full-width">
                         <h3 class="chart-title">Asset Performance Heatmap (Top 25 by Value)</h3>
                         <div id="assetPerformanceHeatmap" style="height: 600px;"></div>
-                    </div>
-
-                    <!-- Full Asset Performance Table -->
-                    <div class="chart-container full-width">
-                        <h3 class="chart-title">All Assets Performance</h3>
-                        <input type="text" class="search-box" id="performanceSearch"
-                            placeholder="Search by symbol or account...">
-                        <div style="max-height: 500px; overflow-y: auto; overflow-x: auto;">
-                            <table class="holdings-table" id="assetPerformanceTable">
-                                <thead>
-                                    <tr>
-                                        <th class="sortable" data-sort="Symbol">Symbol <span class="sort-icon"></span>
-                                        </th>
-                                        <th class="sortable" data-sort="Account">Account <span class="sort-icon"></span>
-                                        </th>
-                                        <th class="sortable" data-sort="CurrentValue" style="text-align: right;">Value
-                                            <span class="sort-icon"></span>
-                                        </th>
-                                        <th class="sortable" data-sort="TotalReturn" style="text-align: right;">Total
-                                            <span class="sort-icon"></span>
-                                        </th>
-                                        <th class="sortable" data-sort="Return_1D" style="text-align: right;">1D <span
-                                                class="sort-icon"></span></th>
-                                        <th class="sortable" data-sort="Return_1W" style="text-align: right;">1W <span
-                                                class="sort-icon"></span></th>
-                                        <th class="sortable" data-sort="Return_2W" style="text-align: right;">2W <span
-                                                class="sort-icon"></span></th>
-                                        <th class="sortable" data-sort="Return_1M" style="text-align: right;">1M <span
-                                                class="sort-icon"></span></th>
-                                        <th class="sortable" data-sort="Return_3M" style="text-align: right;">3M <span
-                                                class="sort-icon"></span></th>
-                                        <th class="sortable" data-sort="Return_6M" style="text-align: right;">6M <span
-                                                class="sort-icon"></span></th>
-                                        <th class="sortable" data-sort="Return_1Y" style="text-align: right;">1Y <span
-                                                class="sort-icon"></span></th>
-                                        <th class="sortable" data-sort="Return_2Y" style="text-align: right;">2Y <span
-                                                class="sort-icon"></span></th>
-                                        <th class="sortable" data-sort="Return_5Y" style="text-align: right;">5Y <span
-                                                class="sort-icon"></span></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="assetPerformanceBody"></tbody>
-                            </table>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -818,21 +819,32 @@
                         </table>
                     </div>
 
+                    <div class="filter-group">
+                        <label>Action Type</label>
+                        <select id="txFilterAction">
+                            <option value="">All Actions</option>
+                        </select>
+                    </div>
+
                     <!-- All Corporate Actions -->
                     <div class="chart-container full-width">
                         <h3 class="chart-title">All Corporate Actions</h3>
                         <div class="ca-filter-row">
-                            <select id="caFilterType">
-                                <option value="">All Types</option>
-                                <option value="Split">Splits</option>
-                                <option value="Reverse Split">Reverse Splits</option>
-                                <option value="Spinoff">Spin-offs</option>
-                                <option value="Merger">Mergers</option>
-                                <option value="Liquidation">Liquidations</option>
-                            </select>
-                            <select id="caFilterYear">
-                                <option value="">All Years</option>
-                            </select>
+                            <div>
+                                <select id="caFilterType">
+                                    <option value="">All Types</option>
+                                    <option value="Split">Splits</option>
+                                    <option value="Reverse Split">Reverse Splits</option>
+                                    <option value="Spinoff">Spin-offs</option>
+                                    <option value="Merger">Mergers</option>
+                                    <option value="Liquidation">Liquidations</option>
+                                </select>
+                            </div>
+                            <div>
+                                <select id="caFilterYear">
+                                    <option value="">All Years</option>
+                                </select>
+                            </div>
                             <input type="text" id="caSearch" placeholder="Search symbol..." class="search-box">
                         </div>
                         <div style="max-height: 400px; overflow-y: auto;">

@@ -1,15 +1,18 @@
 # Utility modules
 from .cache import (
+    get_stale_split_tickers,
     load_cost_basis_cache,
     load_historical_holdings_cache,
     load_price_cache,
     load_sector_cache,
     load_split_cache,
+    load_split_cache_metadata,
     save_cost_basis_cache,
     save_historical_holdings_cache,
     save_price_cache,
     save_sector_cache,
     save_split_cache,
+    save_split_cache_metadata,
 )
 from .formatting import (
     clean_currency,
@@ -26,6 +29,7 @@ from .prices import (
     get_sector_info,
     get_sectors_for_holdings,
     get_split_multiplier,
+    refresh_stale_splits,
 )
 
 __all__ = [
@@ -34,6 +38,9 @@ __all__ = [
     "save_price_cache",
     "load_split_cache",
     "save_split_cache",
+    "load_split_cache_metadata",
+    "save_split_cache_metadata",
+    "get_stale_split_tickers",
     "load_cost_basis_cache",
     "save_cost_basis_cache",
     "load_historical_holdings_cache",
@@ -54,4 +61,5 @@ __all__ = [
     "convert_price_based_symbols",
     "get_sector_info",
     "get_sectors_for_holdings",
+    "refresh_stale_splits",
 ]

@@ -115,18 +115,22 @@ from .reports import (  # noqa: E402
     print_portfolio_summary,
 )
 from .utils.cache import (  # noqa: E402
+    get_stale_split_tickers,
     load_price_cache,
     load_sector_cache,
     load_split_cache,
+    load_split_cache_metadata,
     load_unavailable_ticker_cache,
     save_price_cache,
     save_split_cache,
+    save_split_cache_metadata,
     save_unavailable_ticker_cache,
 )
 from .utils.prices import (  # noqa: E402
     adjust_for_splits,
     convert_price_based_symbols,
     get_sectors_for_holdings,
+    refresh_stale_splits,
 )
 
 
@@ -379,6 +383,39 @@ def process_all_files() -> pd.DataFrame:
         except Exception as e:
             logger.error(f"Error converting price-based symbols: {e}")
             print(f"⚠ Warning: Error converting symbols: {e}")
+
+        # Refresh stale split data before adjusting for splits
+        try:
+            split_metadata = load_split_cache_metadata()
+            # Get unique tickers from transactions
+            tickers_in_data = set(
+                master_df[master_df["Symbol"].notna()]["Symbol"].unique()
+            )
+            # Find stale tickers that need refresh
+            stale_tickers = get_stale_split_tickers(
+                split_cache, split_metadata, tickers_in_data
+            )
+            if stale_tickers:
+                print(f"\nRefreshing split data for {len(stale_tickers)} ticker(s)...")
+                updated = refresh_stale_splits(stale_tickers, split_cache, split_metadata)
+                if updated > 0:
+                    print(f"  ✓ Found updated split data for {updated} ticker(s)")
+                    # Invalidate price cache for tickers with new splits
+                    from .utils.cache import validate_price_cache_against_splits
+
+                    invalidated = validate_price_cache_against_splits(
+                        price_cache, split_cache
+                    )
+                    if invalidated > 0:
+                        print(
+                            f"  ⚠ Invalidated price cache for {invalidated} symbol(s) "
+                            "due to new splits"
+                        )
+                # Save updated metadata
+                save_split_cache_metadata(split_metadata)
+        except Exception as e:
+            logger.error(f"Error refreshing split data: {e}")
+            print(f"⚠ Warning: Error refreshing split data: {e}")
 
         # Adjust historical transactions for stock splits
         try:

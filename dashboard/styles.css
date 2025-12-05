@@ -2541,7 +2541,6 @@ header h1 {
 .ca-filter-row {
     display: flex;
     gap: 12px;
-    margin-bottom: 16px;
     flex-wrap: wrap;
 }
 
@@ -3151,7 +3150,8 @@ header h1 {
     gap: 24px;
 }
 
-.mc-low, .mc-high {
+.mc-low,
+.mc-high {
     font-size: 1.25rem;
     color: var(--text-secondary);
 }
@@ -3274,11 +3274,25 @@ header h1 {
     transform: translateX(-50%);
 }
 
-.scenario-median.bear { background: #f87171; }
-.scenario-median.conservative { background: #60a5fa; }
-.scenario-median.moderate { background: #a78bfa; }
-.scenario-median.bullish { background: #4ade80; }
-.scenario-median.optimistic { background: #fbbf24; }
+.scenario-median.bear {
+    background: #f87171;
+}
+
+.scenario-median.conservative {
+    background: #60a5fa;
+}
+
+.scenario-median.moderate {
+    background: #a78bfa;
+}
+
+.scenario-median.bullish {
+    background: #4ade80;
+}
+
+.scenario-median.optimistic {
+    background: #fbbf24;
+}
 
 .scenario-values {
     text-align: right;
@@ -3573,17 +3587,17 @@ header h1 {
     .tax-summary-cards {
         grid-template-columns: repeat(2, 1fr);
     }
-    
+
     .tax-card-value {
         font-size: 20px;
     }
-    
+
     .chart-title-row {
         flex-direction: column;
         align-items: flex-start;
         gap: 12px;
     }
-    
+
     .year-filter {
         width: 100%;
     }

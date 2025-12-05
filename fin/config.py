@@ -29,10 +29,14 @@ DASHBOARD_DATA_PATH.mkdir(parents=True, exist_ok=True)
 # Cache file paths
 PRICE_CACHE_PATH = DATA_PATH / "price_cache.json"
 SPLIT_CACHE_PATH = DATA_PATH / "split_cache.json"
+SPLIT_CACHE_METADATA_PATH = DATA_PATH / "split_cache_metadata.json"
 COST_BASIS_CACHE_PATH = DATA_PATH / "cost_basis_cache.json"
 HISTORICAL_HOLDINGS_CACHE_PATH = DATA_PATH / "historical_holdings_cache.json"
 SECTOR_CACHE_PATH = DATA_PATH / "sector_cache.json"
 UNAVAILABLE_TICKER_CACHE_PATH = DATA_PATH / "unavailable_ticker_cache.json"
+
+# Split cache refresh interval (days) - tickers not checked in this many days will be refreshed
+SPLIT_CACHE_REFRESH_DAYS = 30
 
 # =============================================================================
 # Unified Output Schema

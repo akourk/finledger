@@ -317,6 +317,70 @@ def get_split_multiplier(ticker: str, transaction_date_str: str, split_cache: di
     return multiplier
 
 
+def refresh_stale_splits(
+    stale_tickers: List[str],
+    split_cache: Dict[str, Dict[str, float]],
+    metadata: Dict[str, str],
+) -> int:
+    """
+    Refresh split data for tickers that haven't been checked recently.
+
+    This fetches fresh split data from yfinance for stale tickers and updates
+    both the split cache and metadata with the current timestamp.
+
+    Args:
+        stale_tickers: List of ticker symbols to refresh
+        split_cache: Split cache to update
+        metadata: Metadata cache to update with check timestamps
+
+    Returns:
+        Number of tickers that had new or updated split data
+    """
+    if not stale_tickers:
+        return 0
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    updated_count = 0
+
+    logger.info(f"Refreshing split data for {len(stale_tickers)} stale tickers")
+
+    for ticker in stale_tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            splits = stock.splits
+
+            old_splits = split_cache.get(ticker, {})
+
+            if splits is None or splits.empty:
+                new_splits = {}
+            else:
+                new_splits = {
+                    date.strftime("%Y-%m-%d"): float(ratio)
+                    for date, ratio in splits.items()
+                }
+
+            # Check if splits changed
+            if new_splits != old_splits:
+                if new_splits and not old_splits:
+                    logger.info(f"{ticker}: Found new splits: {new_splits}")
+                    print(f"  📈 {ticker}: Found splits: {list(new_splits.keys())}")
+                elif len(new_splits) > len(old_splits):
+                    new_dates = set(new_splits.keys()) - set(old_splits.keys())
+                    logger.info(f"{ticker}: Found additional splits on: {new_dates}")
+                    print(f"  📈 {ticker}: New split(s) found on: {list(new_dates)}")
+                updated_count += 1
+
+            split_cache[ticker] = new_splits
+            metadata[ticker] = today_str
+
+        except Exception as e:
+            logger.warning(f"Error refreshing splits for {ticker}: {e}")
+            # Still update metadata to avoid repeated failures
+            metadata[ticker] = today_str
+
+    return updated_count
+
+
 def adjust_for_splits(df: pd.DataFrame, split_cache: dict) -> pd.DataFrame:
     """
     Adjust historical quantities and prices for stock splits that occurred after each transaction.
