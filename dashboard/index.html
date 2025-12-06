@@ -102,6 +102,11 @@
                 <button class="tab-btn" data-tab="crypto">Crypto</button>
                 <button class="tab-btn" data-tab="options">Options</button>
                 <button class="tab-btn" data-tab="retirement">Retirement</button>
+                <!-- Live tab - only visible in server mode -->
+                <button class="tab-btn tab-btn-live" data-tab="live" id="liveTabBtn" style="display: none;">
+                    <span class="live-indicator"></span>
+                    Live
+                </button>
             </div>
 
             <!-- Overview Tab -->
@@ -1166,6 +1171,220 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Live Tab (Server Mode Only) -->
+            <div id="live" class="tab-content">
+                <div class="charts-grid">
+                    <!-- Server Connection & Market Status -->
+                    <div class="chart-container third-width">
+                        <h3 class="chart-title">
+                            <span class="live-status-indicator" id="liveStatusIndicator"></span>
+                            Server Connection
+                        </h3>
+                        <div class="live-connection-status" id="liveConnectionStatus">
+                            <p>Connecting to server...</p>
+                        </div>
+                        <!-- Market Status -->
+                        <div class="market-status-display" id="marketStatusDisplay">
+                            <div class="market-status-header">
+                                <span class="market-status-indicator" id="marketStatusIndicator"></span>
+                                <span class="market-status-text" id="marketStatusText">Loading...</span>
+                            </div>
+                            <p class="market-status-info" id="marketStatusInfo">--</p>
+                            <p class="market-time" id="marketTime">--</p>
+                        </div>
+                        <!-- Auto-Refresh Controls with Interval Selector -->
+                        <div class="auto-refresh-controls">
+                            <label class="auto-refresh-toggle-label">
+                                <input type="checkbox" id="autoRefreshToggle">
+                                <span class="toggle-slider"></span>
+                                <span class="toggle-text">Auto-refresh</span>
+                            </label>
+                            <select id="refreshIntervalSelect" class="refresh-interval-select">
+                                <option value="30">30s</option>
+                                <option value="60" selected>1 min</option>
+                                <option value="120">2 min</option>
+                                <option value="300">5 min</option>
+                            </select>
+                            <span class="auto-refresh-status">Status: <strong id="autoRefreshStatus">Off</strong></span>
+                            <span class="auto-refresh-countdown" id="autoRefreshCountdown"></span>
+                        </div>
+                        <!-- Pause when market closed toggle -->
+                        <div class="market-closed-controls">
+                            <label class="pause-market-closed-label">
+                                <input type="checkbox" id="pauseWhenClosedToggle" checked>
+                                <span class="checkbox-custom"></span>
+                                <span>Pause auto-refresh when market closed</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Live Portfolio Value & Day Gain/Loss -->
+                    <div class="chart-container third-width">
+                        <h3 class="chart-title">Live Portfolio Value</h3>
+                        <div class="live-portfolio-value" id="livePortfolioValue">
+                            <div class="live-value-display">
+                                <span class="live-value">--</span>
+                            </div>
+                            <!-- Day's Gain/Loss Display -->
+                            <div class="day-gain-loss" id="dayGainLoss">
+                                <div class="day-gain-value" id="dayGainValue">--</div>
+                                <div class="day-gain-percent" id="dayGainPercent">--</div>
+                                <div class="day-gain-label">Today's Change</div>
+                            </div>
+                            <!-- S&P 500 Comparison -->
+                            <div class="market-comparison" id="marketComparison">
+                                <div class="comparison-label">vs S&P 500</div>
+                                <div class="comparison-value" id="spyChange">--</div>
+                                <div class="comparison-diff" id="vsMarketDiff">--</div>
+                            </div>
+                            <button class="btn btn-sm" id="refreshLiveValueBtn">Refresh</button>
+                            <p class="live-timestamp">Last updated: --</p>
+                        </div>
+                    </div>
+
+                    <!-- Session Statistics -->
+                    <div class="chart-container third-width">
+                        <h3 class="chart-title">Session Statistics</h3>
+                        <div class="session-stats" id="sessionStats">
+                            <div class="stat-item">
+                                <span class="stat-label">Session Started</span>
+                                <span class="stat-value" id="sessionStartTime">--</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Session Duration</span>
+                                <span class="stat-value" id="sessionDuration">--</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Total Refreshes</span>
+                                <span class="stat-value" id="totalRefreshes">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Session High</span>
+                                <span class="stat-value positive" id="sessionHigh">--</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Session Low</span>
+                                <span class="stat-value negative" id="sessionLow">--</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Session Change</span>
+                                <span class="stat-value" id="sessionChange">--</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Portfolio Value Chart (Today's Movement) -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Portfolio Value Today</h3>
+                        <div id="portfolioValueChart" style="height: 250px;"></div>
+                    </div>
+
+                    <!-- Live Sector Breakdown -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Live Sector Breakdown</h3>
+                        <div id="liveSectorChart" style="height: 250px;"></div>
+                    </div>
+
+                    <!-- Quick Price Check -->
+                    <div class="chart-container third-width">
+                        <h3 class="chart-title">Quick Price Check</h3>
+                        <div class="live-price-check">
+                            <div class="price-check-input">
+                                <input type="text" id="priceCheckSymbol" placeholder="Enter symbol (e.g., AAPL)"
+                                    class="search-input">
+                                <button class="btn btn-sm" id="priceCheckBtn">Check</button>
+                            </div>
+                            <div class="price-check-result" id="priceCheckResult"></div>
+                            <button class="btn btn-sm btn-secondary" id="addToWatchlistBtn"
+                                style="display: none; margin-top: 8px;">+ Add to Watchlist</button>
+                        </div>
+                    </div>
+
+                    <!-- Custom Watchlist -->
+                    <div class="chart-container two-thirds-width">
+                        <h3 class="chart-title">
+                            Custom Watchlist
+                            <span class="watchlist-count" id="customWatchlistCount">(0)</span>
+                        </h3>
+                        <div class="custom-watchlist-controls">
+                            <input type="text" id="watchlistAddSymbol" placeholder="Add symbol..." class="search-input"
+                                style="width: 120px;">
+                            <button class="btn btn-sm" id="watchlistAddBtn">Add</button>
+                            <button class="btn btn-sm btn-secondary" id="watchlistRefreshBtn">Refresh All</button>
+                            <button class="btn btn-sm btn-danger" id="watchlistClearBtn">Clear All</button>
+                        </div>
+                        <div class="custom-watchlist-table-container">
+                            <table class="holdings-table" id="customWatchlistTable">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th style="text-align: right;">Price</th>
+                                        <th style="text-align: right;">Change</th>
+                                        <th style="text-align: right;">Change %</th>
+                                        <th style="text-align: center;">Intraday</th>
+                                        <th style="text-align: center;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="customWatchlistBody">
+                                    <tr>
+                                        <td colspan="6" style="text-align: center;">No symbols in watchlist. Add symbols
+                                            above.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Activity Log -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Live Activity Log</h3>
+                        <div class="live-activity-log" id="liveActivityLog">
+                            <div class="activity-log-entries" id="activityLogEntries">
+                                <p class="activity-empty">No activity yet. Events will appear here when you refresh data
+                                    or check prices.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Watchlist with Live Prices & Sparklines -->
+                    <div class="chart-container full-width">
+                        <h3 class="chart-title">Top Holdings - Live Prices</h3>
+                        <table class="holdings-table" id="liveWatchlistTable">
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th style="text-align: right;">Live Price</th>
+                                    <th style="text-align: right;">Change</th>
+                                    <th style="text-align: right;">Change %</th>
+                                    <th style="text-align: center; width: 120px;">Intraday</th>
+                                    <th style="text-align: right;">Quantity</th>
+                                    <th style="text-align: right;">Market Value</th>
+                                    <th>Last Updated</th>
+                                </tr>
+                            </thead>
+                            <tbody id="liveWatchlistBody">
+                                <tr>
+                                    <td colspan="8" style="text-align: center;">Click "Refresh All" to load live
+                                        prices</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div class="live-watchlist-controls">
+                            <button class="btn" id="refreshAllPricesBtn">Refresh All Prices</button>
+                            <span class="live-watchlist-status" id="watchlistStatus"></span>
+                        </div>
+                    </div>
+
+                    <!-- Top Movers Today -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Top Movers Today</h3>
+                        <div id="topMoversContainer">
+                            <p class="loading-text">Click refresh to load top movers...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1187,6 +1406,7 @@
     <script src="js/transactions.js"></script>
     <script src="js/corporate-actions.js"></script>
     <script src="js/widgets.js"></script>
+    <script src="js/live.js"></script>
 
     <!-- Main Entry Point (must be last) -->
     <script src="js/main.js"></script>

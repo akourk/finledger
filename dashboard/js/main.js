@@ -83,6 +83,11 @@ function loadTabContent(tabId) {
         case 'corporate-actions':
             createCorporateActionsSection();
             break;
+        case 'live':
+            if (typeof createLiveSection === 'function') {
+                createLiveSection();
+            }
+            break;
     }
 
     loadedTabs[tabId] = true;

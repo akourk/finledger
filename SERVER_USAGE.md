@@ -2,7 +2,7 @@
 
 The dashboard now has two modes of operation:
 
-## Local File Mode (Simple - Recommended for now)
+## Local File Mode (Simple - Recommended for quick viewing)
 Simply open `dashboard/index.html` in your browser. The refresh button will reload the page but **won't fetch new data**.
 
 To update data, manually run in a terminal:
@@ -12,11 +12,14 @@ To update data, manually run in a terminal:
 
 Then refresh the browser page to see the updated data.
 
-## Server Mode (Advanced - Under Development)
+## Server Mode (Advanced - With Live Updates)
 
-The server mode is designed to allow the refresh button to actually fetch fresh price data, but it currently has some issues with the subprocess execution on Windows.
+Server mode provides additional features:
+- **Live Tab** - Real-time price updates and portfolio value
+- **Working Refresh Button** - Click to refresh data without leaving the dashboard
+- **Server-Sent Events** - Get live notifications when data is refreshed
 
-### If You Want to Try Server Mode
+### Starting the Server
 
 1. Open a terminal/PowerShell in the project directory
 2. Run:
@@ -25,7 +28,35 @@ The server mode is designed to allow the refresh button to actually fetch fresh 
    ```
 3. Open your browser to: **http://localhost:5000**
 
-The server will serve the dashboard, but clicking the refresh button may not work correctly due to subprocess issues.
+### Live Tab Features
+
+When running in server mode, a **Live** tab appears with:
+
+- **Server Connection Status** - Shows if you're connected to the live updates stream
+- **Live Portfolio Value** - Click to get real-time portfolio value using current market prices
+- **Quick Price Check** - Enter any symbol to get its current price
+- **Activity Log** - See real-time events (refreshes, price checks, errors)
+- **Top Holdings Live Prices** - View live prices for your top 10 holdings
+
+### How It Works
+
+The dashboard automatically detects whether it's running from:
+- `file://` protocol (local file mode) - Live tab is hidden
+- `http://` or `https://` protocol (server mode) - Live tab is shown
+
+### API Endpoints
+
+The server provides these endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Dashboard HTML |
+| `/api/status` | GET | Get last data generation timestamp |
+| `/api/refresh` | POST | Trigger data refresh |
+| `/api/health` | GET | Server health check |
+| `/api/events` | GET | Server-Sent Events stream |
+| `/api/live/price/<symbol>` | GET | Get live price for a symbol |
+| `/api/live/portfolio-value` | GET | Get live portfolio value |
 
 ### Troubleshooting
 
@@ -41,17 +72,6 @@ If the refresh button shows "Error refreshing data":
 2. Run: `.\.venv\Scripts\python.exe detectAndClean.py`
 3. Restart server: `.\.venv\Scripts\python.exe server.py`
 4. Reload browser
-
-### Why the Refresh Button May Not Work
-
-The server tries to spawn a subprocess to run `detectAndClean.py`, but this can fail on Windows due to:
-- Virtual environment path issues
-- Permission restrictions
-- Shell execution contexts
-
-###  Future Improvements
-
-The refresh feature needs better Windows subprocess handling. For now, manually running the script in a separate terminal is the most reliable approach.
 
 ### Stopping the Server
 
