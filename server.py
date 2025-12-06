@@ -34,6 +34,28 @@ SCRIPT_PATH = ROOT_DIR / "detectAndClean.py"
 message_queues = []
 message_lock = threading.Lock()
 
+# Price cache to avoid rate limiting from Yahoo Finance
+# Cache prices for 30 seconds to avoid hitting API too frequently
+price_cache = {}
+PRICE_CACHE_TTL = 30  # seconds
+
+
+def get_cached_price(symbol):
+    """Get price from cache if still valid."""
+    if symbol in price_cache:
+        cached = price_cache[symbol]
+        if time.time() - cached['timestamp'] < PRICE_CACHE_TTL:
+            return cached['data']
+    return None
+
+
+def set_cached_price(symbol, data):
+    """Store price in cache."""
+    price_cache[symbol] = {
+        'data': data,
+        'timestamp': time.time()
+    }
+
 
 def broadcast_message(event_type, data):
     """Send a message to all connected SSE clients."""
@@ -462,17 +484,42 @@ def live_price(symbol):
     Get current price for a symbol.
     Useful for live price updates.
     Handles mutual funds which only have EOD pricing.
+    Uses caching to avoid Yahoo Finance rate limiting.
     """
+    symbol = symbol.upper()
+    
+    # Check cache first
+    cached = get_cached_price(symbol)
+    if cached:
+        return jsonify(cached)
+    
     try:
         import yfinance as yf
 
-        ticker = yf.Ticker(symbol.upper())
-        info = ticker.info
+        ticker = yf.Ticker(symbol)
+        
+        # Try to get info - this can fail for invalid symbols
+        try:
+            info = ticker.info
+        except Exception as e:
+            error_msg = str(e)
+            # If rate limited, return a softer error
+            if "401" in error_msg or "Unauthorized" in error_msg or "Crumb" in error_msg:
+                return jsonify({
+                    "status": "error", 
+                    "message": "Rate limited - try again later",
+                    "rate_limited": True
+                }), 429
+            return jsonify({"status": "error", "message": f"Failed to fetch info for {symbol}: {error_msg}"}), 500
+        
+        if not info or len(info) == 0:
+            return jsonify({"status": "error", "message": f"No data available for {symbol}"}), 404
 
         # Check if this is a mutual fund (typically ends in X, or has specific quoteType)
-        quote_type = info.get("quoteType", "").upper()
+        quote_type = info.get("quoteType", "") or ""
+        quote_type = quote_type.upper()
         is_mutual_fund = quote_type == "MUTUALFUND" or (
-            symbol.upper().endswith("X") and quote_type not in ["ETF", "EQUITY"]
+            symbol.endswith("X") and quote_type not in ["ETF", "EQUITY"]
         )
 
         price = info.get("regularMarketPrice") or info.get("currentPrice")
@@ -493,23 +540,34 @@ def live_price(symbol):
                 change = price - prev_close
                 change_pct = (change / prev_close) * 100
 
-            return jsonify(
-                {
-                    "status": "success",
-                    "symbol": symbol.upper(),
-                    "price": round(price, 2),
-                    "change": round(change, 2) if change else 0,
-                    "change_pct": round(change_pct, 2) if change_pct else 0,
-                    "is_mutual_fund": is_mutual_fund,
-                    "price_type": "NAV" if is_mutual_fund else "Live",
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
+            result = {
+                "status": "success",
+                "symbol": symbol,
+                "price": round(price, 2),
+                "change": round(change, 2) if change else 0,
+                "change_pct": round(change_pct, 2) if change_pct else 0,
+                "is_mutual_fund": is_mutual_fund,
+                "price_type": "NAV" if is_mutual_fund else "Live",
+                "timestamp": datetime.now().isoformat(),
+            }
+            
+            # Cache the successful result
+            set_cached_price(symbol, result)
+            
+            return jsonify(result)
         else:
             return jsonify({"status": "error", "message": f"No price data for {symbol}"}), 404
 
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        error_msg = str(e)
+        # If rate limited, return a softer error
+        if "401" in error_msg or "Unauthorized" in error_msg or "Crumb" in error_msg:
+            return jsonify({
+                "status": "error", 
+                "message": "Rate limited - try again later",
+                "rate_limited": True
+            }), 429
+        return jsonify({"status": "error", "message": error_msg}), 500
 
 
 @app.route("/api/live/portfolio-value")
