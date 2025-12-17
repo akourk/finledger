@@ -436,7 +436,7 @@ function refreshPortfolioSummary() {
                 updateSectorPerformanceChart();
             }, 500);
 
-            addActivityLogEntry('success', 'Portfolio refreshed: $' + formatNumber(data.total_value) + 
+            addActivityLogEntry('success', 'Portfolio refreshed: $' + formatNumber(data.total_value) +
                 ' (' + data.day_change_pct.toFixed(2) + '% today)');
         }
     }).catch(function (error) {
@@ -1691,15 +1691,15 @@ function renderWatchlistResults(results) {
 
         if (!p) {
             // No price data - still add data attributes with defaults for sorting
-            return '<tr id="' + rowId + '" data-symbol="' + h.Symbol + '" data-price="0" data-change="0" data-changepct="0" data-quantity="' + (h.Quantity || 0) + '" data-value="0">' + 
-                '<td>' + h.Symbol + '</td>' + 
-                '<td class="holding-price" style="text-align: right; color: #888;">N/A</td>' + 
-                '<td class="holding-change" style="text-align: right;">--</td>' + 
-                '<td class="holding-change-pct" style="text-align: right;">--</td>' + 
-                '<td class="holding-sparkline" style="text-align: center;"><div class="sparkline-container" id="' + sparklineId + '"></div></td>' + 
-                '<td style="text-align: right;">' + (h.Quantity ? h.Quantity.toFixed(4) : '--') + '</td>' + 
-                '<td class="holding-value" style="text-align: right;">--</td>' + 
-                '<td class="holding-time" style="color: #888;">Error</td>' + 
+            return '<tr id="' + rowId + '" data-symbol="' + h.Symbol + '" data-price="0" data-change="0" data-changepct="0" data-quantity="' + (h.Quantity || 0) + '" data-value="0">' +
+                '<td>' + h.Symbol + '</td>' +
+                '<td class="holding-price" style="text-align: right; color: #888;">N/A</td>' +
+                '<td class="holding-change" style="text-align: right;">--</td>' +
+                '<td class="holding-change-pct" style="text-align: right;">--</td>' +
+                '<td class="holding-sparkline" style="text-align: center;"><div class="sparkline-container" id="' + sparklineId + '"></div></td>' +
+                '<td style="text-align: right;">' + (h.Quantity ? h.Quantity.toFixed(4) : '--') + '</td>' +
+                '<td class="holding-value" style="text-align: right;">--</td>' +
+                '<td class="holding-time" style="color: #888;">Error</td>' +
                 '</tr>';
         }
 
@@ -1720,15 +1720,15 @@ function renderWatchlistResults(results) {
             'data-quantity="' + (h.Quantity || 0) + '" ' +
             'data-value="' + marketValue + '"';
 
-        return '<tr id="' + rowId + '" ' + dataAttrs + '>' + 
-            '<td>' + symbolDisplay + '</td>' + 
-            '<td class="holding-price" style="text-align: right;">$' + p.price.toFixed(2) + priceTypeLabel + '</td>' + 
-            '<td class="holding-change ' + changeClass + '" style="text-align: right;">' + changeSign + (p.change ? p.change.toFixed(2) : '0.00') + '</td>' + 
-            '<td class="holding-change-pct ' + changeClass + '" style="text-align: right;">' + changeSign + (p.change_pct ? p.change_pct.toFixed(2) : '0.00') + '%</td>' + 
-            '<td class="holding-sparkline" style="text-align: center;">' + (isMutualFund ? '<span class="eod-only">EOD Only</span>' : '<div class="sparkline-container" id="' + sparklineId + '"></div>') + '</td>' + 
-            '<td style="text-align: right;">' + h.Quantity.toFixed(4) + '</td>' + 
-            '<td class="holding-value" style="text-align: right;">$' + formatNumber(marketValue) + '</td>' + 
-            '<td class="holding-time" style="color: #888; font-size: 0.85em;">' + new Date().toLocaleTimeString() + '</td>' + 
+        return '<tr id="' + rowId + '" ' + dataAttrs + '>' +
+            '<td>' + symbolDisplay + '</td>' +
+            '<td class="holding-price" style="text-align: right;">$' + p.price.toFixed(2) + priceTypeLabel + '</td>' +
+            '<td class="holding-change ' + changeClass + '" style="text-align: right;">' + changeSign + (p.change ? p.change.toFixed(2) : '0.00') + '</td>' +
+            '<td class="holding-change-pct ' + changeClass + '" style="text-align: right;">' + changeSign + (p.change_pct ? p.change_pct.toFixed(2) : '0.00') + '%</td>' +
+            '<td class="holding-sparkline" style="text-align: center;">' + (isMutualFund ? '<span class="eod-only">EOD Only</span>' : '<div class="sparkline-container" id="' + sparklineId + '"></div>') + '</td>' +
+            '<td style="text-align: right;">' + h.Quantity.toFixed(4) + '</td>' +
+            '<td class="holding-value" style="text-align: right;">$' + formatNumber(marketValue) + '</td>' +
+            '<td class="holding-time" style="color: #888; font-size: 0.85em;">' + new Date().toLocaleTimeString() + '</td>' +
             '</tr>';
     }
 
