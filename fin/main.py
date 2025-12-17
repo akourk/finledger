@@ -85,6 +85,7 @@ from .config import (  # noqa: E402
     DATA_OUTPUT_PATH,
 )
 from .corporate_actions import (  # noqa: E402
+    apply_symbol_changes,
     generate_corporate_actions_report,
 )
 from .parsers import PARSER_REGISTRY, detect_source, merge_accounts  # noqa: E402
@@ -367,6 +368,14 @@ def process_all_files() -> pd.DataFrame:
         except Exception as e:
             logger.error(f"Error standardizing symbols: {e}")
             print(f"⚠ Warning: Error standardizing symbols: {e}")
+
+        # Apply known symbol changes (e.g., FB → META, EYEN → HYPD)
+        try:
+            master_df = apply_symbol_changes(master_df)
+            logger.debug("Applied symbol changes for renamed tickers")
+        except Exception as e:
+            logger.error(f"Error applying symbol changes: {e}")
+            print(f"⚠ Warning: Error applying symbol changes: {e}")
 
         # Merge accounts that have been transferred/rolled over
         try:

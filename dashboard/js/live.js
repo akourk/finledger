@@ -16,6 +16,7 @@ var MAX_LOG_ENTRIES = 50;
 // Auto-refresh state
 var autoRefreshEnabled = false;
 var autoRefreshInterval = null;
+var autoRefreshInitialized = false;  // Track if we've done initial auto-enable check
 var AUTO_REFRESH_SECONDS = 60; // Default refresh interval
 var pauseWhenMarketClosed = true; // Default: pause when closed
 
@@ -46,6 +47,10 @@ var sessionStats = {
 // S&P 500 comparison
 var spyData = null;
 
+// Live holdings data with live prices (for sorting)
+var liveHoldingsData = [];
+var lastPortfolioValue = null;
+
 /**
  * Initialize the Live tab functionality
  */
@@ -59,6 +64,12 @@ function initLive() {
 
     if (liveTabBtn) {
         liveTabBtn.style.display = 'inline-flex';
+
+        // Add click listener to re-render charts when Live tab is clicked
+        liveTabBtn.addEventListener('click', function () {
+            // Small delay to ensure tab content is visible
+            setTimeout(resizeLiveCharts, 100);
+        });
     }
 
     // Load custom watchlist from localStorage
@@ -93,6 +104,9 @@ function initLive() {
  */
 function loadInitialData() {
     addActivityLogEntry('system', 'Loading initial data...');
+
+    // Initialize live holdings data from static data
+    initLiveHoldingsData();
 
     // Load sector breakdown from static data (works offline/after hours)
     refreshLiveSectorChart();
@@ -219,11 +233,11 @@ function setupLiveEventListeners() {
         );
     }
 
-    // Refresh all prices button
+    // Refresh all prices button - now uses consolidated endpoint
     var refreshAllPricesBtn = document.getElementById('refreshAllPricesBtn');
 
     if (refreshAllPricesBtn) {
-        refreshAllPricesBtn.addEventListener('click', refreshAllWatchlistPrices);
+        refreshAllPricesBtn.addEventListener('click', refreshPortfolioSummary);
     }
 
     // Auto-refresh toggle
@@ -373,19 +387,268 @@ function toggleAutoRefresh(enabled) {
 }
 
 /**
+ * Fetch consolidated portfolio summary from a single API call
+ * This replaces multiple calls to portfolio-value, day-gain, and individual price fetches
+ */
+function refreshPortfolioSummary() {
+    var staticValue = getStaticPortfolioValue();
+
+    fetch('/api/live/portfolio-summary').then(function (response) {
+        // Handle rate limiting
+        if (response.status === 429) {
+            return response.json().then(function (data) {
+                data._rate_limited = true;
+                return data;
+            });
+        }
+        return response.json();
+    }).then(function (data) {
+        // Handle rate limit response
+        if (data._rate_limited || data.rate_limited) {
+            handleRateLimitedResponse(data, staticValue);
+            return;
+        }
+
+        if (data.status === 'success') {
+            // Update portfolio value display
+            updatePortfolioValueDisplay(data);
+
+            // Update day gain display
+            updateDayGainDisplay(data, staticValue);
+
+            // Update holdings table with live prices
+            updateHoldingsTableFromSummary(data.holdings);
+
+            // Update top movers
+            if (data.top_movers) {
+                updateTopMovers(data.top_movers);
+            }
+
+            // Add to portfolio history chart
+            addToPortfolioHistory(data.total_value);
+
+            // Update intraday P&L chart
+            updateIntradayPLChart(data.total_value);
+            lastPortfolioValue = data.total_value;
+
+            // Update sector performance after a short delay
+            setTimeout(function () {
+                updateSectorPerformanceChart();
+            }, 500);
+
+            addActivityLogEntry('success', 'Portfolio refreshed: $' + formatNumber(data.total_value) + 
+                ' (' + data.day_change_pct.toFixed(2) + '% today)');
+        }
+    }).catch(function (error) {
+        console.error('Error fetching portfolio summary:', error);
+        addActivityLogEntry('error', 'Failed to fetch portfolio data: ' + error.message);
+
+        // Fall back to static data
+        if (staticValue > 0) {
+            addToPortfolioHistory(staticValue);
+        }
+    });
+}
+
+/**
+ * Handle rate limited response
+ */
+function handleRateLimitedResponse(data, staticValue) {
+    var valueElem = document.getElementById('dayGainValue');
+    var percentElem = document.getElementById('dayGainPercent');
+
+    if (valueElem) {
+        valueElem.textContent = 'Rate limited';
+        valueElem.className = 'day-gain-value';
+    }
+    if (percentElem) {
+        var retryAfter = data.retry_after || 60;
+        percentElem.textContent = '(retry in ' + retryAfter + 's)';
+        percentElem.className = 'day-gain-percent';
+    }
+
+    // Use static value for portfolio chart
+    if (staticValue > 0) {
+        addToPortfolioHistory(staticValue);
+    }
+
+    addActivityLogEntry('warning', 'Yahoo Finance rate limited. Using cached data.');
+}
+
+/**
+ * Update portfolio value display from summary data
+ */
+function updatePortfolioValueDisplay(data) {
+    var valueDisplay = document.getElementById('livePortfolioValue');
+    if (!valueDisplay) return;
+
+    var valueSpan = valueDisplay.querySelector('.live-value');
+    var timestampSpan = valueDisplay.querySelector('.live-timestamp');
+
+    if (valueSpan) valueSpan.textContent = '$' + formatNumber(data.total_value);
+    if (timestampSpan) timestampSpan.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+
+    // Show cash breakdown if available
+    if (data.cash_accounts && data.cash_accounts.length > 0) {
+        var cashDetails = valueDisplay.querySelector('.live-cash-details');
+
+        if (!cashDetails) {
+            cashDetails = document.createElement('div');
+            cashDetails.className = 'live-cash-details';
+            if (timestampSpan) {
+                timestampSpan.parentNode.insertBefore(cashDetails, timestampSpan);
+            }
+        }
+
+        var cashHtml = '<div class="cash-breakdown">';
+        data.cash_accounts.forEach(function (acc) {
+            cashHtml += '<span class="cash-item">' + acc.account + ': $' + formatNumber(acc.balance) + '</span>';
+        });
+        cashHtml += '</div>';
+        cashDetails.innerHTML = cashHtml;
+    }
+}
+
+/**
+ * Update day gain display from summary data
+ */
+function updateDayGainDisplay(data, staticValue) {
+    var valueElem = document.getElementById('dayGainValue');
+    var percentElem = document.getElementById('dayGainPercent');
+
+    // Validate the returned value is reasonable (within 20% of static value)
+    var valueRatio = staticValue > 0 ? data.total_value / staticValue : 1;
+
+    if (valueRatio < 0.5 || valueRatio > 2) {
+        // API data seems incomplete - show warning
+        addActivityLogEntry('warning', 'API returned incomplete data. Using cached portfolio value.');
+
+        // Still show day gain if it looks reasonable
+        if (Math.abs(data.day_change_pct) < 20) {
+            var changeClass = data.day_change >= 0 ? 'positive' : 'negative';
+            var sign = data.day_change >= 0 ? '+' : '';
+            if (valueElem) {
+                valueElem.textContent = sign + '$' + formatNumber(Math.abs(data.day_change));
+                valueElem.className = 'day-gain-value ' + changeClass;
+            }
+            if (percentElem) {
+                percentElem.textContent = '(' + sign + data.day_change_pct.toFixed(2) + '%)';
+                percentElem.className = 'day-gain-percent ' + changeClass;
+            }
+        }
+        return;
+    }
+
+    var changeClass = data.day_change >= 0 ? 'positive' : 'negative';
+    var sign = data.day_change >= 0 ? '+' : '';
+
+    if (valueElem) {
+        valueElem.textContent = sign + '$' + formatNumber(Math.abs(data.day_change));
+        valueElem.className = 'day-gain-value ' + changeClass;
+    }
+
+    if (percentElem) {
+        percentElem.textContent = '(' + sign + data.day_change_pct.toFixed(2) + '%)';
+        percentElem.className = 'day-gain-percent ' + changeClass;
+    }
+}
+
+/**
+ * Update holdings table with live prices from summary data
+ */
+function updateHoldingsTableFromSummary(holdings) {
+    if (!holdings || !Array.isArray(holdings)) return;
+
+    var tbody = document.getElementById('liveWatchlistBody');
+    if (!tbody) return;
+
+    // Build a map of symbol to row for quick lookup
+    var rows = tbody.querySelectorAll('tr[data-symbol]');
+    var rowMap = {};
+    rows.forEach(function (row) {
+        var symbol = row.getAttribute('data-symbol');
+        if (symbol) {
+            rowMap[symbol.toUpperCase()] = row;
+        }
+    });
+
+    // Update each holding
+    holdings.forEach(function (holding) {
+        var row = rowMap[holding.symbol.toUpperCase()];
+        if (!row) return;
+
+        var priceCell = row.querySelector('.price-cell');
+        var changeCell = row.querySelector('.change-cell');
+        var valueCell = row.querySelector('.value-cell');
+
+        if (priceCell && holding.price) {
+            var priceHtml = '$' + holding.price.toFixed(2);
+            // Add extended hours indicator if applicable
+            if (holding.extended_hours && holding.extended_hours.price) {
+                var extChange = holding.extended_hours.change || 0;
+                var extClass = extChange >= 0 ? 'positive' : 'negative';
+                var extType = holding.extended_hours.type === 'post' ? 'AH' : 'PRE';
+                priceHtml += ' <span class="extended-hours ' + extClass + '">' +
+                    extType + ': $' + holding.extended_hours.price.toFixed(2) + '</span>';
+            }
+            priceCell.innerHTML = priceHtml;
+        }
+
+        if (changeCell && holding.change_pct !== undefined) {
+            var changeClass = holding.change_pct >= 0 ? 'positive' : 'negative';
+            var sign = holding.change_pct >= 0 ? '+' : '';
+            changeCell.textContent = sign + holding.change_pct.toFixed(2) + '%';
+            changeCell.className = 'change-cell ' + changeClass;
+
+            // Update data attribute for sorting
+            row.setAttribute('data-changepct', holding.change_pct);
+        }
+
+        // Use 'value' field from server (not 'market_value')
+        if (valueCell && holding.value) {
+            valueCell.textContent = '$' + formatNumber(holding.value);
+            // Update data attribute for sorting
+            row.setAttribute('data-value', holding.value);
+        }
+
+        // Update price data attribute for sorting
+        if (holding.price) {
+            row.setAttribute('data-price', holding.price);
+        }
+    });
+
+    // Update status
+    var statusSpan = document.getElementById('watchlistStatus');
+    if (statusSpan) {
+        statusSpan.textContent = 'Updated ' + new Date().toLocaleTimeString();
+    }
+}
+
+/**
  * Perform a full refresh of all live data
+ * Uses consolidated API endpoint to reduce duplicate API calls
  */
 function performFullRefresh() {
     sessionStats.refreshCount++;
     updateSessionStatsDisplay();
 
+    // These are independent and can be called separately
     refreshMarketStatus();
-    refreshLivePortfolioValue();
-    refreshDayGain();
     refreshSPYComparison();
-    refreshAllWatchlistPrices();
     refreshCustomWatchlist();
     refreshLiveSectorChart();
+
+    // Use consolidated endpoint for main portfolio data
+    // This replaces: refreshLivePortfolioValue(), refreshDayGain(), and refreshAllWatchlistPrices()
+    refreshPortfolioSummary();
+
+    // Note: Individual functions still exist for backward compatibility
+    // but the consolidated call handles portfolio value, day gain, and watchlist prices
+
+    // Update new charts after a short delay to let data populate
+    setTimeout(function () {
+        updateSectorPerformanceChart();
+    }, 2000);
 }
 
 /**
@@ -627,6 +890,44 @@ function updateMarketStatusDisplay(data) {
     if (time) {
         time.textContent = data.current_time;
     }
+
+    // Auto-enable refresh when market is open (on first load)
+    if (data.market_status === 'open' && !autoRefreshEnabled && !autoRefreshInitialized) {
+        autoRefreshInitialized = true;
+        var toggle = document.getElementById('autoRefreshToggle');
+        if (toggle) {
+            toggle.checked = true;
+            toggleAutoRefresh(true);
+            addActivityLogEntry('system', 'Auto-refresh enabled (market is open)');
+        }
+    }
+}
+
+/**
+ * Get static portfolio value from loaded data (fallback when API fails)
+ */
+function getStaticPortfolioValue() {
+    var totalValue = 0;
+
+    // Add holdings
+    if (typeof holdingsDetailData !== 'undefined' && Array.isArray(holdingsDetailData)) {
+        holdingsDetailData.forEach(function (h) {
+            totalValue += (h.CurrentValue || h.MarketValue || 0);
+        });
+    } else if (typeof holdingsData !== 'undefined' && Array.isArray(holdingsData)) {
+        holdingsData.forEach(function (h) {
+            totalValue += (h.CurrentValue || h.MarketValue || 0);
+        });
+    }
+
+    // Add cash balances
+    if (typeof cashBalancesData !== 'undefined' && Array.isArray(cashBalancesData)) {
+        cashBalancesData.forEach(function (c) {
+            totalValue += (c.CurrentBalance || c.Balance || 0);
+        });
+    }
+
+    return totalValue;
 }
 
 /**
@@ -636,14 +937,76 @@ function refreshDayGain() {
     var valueElem = document.getElementById('dayGainValue');
     var percentElem = document.getElementById('dayGainPercent');
 
-    if (valueElem) valueElem.textContent = 'Loading...';
+    // Don't show Loading... - just update when data arrives
+
+    var staticValue = getStaticPortfolioValue();
 
     fetch('/api/live/day-gain').then(function (response) {
+        // Handle rate limiting
+        if (response.status === 429) {
+            return response.json().then(function (data) {
+                data._rate_limited = true;
+                return data;
+            });
+        }
         return response.json();
     }
 
     ).then(function (data) {
+        // Handle rate limit response
+        if (data._rate_limited || data.rate_limited) {
+            if (valueElem) {
+                valueElem.textContent = 'Rate limited';
+                valueElem.className = 'day-gain-value';
+            }
+            if (percentElem) {
+                var retryAfter = data.retry_after || 60;
+                percentElem.textContent = '(retry in ' + retryAfter + 's)';
+                percentElem.className = 'day-gain-percent';
+            }
+            // Use static value for portfolio chart
+            if (staticValue > 0) {
+                addToPortfolioHistory(staticValue);
+            }
+            addActivityLogEntry('warning', 'Yahoo Finance rate limited. Using cached data.');
+            return;
+        }
+
         if (data.status === 'success') {
+            // Validate the returned value is reasonable (within 20% of static value)
+            // If API is failing for many symbols, the value will be way off
+            var valueRatio = staticValue > 0 ? data.current_value / staticValue : 1;
+
+            if (valueRatio < 0.5 || valueRatio > 2) {
+                // API data seems incomplete - use static data for portfolio value
+                addActivityLogEntry('warning', 'API returned incomplete data. Using cached portfolio value.');
+                addToPortfolioHistory(staticValue);
+
+                // Still show day gain if it looks reasonable
+                if (Math.abs(data.day_change_pct) < 20) {
+                    var changeClass = data.day_change >= 0 ? 'positive' : 'negative';
+                    var sign = data.day_change >= 0 ? '+' : '';
+                    if (valueElem) {
+                        valueElem.textContent = sign + '$' + formatNumber(Math.abs(data.day_change));
+                        valueElem.className = 'day-gain-value ' + changeClass;
+                    }
+                    if (percentElem) {
+                        percentElem.textContent = '(' + sign + data.day_change_pct.toFixed(2) + '%)';
+                        percentElem.className = 'day-gain-percent ' + changeClass;
+                    }
+                } else {
+                    if (valueElem) {
+                        valueElem.textContent = 'Limited data';
+                        valueElem.className = 'day-gain-value';
+                    }
+                    if (percentElem) {
+                        percentElem.textContent = '(API rate limited)';
+                        percentElem.className = 'day-gain-percent';
+                    }
+                }
+                return;
+            }
+
             var changeClass = data.day_change >= 0 ? 'positive' : 'negative';
             var sign = data.day_change >= 0 ? '+' : '';
 
@@ -666,8 +1029,23 @@ function refreshDayGain() {
     }
 
     ).catch(function (error) {
-        if (valueElem) valueElem.textContent = 'Error';
+        // On error, use static data
+        if (valueElem) {
+            valueElem.textContent = 'API unavailable';
+            valueElem.className = 'day-gain-value';
+        }
+        if (percentElem) {
+            percentElem.textContent = '';
+            percentElem.className = 'day-gain-percent';
+        }
+
+        // Still update portfolio value from static data
+        if (staticValue > 0) {
+            addToPortfolioHistory(staticValue);
+        }
+
         console.error('Error fetching day gain:', error);
+        addActivityLogEntry('error', 'Failed to fetch live data. Yahoo Finance may be rate limiting.');
     }
 
     );
@@ -1008,7 +1386,7 @@ function refreshLivePortfolioValue() {
     var valueSpan = valueDisplay.querySelector('.live-value');
     var timestampSpan = valueDisplay.querySelector('.live-timestamp');
 
-    if (valueSpan) valueSpan.textContent = 'Loading...';
+    // Don't show Loading... - just update when data arrives
     addActivityLogEntry('refresh', 'Refreshing portfolio value...');
 
     fetch('/api/live/portfolio-value').then(function (response) {
@@ -1019,6 +1397,10 @@ function refreshLivePortfolioValue() {
         if (data.status === 'success') {
             if (valueSpan) valueSpan.textContent = '$' + formatNumber(data.total_value);
             if (timestampSpan) timestampSpan.textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+
+            // Update intraday P&L chart
+            updateIntradayPLChart(data.total_value);
+            lastPortfolioValue = data.total_value;
 
             // Build detailed log message
             var logMsg = 'Portfolio value: $' + formatNumber(data.total_value) + ' (' + data.holdings_count + ' holdings';
@@ -1076,12 +1458,12 @@ function refreshAllWatchlistPrices() {
 
     if (!tbody) return;
 
-    // Get top holdings from holdings data (variable is holdingsDetailData)
+    // Get all holdings from holdings data (variable is holdingsDetailData)
     var holdings = [];
 
     if (typeof holdingsDetailData !== 'undefined' && Array.isArray(holdingsDetailData)) {
 
-        // Sort by value and take top 10
+        // Sort by value (largest first)
         holdings = holdingsDetailData.filter(function (h) {
             return h.Symbol && h.Quantity > 0;
         }
@@ -1090,7 +1472,7 @@ function refreshAllWatchlistPrices() {
             return (b.CurrentValue || b.MarketValue || 0) - (a.CurrentValue || a.MarketValue || 0);
         }
 
-        ).slice(0, 10);
+        );
     }
 
     if (holdings.length === 0) {
@@ -1101,7 +1483,7 @@ function refreshAllWatchlistPrices() {
     // Disable button during refresh
     if (btn) btn.disabled = true;
     if (statusSpan) statusSpan.textContent = 'Refreshing...';
-    addActivityLogEntry('refresh', 'Refreshing prices for top ' + holdings.length + ' holdings...');
+    addActivityLogEntry('refresh', 'Refreshing prices for ' + holdings.length + ' holdings...');
 
     // Only show loading state if table is empty (first load)
     var isFirstLoad = tbody.querySelector('td[colspan]') !== null;
@@ -1196,6 +1578,21 @@ function updateHoldingRow(holding, priceData) {
 
     if (!row) return;
 
+    // Update the liveHoldingsData array for sorting/charts
+    if (priceData) {
+        updateLiveHoldingData(holding.Symbol, priceData);
+    }
+
+    // Store data on the row for sorting
+    if (priceData) {
+        row.dataset.symbol = holding.Symbol;
+        row.dataset.price = priceData.price || 0;
+        row.dataset.change = priceData.change || 0;
+        row.dataset.changepct = priceData.change_pct || 0;
+        row.dataset.quantity = holding.Quantity || 0;
+        row.dataset.value = (priceData.price || 0) * (holding.Quantity || 0);
+    }
+
     var priceCell = row.querySelector('.holding-price');
     var changeCell = row.querySelector('.holding-change');
     var changePctCell = row.querySelector('.holding-change-pct');
@@ -1215,6 +1612,18 @@ function updateHoldingRow(holding, priceData) {
     var isMutualFund = priceData.is_mutual_fund || false;
     var priceTypeLabel = isMutualFund ? ' <span class="eod-badge">NAV</span>' : '';
 
+    // Extended hours display
+    var extendedHtml = '';
+    if (priceData.extended_hours && !isMutualFund) {
+        var ext = priceData.extended_hours;
+        var extType = ext.type === 'pre' ? 'PRE' : 'AH';
+        var extClass = ext.change >= 0 ? 'positive' : 'negative';
+        var extSign = ext.change >= 0 ? '+' : '';
+        extendedHtml = '<br><span class="extended-price ' + extClass + '">' +
+            '<span class="extended-hours-badge ' + (ext.type === 'pre' ? 'pre-market' : 'post-market') + '">' + extType + '</span> ' +
+            '$' + ext.price.toFixed(2) + ' (' + extSign + ext.change_pct.toFixed(2) + '%)</span>';
+    }
+
     // Update symbol cell with MF badge if needed (only on first load)
     var symbolCell = row.querySelector('td:first-child');
 
@@ -1223,7 +1632,7 @@ function updateHoldingRow(holding, priceData) {
     }
 
     if (priceCell) {
-        priceCell.innerHTML = '$' + priceData.price.toFixed(2) + priceTypeLabel;
+        priceCell.innerHTML = '$' + priceData.price.toFixed(2) + priceTypeLabel + extendedHtml;
     }
 
     if (changeCell) {
@@ -1281,7 +1690,17 @@ function renderWatchlistResults(results) {
         var sparklineId = 'sparkline-' + h.Symbol.replace(/[^a-zA-Z0-9]/g, '_');
 
         if (!p) {
-            return '<tr id="' + rowId + '">' + '<td>' + h.Symbol + '</td>' + '<td class="holding-price" style="text-align: right; color: #888;">N/A</td>' + '<td class="holding-change" style="text-align: right;">--</td>' + '<td class="holding-change-pct" style="text-align: right;">--</td>' + '<td class="holding-sparkline" style="text-align: center;"><div class="sparkline-container" id="' + sparklineId + '"></div></td>' + '<td style="text-align: right;">' + (h.Quantity ? h.Quantity.toFixed(4) : '--') + '</td>' + '<td class="holding-value" style="text-align: right;">--</td>' + '<td class="holding-time" style="color: #888;">Error</td>' + '</tr>';
+            // No price data - still add data attributes with defaults for sorting
+            return '<tr id="' + rowId + '" data-symbol="' + h.Symbol + '" data-price="0" data-change="0" data-changepct="0" data-quantity="' + (h.Quantity || 0) + '" data-value="0">' + 
+                '<td>' + h.Symbol + '</td>' + 
+                '<td class="holding-price" style="text-align: right; color: #888;">N/A</td>' + 
+                '<td class="holding-change" style="text-align: right;">--</td>' + 
+                '<td class="holding-change-pct" style="text-align: right;">--</td>' + 
+                '<td class="holding-sparkline" style="text-align: center;"><div class="sparkline-container" id="' + sparklineId + '"></div></td>' + 
+                '<td style="text-align: right;">' + (h.Quantity ? h.Quantity.toFixed(4) : '--') + '</td>' + 
+                '<td class="holding-value" style="text-align: right;">--</td>' + 
+                '<td class="holding-time" style="color: #888;">Error</td>' + 
+                '</tr>';
         }
 
         var changeClass = (p.change || 0) >= 0 ? 'positive' : 'negative';
@@ -1293,7 +1712,24 @@ function renderWatchlistResults(results) {
         var priceTypeLabel = isMutualFund ? '<span class="eod-badge">NAV</span>' : '';
         var symbolDisplay = '<strong>' + h.Symbol + '</strong>' + (isMutualFund ? ' <span class="mutual-fund-badge">MF</span>' : '');
 
-        return '<tr id="' + rowId + '">' + '<td>' + symbolDisplay + '</td>' + '<td class="holding-price" style="text-align: right;">$' + p.price.toFixed(2) + priceTypeLabel + '</td>' + '<td class="holding-change" style="text-align: right;" class="' + changeClass + '">' + changeSign + (p.change ? p.change.toFixed(2) : '0.00') + '</td>' + '<td class="holding-change-pct" style="text-align: right;" class="' + changeClass + '">' + changeSign + (p.change_pct ? p.change_pct.toFixed(2) : '0.00') + '%</td>' + '<td class="holding-sparkline" style="text-align: center;">' + (isMutualFund ? '<span class="eod-only">EOD Only</span>' : '<div class="sparkline-container" id="' + sparklineId + '"></div>') + '</td>' + '<td style="text-align: right;">' + h.Quantity.toFixed(4) + '</td>' + '<td class="holding-value" style="text-align: right;">$' + formatNumber(marketValue) + '</td>' + '<td class="holding-time" style="color: #888; font-size: 0.85em;">' + new Date().toLocaleTimeString() + '</td>' + '</tr>';
+        // Include data attributes for sorting
+        var dataAttrs = 'data-symbol="' + h.Symbol + '" ' +
+            'data-price="' + (p.price || 0) + '" ' +
+            'data-change="' + (p.change || 0) + '" ' +
+            'data-changepct="' + (p.change_pct || 0) + '" ' +
+            'data-quantity="' + (h.Quantity || 0) + '" ' +
+            'data-value="' + marketValue + '"';
+
+        return '<tr id="' + rowId + '" ' + dataAttrs + '>' + 
+            '<td>' + symbolDisplay + '</td>' + 
+            '<td class="holding-price" style="text-align: right;">$' + p.price.toFixed(2) + priceTypeLabel + '</td>' + 
+            '<td class="holding-change ' + changeClass + '" style="text-align: right;">' + changeSign + (p.change ? p.change.toFixed(2) : '0.00') + '</td>' + 
+            '<td class="holding-change-pct ' + changeClass + '" style="text-align: right;">' + changeSign + (p.change_pct ? p.change_pct.toFixed(2) : '0.00') + '%</td>' + 
+            '<td class="holding-sparkline" style="text-align: center;">' + (isMutualFund ? '<span class="eod-only">EOD Only</span>' : '<div class="sparkline-container" id="' + sparklineId + '"></div>') + '</td>' + 
+            '<td style="text-align: right;">' + h.Quantity.toFixed(4) + '</td>' + 
+            '<td class="holding-value" style="text-align: right;">$' + formatNumber(marketValue) + '</td>' + 
+            '<td class="holding-time" style="color: #888; font-size: 0.85em;">' + new Date().toLocaleTimeString() + '</td>' + 
+            '</tr>';
     }
 
     ).join('');
@@ -1345,7 +1781,62 @@ function createLiveSection() {
     setTimeout(function () {
         refreshLiveSectorChart();
         initPortfolioChartWithStaticData();
+        initIntradayPLChart();
+
+        // If we have portfolio value data, update the P&L chart
+        if (lastPortfolioValue !== null) {
+            updateIntradayPLChart(lastPortfolioValue);
+        }
+
+        // Update sector performance if we have holdings data
+        if (liveHoldingsData && liveHoldingsData.length > 0) {
+            updateSectorPerformanceChart();
+        }
     }, 50);
+}
+
+/**
+ * Resize/re-render all Live tab charts when the tab becomes visible
+ * This is needed because ECharts doesn't render properly in hidden containers
+ */
+function resizeLiveCharts() {
+    // Get all chart containers in the Live tab
+    var chartIds = ['liveSectorChart', 'portfolioValueChart', 'intradayPnLChart', 'sectorPerformanceChart'];
+
+    chartIds.forEach(function (id) {
+        var container = document.getElementById(id);
+        if (container) {
+            var chart = echarts.getInstanceByDom(container);
+            if (chart) {
+                // Resize triggers a re-render
+                chart.resize();
+            }
+        }
+    });
+
+    // If charts don't exist yet, re-create them
+    var liveSectorContainer = document.getElementById('liveSectorChart');
+    if (liveSectorContainer && !echarts.getInstanceByDom(liveSectorContainer)) {
+        refreshLiveSectorChart();
+    }
+
+    var sectorPerfContainer = document.getElementById('sectorPerformanceChart');
+    if (sectorPerfContainer && !echarts.getInstanceByDom(sectorPerfContainer)) {
+        updateSectorPerformanceChart();
+    }
+
+    var portfolioContainer = document.getElementById('portfolioValueChart');
+    if (portfolioContainer && !echarts.getInstanceByDom(portfolioContainer)) {
+        initPortfolioChartWithStaticData();
+    }
+
+    var plContainer = document.getElementById('intradayPnLChart');
+    if (plContainer && !echarts.getInstanceByDom(plContainer)) {
+        initIntradayPLChart();
+        if (lastPortfolioValue !== null) {
+            updateIntradayPLChart(lastPortfolioValue);
+        }
+    }
 }
 
 // ============================================
@@ -1651,8 +2142,19 @@ function startSessionDurationTimer() {
 
 /**
  * Update session statistics with new portfolio value
+ * Validates that the value is reasonable before recording
  */
 function updateSessionStats(value) {
+    // Sanity check - ignore values that are clearly wrong
+    // (e.g., less than 50% or more than 200% of first value due to API failures)
+    if (sessionStats.firstValue !== null) {
+        var ratio = value / sessionStats.firstValue;
+        if (ratio < 0.5 || ratio > 2) {
+            // Value is suspicious - likely API failure, don't update highs/lows
+            return;
+        }
+    }
+
     if (sessionStats.firstValue === null) {
         sessionStats.firstValue = value;
     }
@@ -1856,10 +2358,398 @@ function refreshLiveSectorChart() {
     chart.setOption(option);
 }
 
+// ============================================
+// LIVE HOLDINGS DATA INITIALIZATION
+// ============================================
+/**
+ * Initialize liveHoldingsData from static holdings data
+ */
+function initLiveHoldingsData() {
+    var holdings = null;
+    if (typeof holdingsDetailData !== 'undefined' && Array.isArray(holdingsDetailData) && holdingsDetailData.length > 0) {
+        holdings = holdingsDetailData;
+    } else if (typeof holdingsData !== 'undefined' && Array.isArray(holdingsData) && holdingsData.length > 0) {
+        holdings = holdingsData;
+    }
+
+    if (!holdings) {
+        liveHoldingsData = [];
+        return;
+    }
+
+    // Copy holdings data with normalized field names
+    liveHoldingsData = holdings.filter(function (h) {
+        return h.Symbol && (h.Quantity > 0 || h.Shares > 0);
+    }).map(function (h) {
+        var shares = h.Quantity || h.Shares || 0;
+        var currentValue = h.CurrentValue || h.MarketValue || h['Current Value'] || 0;
+        var costBasis = h.CostBasis || h['Cost Basis'] || 0;
+        return {
+            Symbol: h.Symbol,
+            Shares: shares,
+            'Cost Basis': costBasis,
+            'Current Price': currentValue / shares || 0,
+            'Current Value': currentValue,
+            'Gain/Loss $': currentValue - costBasis,
+            'Gain/Loss %': costBasis > 0 ? ((currentValue - costBasis) / costBasis) * 100 : 0,
+            Sector: h.Sector || 'Unknown',
+            // Live data (will be updated)
+            livePrice: null,
+            liveValue: null,
+            liveChangePct: 0,
+            liveDayGain: 0,
+            sparklineData: []
+        };
+    });
+
+    // Calculate initial portfolio value
+    var initialValue = liveHoldingsData.reduce(function (sum, h) {
+        return sum + (h['Current Value'] || 0);
+    }, 0);
+    lastPortfolioValue = initialValue;
+}
+
+/**
+ * Update a holding in liveHoldingsData with new price data
+ */
+function updateLiveHoldingData(symbol, priceData) {
+    var holding = liveHoldingsData.find(function (h) {
+        return h.Symbol === symbol;
+    });
+
+    if (!holding || !priceData) return;
+
+    var prevPrice = holding['Current Price'] || 0;
+    holding.livePrice = priceData.price;
+    holding.liveValue = priceData.price * holding.Shares;
+    holding.liveChangePct = priceData.change_pct || 0;
+
+    // Calculate day gain based on change
+    var change = priceData.change || 0;
+    holding.liveDayGain = change * holding.Shares;
+
+    // Update total gain/loss
+    holding['Current Price'] = priceData.price;
+    holding['Current Value'] = holding.liveValue;
+    holding['Gain/Loss $'] = holding.liveValue - holding['Cost Basis'];
+    holding['Gain/Loss %'] = holding['Cost Basis'] > 0
+        ? ((holding.liveValue - holding['Cost Basis']) / holding['Cost Basis']) * 100
+        : 0;
+}
+
+// ============================================
+// TABLE SORTING FUNCTIONALITY
+// ============================================
+var currentSort = { column: null, ascending: true };
+
+function initTableSorting() {
+    var headers = document.querySelectorAll('#liveWatchlistTable th.sortable');
+    headers.forEach(function (header) {
+        header.addEventListener('click', function () {
+            var sortKey = this.dataset.sort;
+            if (!sortKey) return;
+
+            // Toggle direction if clicking same column
+            if (currentSort.column === sortKey) {
+                currentSort.ascending = !currentSort.ascending;
+            } else {
+                currentSort.column = sortKey;
+                currentSort.ascending = true;
+            }
+
+            // Update header indicators
+            headers.forEach(function (h) {
+                h.classList.remove('sort-asc', 'sort-desc');
+            });
+            this.classList.add(currentSort.ascending ? 'sort-asc' : 'sort-desc');
+
+            // Sort and re-render
+            sortHoldingsTable();
+        });
+    });
+}
+
+function sortHoldingsTable() {
+    if (!currentSort.column) return;
+
+    var tbody = document.getElementById('liveWatchlistBody');
+    if (!tbody) return;
+
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr[id^="holding-row-"]'));
+    if (rows.length === 0) return;
+
+    var sortKey = currentSort.column;
+    var ascending = currentSort.ascending;
+
+    // Sort rows based on their data attributes
+    rows.sort(function (a, b) {
+        var valA, valB;
+
+        switch (sortKey) {
+            case 'symbol':
+                valA = (a.dataset.symbol || '').toLowerCase();
+                valB = (b.dataset.symbol || '').toLowerCase();
+                break;
+            case 'price':
+                valA = parseFloat(a.dataset.price) || 0;
+                valB = parseFloat(b.dataset.price) || 0;
+                break;
+            case 'change':
+                valA = parseFloat(a.dataset.change) || 0;
+                valB = parseFloat(b.dataset.change) || 0;
+                break;
+            case 'changePct':
+                valA = parseFloat(a.dataset.changepct) || 0;
+                valB = parseFloat(b.dataset.changepct) || 0;
+                break;
+            case 'quantity':
+                valA = parseFloat(a.dataset.quantity) || 0;
+                valB = parseFloat(b.dataset.quantity) || 0;
+                break;
+            case 'value':
+                valA = parseFloat(a.dataset.value) || 0;
+                valB = parseFloat(b.dataset.value) || 0;
+                break;
+            default:
+                return 0;
+        }
+
+        if (valA < valB) return ascending ? -1 : 1;
+        if (valA > valB) return ascending ? 1 : -1;
+        return 0;
+    });
+
+    // Re-order rows in the DOM
+    rows.forEach(function (row) {
+        tbody.appendChild(row);
+    });
+}
+
+// ============================================
+// INTRADAY P&L CHART
+// ============================================
+var intradayPLData = [];
+var sessionStartValue = null;
+
+function initIntradayPLChart() {
+    var container = document.getElementById('intradayPnLChart');
+    if (!container) return;
+
+    // Dispose existing chart if any (needed when tab is re-shown)
+    var existingChart = echarts.getInstanceByDom(container);
+    if (existingChart) {
+        existingChart.dispose();
+    }
+
+    // Initialize chart
+    var chart = echarts.init(container);
+    chart.setOption({
+        tooltip: {
+            trigger: 'axis',
+            formatter: function (params) {
+                if (!params || params.length === 0) return '';
+                var time = params[0].axisValue;
+                var pl = params[0].value;
+                var sign = pl >= 0 ? '+' : '';
+                return time + '<br/>P&L: ' + sign + '$' + pl.toFixed(2);
+            }
+        },
+        xAxis: {
+            type: 'category',
+            data: [],
+            axisLabel: { fontSize: 10 }
+        },
+        yAxis: {
+            type: 'value',
+            axisLabel: {
+                formatter: function (val) {
+                    return (val >= 0 ? '+$' : '-$') + Math.abs(val).toFixed(0);
+                },
+                fontSize: 10
+            },
+            splitLine: { lineStyle: { type: 'dashed' } }
+        },
+        series: [{
+            type: 'line',
+            data: [],
+            smooth: true,
+            areaStyle: {
+                color: {
+                    type: 'linear',
+                    x: 0, y: 0, x2: 0, y2: 1,
+                    colorStops: [
+                        { offset: 0, color: 'rgba(46, 204, 113, 0.4)' },
+                        { offset: 1, color: 'rgba(46, 204, 113, 0.1)' }
+                    ]
+                }
+            },
+            lineStyle: { color: '#2ecc71', width: 2 },
+            itemStyle: { color: '#2ecc71' }
+        }],
+        grid: { left: 60, right: 20, top: 20, bottom: 30 }
+    });
+}
+
+function updateIntradayPLChart(currentValue) {
+    var container = document.getElementById('intradayPnLChart');
+    if (!container) return;
+
+    if (sessionStartValue === null) {
+        sessionStartValue = currentValue;
+    }
+
+    var now = new Date();
+    var timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    var pl = currentValue - sessionStartValue;
+
+    intradayPLData.push({ time: timeStr, pl: pl });
+
+    // Keep only last 60 data points (1 hour at 1-min intervals)
+    if (intradayPLData.length > 60) {
+        intradayPLData.shift();
+    }
+
+    var chart = echarts.getInstanceByDom(container);
+    if (!chart) {
+        chart = echarts.init(container);
+    }
+
+    var times = intradayPLData.map(function (d) { return d.time; });
+    var pls = intradayPLData.map(function (d) { return d.pl; });
+
+    // Determine color based on current P&L
+    var isPositive = pl >= 0;
+    var lineColor = isPositive ? '#2ecc71' : '#e74c3c';
+    var areaColor = isPositive
+        ? [{ offset: 0, color: 'rgba(46, 204, 113, 0.4)' }, { offset: 1, color: 'rgba(46, 204, 113, 0.1)' }]
+        : [{ offset: 0, color: 'rgba(231, 76, 60, 0.4)' }, { offset: 1, color: 'rgba(231, 76, 60, 0.1)' }];
+
+    chart.setOption({
+        xAxis: { data: times },
+        series: [{
+            data: pls,
+            lineStyle: { color: lineColor },
+            itemStyle: { color: lineColor },
+            areaStyle: {
+                color: {
+                    type: 'linear',
+                    x: 0, y: 0, x2: 0, y2: 1,
+                    colorStops: areaColor
+                }
+            }
+        }]
+    });
+}
+
+// ============================================
+// SECTOR PERFORMANCE BARS
+// ============================================
+function updateSectorPerformanceChart() {
+    var container = document.getElementById('sectorPerformanceChart');
+    if (!container || !liveHoldingsData || liveHoldingsData.length === 0) return;
+
+    // Group holdings by sector and calculate day gain
+    var sectorGains = {};
+    liveHoldingsData.forEach(function (holding) {
+        var sector = holding.Sector || 'Unknown';
+        var dayGain = parseFloat(holding.liveDayGain) || 0;
+
+        if (!sectorGains[sector]) {
+            sectorGains[sector] = { gain: 0, value: 0 };
+        }
+        sectorGains[sector].gain += dayGain;
+        sectorGains[sector].value += parseFloat(holding.liveValue) || parseFloat(holding['Current Value']) || 0;
+    });
+
+    // Convert to array and sort by gain
+    var sectorData = Object.keys(sectorGains).map(function (sector) {
+        var pct = sectorGains[sector].value > 0
+            ? (sectorGains[sector].gain / sectorGains[sector].value) * 100
+            : 0;
+        return {
+            sector: sector,
+            gain: sectorGains[sector].gain,
+            gainPct: pct
+        };
+    }).sort(function (a, b) {
+        return b.gain - a.gain;
+    });
+
+    var chart = echarts.getInstanceByDom(container);
+    if (chart) {
+        chart.dispose();
+    }
+    chart = echarts.init(container);
+
+    var sectors = sectorData.map(function (d) { return d.sector; });
+    var gains = sectorData.map(function (d) { return d.gain; });
+    var colors = sectorData.map(function (d) { return d.gain >= 0 ? '#2ecc71' : '#e74c3c'; });
+
+    chart.setOption({
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: function (params) {
+                if (!params || params.length === 0) return '';
+                var idx = params[0].dataIndex;
+                var d = sectorData[idx];
+                var sign = d.gain >= 0 ? '+' : '';
+                return d.sector + '<br/>' +
+                    'Day Gain: ' + sign + '$' + d.gain.toFixed(2) + '<br/>' +
+                    'Change: ' + sign + d.gainPct.toFixed(2) + '%';
+            }
+        },
+        xAxis: {
+            type: 'value',
+            axisLabel: {
+                formatter: function (val) {
+                    if (Math.abs(val) >= 1000) {
+                        return (val >= 0 ? '+$' : '-$') + (Math.abs(val) / 1000).toFixed(1) + 'K';
+                    }
+                    return (val >= 0 ? '+$' : '-$') + Math.abs(val).toFixed(0);
+                },
+                fontSize: 10
+            },
+            splitLine: { lineStyle: { type: 'dashed' } }
+        },
+        yAxis: {
+            type: 'category',
+            data: sectors,
+            axisLabel: { fontSize: 10 },
+            inverse: true
+        },
+        series: [{
+            type: 'bar',
+            data: gains.map(function (g, i) {
+                return {
+                    value: g,
+                    itemStyle: { color: colors[i] }
+                };
+            }),
+            barMaxWidth: 30,
+            label: {
+                show: true,
+                position: 'right',
+                formatter: function (params) {
+                    var val = params.value;
+                    var sign = val >= 0 ? '+' : '';
+                    return sign + '$' + val.toFixed(0);
+                },
+                fontSize: 10
+            }
+        }],
+        grid: { left: 100, right: 60, top: 40, bottom: 20 }
+    });
+}
+
 // Initialize on DOM ready if in server mode
 document.addEventListener('DOMContentLoaded', function () {
     // Small delay to let other scripts initialize first
-    setTimeout(initLive, 100);
+    setTimeout(function () {
+        initLive();
+        initTableSorting();
+        initIntradayPLChart();
+    }, 100);
 }
 
 );

@@ -1280,10 +1280,22 @@
                         <div id="portfolioValueChart" style="height: 250px;"></div>
                     </div>
 
+                    <!-- Intraday P&L Chart -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Intraday P&L</h3>
+                        <div id="intradayPnLChart" style="height: 250px;"></div>
+                    </div>
+
                     <!-- Live Sector Breakdown -->
                     <div class="chart-container half-width">
                         <h3 class="chart-title">Live Sector Breakdown</h3>
                         <div id="liveSectorChart" style="height: 250px;"></div>
+                    </div>
+
+                    <!-- Sector Performance Bars -->
+                    <div class="chart-container half-width">
+                        <h3 class="chart-title">Sector Performance Today</h3>
+                        <div id="sectorPerformanceChart" style="height: 250px;"></div>
                     </div>
 
                     <!-- Quick Price Check -->
@@ -1349,17 +1361,24 @@
 
                     <!-- Watchlist with Live Prices & Sparklines -->
                     <div class="chart-container full-width">
-                        <h3 class="chart-title">Top Holdings - Live Prices</h3>
-                        <table class="holdings-table" id="liveWatchlistTable">
+                        <h3 class="chart-title">All Holdings - Live Prices
+                            <span class="sort-hint">(click headers to sort)</span>
+                        </h3>
+                        <table class="holdings-table sortable-table" id="liveWatchlistTable">
                             <thead>
                                 <tr>
-                                    <th>Symbol</th>
-                                    <th style="text-align: right;">Live Price</th>
-                                    <th style="text-align: right;">Change</th>
-                                    <th style="text-align: right;">Change %</th>
+                                    <th class="sortable" data-sort="symbol">Symbol <span class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="price" style="text-align: right;">Live Price <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="change" style="text-align: right;">Change <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="changePct" style="text-align: right;">Change % <span
+                                            class="sort-icon"></span></th>
                                     <th style="text-align: center; width: 120px;">Intraday</th>
-                                    <th style="text-align: right;">Quantity</th>
-                                    <th style="text-align: right;">Market Value</th>
+                                    <th class="sortable" data-sort="quantity" style="text-align: right;">Quantity <span
+                                            class="sort-icon"></span></th>
+                                    <th class="sortable" data-sort="value" style="text-align: right;">Market Value <span
+                                            class="sort-icon"></span></th>
                                     <th>Last Updated</th>
                                 </tr>
                             </thead>

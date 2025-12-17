@@ -125,10 +125,64 @@ KNOWN_SPINOFFS: Dict[str, SpinOffAllocation] = {
 }
 
 # Known symbol changes (old -> new)
+# These are ticker changes where the company continues trading under a new symbol
 SYMBOL_CHANGES: Dict[str, str] = {
-    "FB": "META",
-    "TWTR": "X",  # Twitter acquired, symbol retired
+    "FB": "META",      # Facebook → Meta (2021-10-28)
+    "TWTR": "X",       # Twitter acquired, symbol retired (now private)
+    "EYEN": "HYPD",    # Eyenovia → Hypewell Inc (2024)
 }
+
+
+def apply_symbol_changes(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply known symbol changes to the dataframe.
+    Updates old ticker symbols to their new symbols.
+    
+    Args:
+        df: DataFrame with 'Symbol' column
+        
+    Returns:
+        DataFrame with updated symbols
+    """
+    if "Symbol" not in df.columns:
+        return df
+    
+    df = df.copy()
+    changed_count = 0
+    
+    for old_symbol, new_symbol in SYMBOL_CHANGES.items():
+        mask = df["Symbol"] == old_symbol
+        if mask.any():
+            count = mask.sum()
+            df.loc[mask, "Symbol"] = new_symbol
+            changed_count += count
+            logger.info(f"Updated {count} transactions: {old_symbol} → {new_symbol}")
+    
+    if changed_count > 0:
+        logger.info(f"Applied {changed_count} symbol changes total")
+    
+    return df
+
+
+def get_current_symbol(symbol: str) -> str:
+    """
+    Get the current trading symbol for a given symbol.
+    Follows the chain of symbol changes if there are multiple.
+    
+    Args:
+        symbol: Original or historical symbol
+        
+    Returns:
+        Current trading symbol
+    """
+    # Follow the chain of changes (in case of multiple renames)
+    current = symbol
+    seen = set()
+    while current in SYMBOL_CHANGES and current not in seen:
+        seen.add(current)
+        current = SYMBOL_CHANGES[current]
+    return current
+
 
 # Known mergers with exchange ratios
 # Format: {acquired_symbol: (acquirer_symbol, exchange_ratio, cash_per_share)}

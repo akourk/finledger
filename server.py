@@ -38,22 +38,57 @@ message_lock = threading.Lock()
 # Cache prices for 30 seconds to avoid hitting API too frequently
 price_cache = {}
 PRICE_CACHE_TTL = 30  # seconds
+INVALID_SYMBOL_CACHE_TTL = 3600  # Cache invalid symbols for 1 hour
+
+# Symbols with special characters that are typically delisted/expired
+INVALID_SYMBOL_CHARS = set('^+*#')
+
+# Known delisted/changed symbols that should be skipped
+# These will be converted to new symbols on next data regeneration
+DELISTED_SYMBOLS = {'EYEN', 'FREQ'}  # EYEN → HYPD, FREQ was delisted
+
+# Rate limit tracking
+rate_limit_until = 0  # Timestamp when rate limiting expires
+RATE_LIMIT_BACKOFF = 60  # Seconds to wait after hitting rate limit
+
+
+def is_rate_limited():
+    """Check if we're currently rate limited."""
+    return time.time() < rate_limit_until
+
+
+def set_rate_limited():
+    """Mark that we've been rate limited."""
+    global rate_limit_until
+    rate_limit_until = time.time() + RATE_LIMIT_BACKOFF
+
+
+def is_invalid_symbol(symbol):
+    """Check if a symbol is invalid, delisted, or contains special characters."""
+    if any(char in symbol for char in INVALID_SYMBOL_CHARS):
+        return True
+    if symbol.upper() in DELISTED_SYMBOLS:
+        return True
+    return False
 
 
 def get_cached_price(symbol):
     """Get price from cache if still valid."""
     if symbol in price_cache:
         cached = price_cache[symbol]
-        if time.time() - cached['timestamp'] < PRICE_CACHE_TTL:
+        # Use longer TTL for invalid/not-found symbols
+        ttl = INVALID_SYMBOL_CACHE_TTL if cached.get('is_invalid') else PRICE_CACHE_TTL
+        if time.time() - cached['timestamp'] < ttl:
             return cached['data']
     return None
 
 
-def set_cached_price(symbol, data):
+def set_cached_price(symbol, data, is_invalid=False):
     """Store price in cache."""
     price_cache[symbol] = {
         'data': data,
-        'timestamp': time.time()
+        'timestamp': time.time(),
+        'is_invalid': is_invalid
     }
 
 
@@ -354,7 +389,18 @@ def day_gain():
     """
     Calculate today's gain/loss for the portfolio.
     Compares current prices vs previous close for all holdings.
+    Includes cash balances for accurate total.
+    Returns static data if rate limited.
     """
+    # If rate limited, return a message to use static data
+    if is_rate_limited():
+        return jsonify({
+            "status": "error",
+            "message": "Rate limited by Yahoo Finance. Please wait.",
+            "rate_limited": True,
+            "retry_after": int(rate_limit_until - time.time())
+        }), 429
+    
     try:
         import yfinance as yf
 
@@ -370,9 +416,26 @@ def day_gain():
         end = content.rindex("]") + 1
         holdings = json.loads(content[start:end])
 
+        # Load cash balances
+        cash_total = 0
+        cash_balances_path = ROOT_DIR / "dashboard" / "data" / "cash_balances.js"
+        if cash_balances_path.exists():
+            try:
+                with open(cash_balances_path, "r", encoding="utf-8") as f:
+                    cash_content = f.read()
+                cash_start = cash_content.index("[")
+                cash_end = cash_content.rindex("]") + 1
+                cash_balances = json.loads(cash_content[cash_start:cash_end])
+                for cash in cash_balances:
+                    cash_total += cash.get("CurrentBalance", 0) or cash.get("Balance", 0) or 0
+            except Exception:
+                pass
+
         total_current = 0
         total_prev_close = 0
         holding_changes = []
+        rate_limit_hit = False
+        successful_fetches = 0
 
         for holding in holdings:
             symbol = holding.get("Symbol", "")
@@ -380,6 +443,14 @@ def day_gain():
 
             if not symbol or quantity == 0:
                 continue
+            
+            # Skip symbols with special characters (delisted/expired)
+            if is_invalid_symbol(symbol):
+                continue
+            
+            # If we hit rate limit, stop fetching
+            if rate_limit_hit:
+                break
 
             try:
                 ticker = yf.Ticker(symbol)
@@ -394,6 +465,7 @@ def day_gain():
                     prev_value = prev_close * quantity
                     total_current += current_value
                     total_prev_close += prev_value
+                    successful_fetches += 1
 
                     change = price - prev_close
                     change_pct = (change / prev_close) * 100 if prev_close > 0 else 0
@@ -410,14 +482,32 @@ def day_gain():
                             "quantity": quantity,
                         }
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                error_msg = str(e)
+                if "401" in error_msg or "Unauthorized" in error_msg or "Crumb" in error_msg:
+                    rate_limit_hit = True
+                    set_rate_limited()
+                    print(f"Rate limited by Yahoo Finance. Backing off for {RATE_LIMIT_BACKOFF}s")
 
-        # Calculate totals
+        # If we hit rate limit and got very few results, return an error
+        if rate_limit_hit and successful_fetches < 5:
+            return jsonify({
+                "status": "error",
+                "message": "Rate limited by Yahoo Finance after fetching only a few symbols",
+                "rate_limited": True,
+                "symbols_fetched": successful_fetches
+            }), 429
+
+        # Calculate totals (include cash in current value, but not in day change calc)
+        # Cash doesn't change intraday, so add it to both current and prev for display
         day_change = total_current - total_prev_close
         day_change_pct = (
             (day_change / total_prev_close) * 100 if total_prev_close > 0 else 0
         )
+        
+        # Add cash to the totals for portfolio value display
+        total_current_with_cash = total_current + cash_total
+        total_prev_with_cash = total_prev_close + cash_total
 
         # Sort by absolute value change to find top movers
         holding_changes.sort(key=lambda x: abs(x["value_change"]), reverse=True)
@@ -425,10 +515,12 @@ def day_gain():
         return jsonify(
             {
                 "status": "success",
-                "current_value": round(total_current, 2),
-                "prev_close_value": round(total_prev_close, 2),
+                "current_value": round(total_current_with_cash, 2),
+                "prev_close_value": round(total_prev_with_cash, 2),
                 "day_change": round(day_change, 2),
                 "day_change_pct": round(day_change_pct, 2),
+                "cash_total": round(cash_total, 2),
+                "holdings_value": round(total_current, 2),
                 "top_movers": holding_changes[:5],
                 "timestamp": datetime.now().isoformat(),
             }
@@ -485,12 +577,27 @@ def live_price(symbol):
     Useful for live price updates.
     Handles mutual funds which only have EOD pricing.
     Uses caching to avoid Yahoo Finance rate limiting.
+    Skips symbols with special characters (delisted/expired).
     """
     symbol = symbol.upper()
+    
+    # Check for invalid symbol characters (delisted/expired securities)
+    if is_invalid_symbol(symbol):
+        error_result = {
+            "status": "error",
+            "message": f"Symbol {symbol} appears to be delisted or expired",
+            "symbol": symbol,
+            "is_delisted": True
+        }
+        set_cached_price(symbol, error_result, is_invalid=True)
+        return jsonify(error_result), 404
     
     # Check cache first
     cached = get_cached_price(symbol)
     if cached:
+        # If it was a cached error, return with appropriate status code
+        if cached.get("status") == "error":
+            return jsonify(cached), 404
         return jsonify(cached)
     
     try:
@@ -510,6 +617,16 @@ def live_price(symbol):
                     "message": "Rate limited - try again later",
                     "rate_limited": True
                 }), 429
+            # If 404/not found, cache the error
+            if "404" in error_msg or "Not Found" in error_msg:
+                error_result = {
+                    "status": "error",
+                    "message": f"Symbol {symbol} not found",
+                    "symbol": symbol,
+                    "is_delisted": True
+                }
+                set_cached_price(symbol, error_result, is_invalid=True)
+                return jsonify(error_result), 404
             return jsonify({"status": "error", "message": f"Failed to fetch info for {symbol}: {error_msg}"}), 500
         
         if not info or len(info) == 0:
@@ -540,6 +657,31 @@ def live_price(symbol):
                 change = price - prev_close
                 change_pct = (change / prev_close) * 100
 
+            # Get extended hours pricing (pre-market and after-hours)
+            pre_market_price = info.get("preMarketPrice")
+            pre_market_change = info.get("preMarketChange")
+            pre_market_change_pct = info.get("preMarketChangePercent")
+            post_market_price = info.get("postMarketPrice")
+            post_market_change = info.get("postMarketChange")
+            post_market_change_pct = info.get("postMarketChangePercent")
+            
+            # Determine which extended hours data is available/relevant
+            extended_hours = None
+            if post_market_price:
+                extended_hours = {
+                    "type": "post",
+                    "price": round(post_market_price, 2),
+                    "change": round(post_market_change, 2) if post_market_change else 0,
+                    "change_pct": round(post_market_change_pct * 100, 2) if post_market_change_pct else 0
+                }
+            elif pre_market_price:
+                extended_hours = {
+                    "type": "pre",
+                    "price": round(pre_market_price, 2),
+                    "change": round(pre_market_change, 2) if pre_market_change else 0,
+                    "change_pct": round(pre_market_change_pct * 100, 2) if pre_market_change_pct else 0
+                }
+
             result = {
                 "status": "success",
                 "symbol": symbol,
@@ -548,6 +690,7 @@ def live_price(symbol):
                 "change_pct": round(change_pct, 2) if change_pct else 0,
                 "is_mutual_fund": is_mutual_fund,
                 "price_type": "NAV" if is_mutual_fund else "Live",
+                "extended_hours": extended_hours,
                 "timestamp": datetime.now().isoformat(),
             }
             
@@ -568,6 +711,265 @@ def live_price(symbol):
                 "rate_limited": True
             }), 429
         return jsonify({"status": "error", "message": error_msg}), 500
+
+
+@app.route("/api/live/portfolio-summary")
+def live_portfolio_summary():
+    """
+    Consolidated endpoint that returns ALL live portfolio data in one call.
+    This eliminates duplicate API calls to Yahoo Finance.
+    Returns: portfolio value, day gain, all holdings with prices, sector breakdown.
+    """
+    # If rate limited, return cached/static data
+    if is_rate_limited():
+        return jsonify({
+            "status": "error",
+            "message": "Rate limited by Yahoo Finance. Please wait.",
+            "rate_limited": True,
+            "retry_after": int(rate_limit_until - time.time())
+        }), 429
+    
+    try:
+        import yfinance as yf
+
+        # Load holdings from the data file
+        holdings_path = ROOT_DIR / "dashboard" / "data" / "holdings_detail.js"
+        if not holdings_path.exists():
+            return jsonify({"status": "error", "message": "Holdings data not found"}), 404
+
+        with open(holdings_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        start = content.index("[")
+        end = content.rindex("]") + 1
+        holdings = json.loads(content[start:end])
+
+        # Load cash balances
+        cash_balances_path = ROOT_DIR / "dashboard" / "data" / "cash_balances.js"
+        cash_total = 0
+        cash_accounts = []
+
+        if cash_balances_path.exists():
+            try:
+                with open(cash_balances_path, "r", encoding="utf-8") as f:
+                    cash_content = f.read()
+                cash_start = cash_content.index("[")
+                cash_end = cash_content.rindex("]") + 1
+                cash_data = json.loads(cash_content[cash_start:cash_end])
+
+                for cash_account in cash_data:
+                    balance = cash_account.get("CurrentBalance", 0)
+                    account_name = cash_account.get("Account", "Cash")
+                    if balance > 0:
+                        cash_total += balance
+                        cash_accounts.append({"account": account_name, "balance": round(balance, 2)})
+            except Exception as e:
+                print(f"Warning: Could not load cash balances: {e}")
+
+        # Fetch all holdings data
+        total_current = cash_total
+        total_prev_close = cash_total  # Cash doesn't change
+        holdings_data = []
+        failed_symbols = []
+        sector_totals = {}
+        sector_day_gains = {}
+
+        for holding in holdings:
+            symbol = holding.get("Symbol", "")
+            quantity = holding.get("Quantity", 0)
+            sector = holding.get("Sector", "Unknown")
+            static_price = holding.get("CurrentPrice") or holding.get("Price") or 0
+
+            if not symbol or quantity == 0:
+                continue
+
+            price = None
+            prev_close = None
+            change = 0
+            change_pct = 0
+            source = "live"
+            is_mutual_fund = False
+            extended_hours = None
+
+            # Skip invalid symbols but use static price
+            if is_invalid_symbol(symbol):
+                if static_price > 0:
+                    value = static_price * quantity
+                    total_current += value
+                    total_prev_close += value
+                    holdings_data.append({
+                        "symbol": symbol,
+                        "quantity": quantity,
+                        "price": round(static_price, 2),
+                        "prev_close": round(static_price, 2),
+                        "change": 0,
+                        "change_pct": 0,
+                        "value": round(value, 2),
+                        "day_gain": 0,
+                        "sector": sector,
+                        "source": "static",
+                        "is_mutual_fund": False
+                    })
+                continue
+
+            # Check cache first
+            cached = get_cached_price(symbol)
+            if cached and cached.get('status') == 'success':
+                price = cached.get('price')
+                change = cached.get('change', 0)
+                change_pct = cached.get('change_pct', 0)
+                is_mutual_fund = cached.get('is_mutual_fund', False)
+                extended_hours = cached.get('extended_hours')
+                # Estimate prev_close from price and change
+                prev_close = price - change if change else price
+                source = "cache"
+
+            # Try live fetch if no valid cache
+            if price is None:
+                try:
+                    ticker = yf.Ticker(symbol)
+                    info = ticker.info
+                    
+                    # Check if mutual fund
+                    quote_type = info.get("quoteType", "").upper()
+                    is_mutual_fund = quote_type == "MUTUALFUND"
+                    
+                    price = info.get("regularMarketPrice") or info.get("currentPrice") or info.get("navPrice")
+                    prev_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
+                    
+                    if price and prev_close:
+                        change = price - prev_close
+                        change_pct = (change / prev_close) * 100 if prev_close > 0 else 0
+                    
+                    # Get extended hours data
+                    post_price = info.get("postMarketPrice")
+                    post_change = info.get("postMarketChange")
+                    post_change_pct = info.get("postMarketChangePercent")
+                    pre_price = info.get("preMarketPrice")
+                    pre_change = info.get("preMarketChange")
+                    pre_change_pct = info.get("preMarketChangePercent")
+                    
+                    if post_price:
+                        extended_hours = {
+                            "type": "post",
+                            "price": round(post_price, 2),
+                            "change": round(post_change, 2) if post_change else 0,
+                            "change_pct": round(post_change_pct * 100, 2) if post_change_pct else 0
+                        }
+                    elif pre_price:
+                        extended_hours = {
+                            "type": "pre",
+                            "price": round(pre_price, 2),
+                            "change": round(pre_change, 2) if pre_change else 0,
+                            "change_pct": round(pre_change_pct * 100, 2) if pre_change_pct else 0
+                        }
+                    
+                    # Cache this result
+                    set_cached_price(symbol, {
+                        "status": "success",
+                        "price": price,
+                        "change": change,
+                        "change_pct": change_pct,
+                        "is_mutual_fund": is_mutual_fund,
+                        "extended_hours": extended_hours
+                    })
+                    source = "live"
+                    
+                except Exception as e:
+                    failed_symbols.append(symbol)
+                    price = None
+
+            # Fall back to static price
+            if price is None or price == 0:
+                price = static_price
+                prev_close = static_price
+                change = 0
+                change_pct = 0
+                source = "static"
+                if symbol not in failed_symbols:
+                    failed_symbols.append(symbol)
+
+            if price and price > 0:
+                value = price * quantity
+                prev_value = (prev_close or price) * quantity
+                day_gain = value - prev_value
+                
+                total_current += value
+                total_prev_close += prev_value
+                
+                # Track sector data
+                if sector not in sector_totals:
+                    sector_totals[sector] = 0
+                    sector_day_gains[sector] = 0
+                sector_totals[sector] += value
+                sector_day_gains[sector] += day_gain
+                
+                holdings_data.append({
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "price": round(price, 2),
+                    "prev_close": round(prev_close, 2) if prev_close else round(price, 2),
+                    "change": round(change, 2) if change else 0,
+                    "change_pct": round(change_pct, 2) if change_pct else 0,
+                    "value": round(value, 2),
+                    "day_gain": round(day_gain, 2),
+                    "sector": sector,
+                    "source": source,
+                    "is_mutual_fund": is_mutual_fund,
+                    "extended_hours": extended_hours
+                })
+
+        # Calculate day change
+        day_change = total_current - total_prev_close
+        day_change_pct = (day_change / total_prev_close) * 100 if total_prev_close > 0 else 0
+
+        # Sort holdings by value (largest first)
+        holdings_data.sort(key=lambda x: x["value"], reverse=True)
+
+        # Build sector breakdown
+        sector_breakdown = []
+        for sector, value in sector_totals.items():
+            sector_breakdown.append({
+                "sector": sector,
+                "value": round(value, 2),
+                "day_gain": round(sector_day_gains.get(sector, 0), 2),
+                "pct": round((value / total_current) * 100, 2) if total_current > 0 else 0
+            })
+        sector_breakdown.sort(key=lambda x: x["value"], reverse=True)
+
+        # Find top movers (sorted by absolute day gain for biggest movers)
+        # Convert to the expected format for updateTopMovers
+        top_movers = []
+        for h in holdings_data:
+            if h["day_gain"] != 0:
+                top_movers.append({
+                    "symbol": h["symbol"],
+                    "price": h["price"],
+                    "change": h["change"],
+                    "change_pct": h["change_pct"],
+                    "value_change": h["day_gain"]
+                })
+        top_movers.sort(key=lambda x: abs(x["value_change"]), reverse=True)
+        top_movers = top_movers[:5]
+
+        return jsonify({
+            "status": "success",
+            "total_value": round(total_current, 2),
+            "prev_close_value": round(total_prev_close, 2),
+            "day_change": round(day_change, 2),
+            "day_change_pct": round(day_change_pct, 2),
+            "cash_total": round(cash_total, 2),
+            "cash_accounts": cash_accounts,
+            "holdings_count": len(holdings_data),
+            "holdings": holdings_data,
+            "sector_breakdown": sector_breakdown,
+            "top_movers": top_movers,
+            "failed_symbols": failed_symbols,
+            "timestamp": datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/api/live/portfolio-value")
@@ -620,41 +1022,79 @@ def live_portfolio_value():
 
         total_value = cash_total  # Start with cash
         updated_holdings = []
+        failed_symbols = []
 
         for holding in holdings:
             symbol = holding.get("Symbol", "")
             quantity = holding.get("Quantity", 0)
+            # Get the static price as fallback
+            static_price = holding.get("CurrentPrice") or holding.get("Price") or 0
 
             if not symbol or quantity == 0:
                 continue
-
-            try:
-                ticker = yf.Ticker(symbol)
-                info = ticker.info
-                price = info.get("regularMarketPrice") or info.get("currentPrice")
-
-                if price:
-                    value = price * quantity
+            
+            # Skip symbols with special characters (delisted/expired)
+            if is_invalid_symbol(symbol):
+                # Still use static price for delisted symbols
+                if static_price > 0:
+                    value = static_price * quantity
                     total_value += value
-                    updated_holdings.append(
-                        {
-                            "symbol": symbol,
-                            "quantity": quantity,
-                            "price": round(price, 2),
-                            "value": round(value, 2),
-                        }
-                    )
-            except Exception:
-                # Skip symbols that fail
-                pass
+                    updated_holdings.append({
+                        "symbol": symbol,
+                        "quantity": quantity,
+                        "price": round(static_price, 2),
+                        "value": round(value, 2),
+                        "source": "static"
+                    })
+                continue
+
+            price = None
+            source = "live"
+            
+            # First check cache
+            cached = get_cached_price(symbol)
+            if cached and cached.get('status') == 'success':
+                price = cached.get('price')
+                source = "cache"
+
+            # Try live fetch if no cache or cache is old
+            if price is None:
+                try:
+                    ticker = yf.Ticker(symbol)
+                    info = ticker.info
+                    price = info.get("regularMarketPrice") or info.get("currentPrice")
+                    source = "live"
+                except Exception as e:
+                    failed_symbols.append(symbol)
+                    price = None
+
+            # Fall back to static price if live/cache failed
+            if price is None or price == 0:
+                price = static_price
+                source = "static"
+                if symbol not in failed_symbols:
+                    failed_symbols.append(symbol)
+
+            if price and price > 0:
+                value = price * quantity
+                total_value += value
+                updated_holdings.append({
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "price": round(price, 2),
+                    "value": round(value, 2),
+                    "source": source
+                })
 
         return jsonify(
             {
                 "status": "success",
                 "total_value": round(total_value, 2),
                 "holdings_count": len(updated_holdings),
+                "holdings": updated_holdings,
                 "cash_total": round(cash_total, 2),
                 "cash_accounts": cash_accounts,
+                "failed_symbols": failed_symbols,
                 "timestamp": datetime.now().isoformat(),
             }
         )

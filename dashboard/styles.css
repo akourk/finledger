@@ -375,6 +375,16 @@ header h1 {
     letter-spacing: 0.5px;
 }
 
+/* Sort hint text */
+.sort-hint {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-weight: normal;
+    text-transform: none;
+    letter-spacing: normal;
+    margin-left: 8px;
+}
+
 /* Sortable table headers */
 .holdings-table th.sortable {
     cursor: pointer;
@@ -434,6 +444,72 @@ header h1 {
     border-radius: 4px;
     font-weight: 500;
     font-size: 0.8rem;
+}
+
+/* Extended hours price badges */
+.extended-hours-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-left: 4px;
+    font-weight: 500;
+    vertical-align: middle;
+}
+
+.extended-hours-badge.pre-market {
+    background: rgba(255, 152, 0, 0.2);
+    color: #ffa726;
+    border: 1px solid rgba(255, 152, 0, 0.3);
+}
+
+.extended-hours-badge.post-market {
+    background: rgba(156, 39, 176, 0.2);
+    color: #ba68c8;
+    border: 1px solid rgba(156, 39, 176, 0.3);
+}
+
+.extended-price {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-left: 8px;
+}
+
+.extended-price.positive {
+    color: var(--accent-green);
+}
+
+.extended-price.negative {
+    color: var(--accent-red);
+}
+
+/* PRE/POST market badges */
+.pre-badge, .post-badge {
+    display: inline-block;
+    font-size: 0.6rem;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-weight: 600;
+    vertical-align: middle;
+    margin-right: 4px;
+}
+
+.pre-badge {
+    background: rgba(255, 152, 0, 0.2);
+    color: #ffa726;
+    border: 1px solid rgba(255, 152, 0, 0.3);
+}
+
+.post-badge {
+    background: rgba(156, 39, 176, 0.2);
+    color: #ba68c8;
+    border: 1px solid rgba(156, 39, 176, 0.3);
+}
+
+.extended-price-row {
+    display: block;
+    font-size: 0.75rem;
+    margin-top: 2px;
 }
 
 /* Clickable holding rows */
