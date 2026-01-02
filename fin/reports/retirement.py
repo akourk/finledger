@@ -145,6 +145,7 @@ def calculate_contribution_tracking(
         "by_account": {},
         "roth_ira_history": [],
         "roth_ira_total_contributed": 0,
+        "contrib_401k_history": [],  # Historical 401k contributions by year
     }
 
     current_year = datetime.now().year
@@ -158,6 +159,19 @@ def calculate_contribution_tracking(
         2023: 6500,
         2024: 7000,
         2025: 7000,
+        2026: 7500,
+    }
+
+    # 401k contribution limits by year
+    CONTRIB_401K_LIMITS = {
+        2019: 19000,
+        2020: 19500,
+        2021: 19500,
+        2022: 20500,
+        2023: 22500,
+        2024: 23000,
+        2025: 23500,
+        2026: 23500,
     }
 
     # Track contributions by tax year from transaction data
@@ -226,15 +240,46 @@ def calculate_contribution_tracking(
     if master_df.empty:
         return result
 
-    # 401k contribution limits by year (for reference)
-    # 2019: 19000, 2020: 19500, 2021: 19500, 2022: 20500, 2023: 22500, 2024: 23000, 2025: 23500
-
-    # Filter to current year contributions
+    # Process all transaction data for historical tracking
     df = master_df.copy()
     df["Year"] = pd.to_datetime(df["Date"]).dt.year
+
+    # Track 401k contributions by year (historical)
+    contrib_401k_by_year = {}
+    
+    # Find all 401k accounts
+    df_401k = df[
+        df["Account"].str.lower().str.contains("401k|401\\(k\\)", regex=True)
+        & ~df["Account"].str.lower().str.contains("roth")  # Exclude Roth 401k
+    ]
+    
+    if not df_401k.empty:
+        for year in df_401k["Year"].unique():
+            year_df = df_401k[df_401k["Year"] == year]
+            # Sum employee contributions (Buy actions, excluding employer match)
+            employee_contribs = year_df[
+                (year_df["Action"].isin(["Buy", "Contribution"]))
+                & ~year_df["Note"].str.upper().str.contains("EMPLOYER|MATCH", na=False)
+            ]
+            total = employee_contribs["Amount"].sum()
+            if total > 0:
+                contrib_401k_by_year[int(year)] = round(float(total), 2)
+    
+    # Build 401k contribution history
+    for year in sorted(contrib_401k_by_year.keys()):
+        amount = contrib_401k_by_year[year]
+        limit = CONTRIB_401K_LIMITS.get(year, 23500)
+        result["contrib_401k_history"].append({
+            "year": int(year),
+            "amount": float(amount),
+            "limit": int(limit),
+            "pct_of_limit": round(amount / limit * 100, 1) if limit > 0 else 0,
+        })
+
+    # Filter to current year contributions
     ytd_df = df[df["Year"] == current_year]
 
-    # Track 401k contributions from transaction data
+    # Track 401k contributions from transaction data for current year
     for account in ytd_df["Account"].unique():
         account_lower = account.lower()
         account_df = ytd_df[ytd_df["Account"] == account]
@@ -255,10 +300,9 @@ def calculate_contribution_tracking(
                 else:
                     result["traditional_401k"] += total
 
-    # If we didn't get Roth IRA from retirement_df, use fallback
+    # If we didn't get Roth IRA contributions for current year, keep as 0
+    # but still calculate historical contributions from transaction data
     if result["roth_ira"] == 0:
-        result["roth_ira"] = IRA_LIMITS.get(current_year, 7000)
-
         # Calculate historical IRA contributions from transaction data
         roth_accounts = df[
             df["Account"].str.lower().str.contains("roth")
@@ -362,6 +406,9 @@ def generate_retirement_summary(
     # Calculate budget metrics
     budget = calculate_budget_metrics(projections)
 
+    # Get current year for limits
+    current_year = datetime.now().year
+
     # Combine into summary
     summary = {
         "personal": {
@@ -382,12 +429,13 @@ def generate_retirement_summary(
         },
         "contributions": contributions,
         "limits": {
+            "year": current_year,
             "traditional_401k": 23500,
             "roth_401k": 23500,  # Combined limit with traditional
             "total_401k": 23500,
             "catch_up_401k": 7500,  # Age 50+
-            "traditional_ira": 7000,
-            "roth_ira": 7000,
+            "traditional_ira": 7500,  # 2026 limit
+            "roth_ira": 7500,  # 2026 limit
             "catch_up_ira": 1000,  # Age 50+
         },
         "accounts": {

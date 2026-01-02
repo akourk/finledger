@@ -454,8 +454,65 @@ function createSavingsRate(data) {
     var dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / (1000 * 60 * 60 * 24));
     var yearProgress = dayOfYear / 365;
 
-    var annualized401k = yearProgress > 0 ? contrib401k / yearProgress : contrib401k;
-    var annualizedRothIRA = yearProgress > 0 ? contribRothIRA / yearProgress : contribRothIRA;
+    var limits = data.limits || {};
+    var annualized401k;
+    var contrib401kSource = '';  // Track how we calculated the estimate
+
+    if (yearProgress > 0.04 && contrib401k > 0) {
+        // We have enough YTD data to annualize current year contributions
+        annualized401k = contrib401k / yearProgress;
+        contrib401kSource = 'annualized YTD';
+    } else {
+        // Early in year or no contributions yet - estimate from historical contribution rate
+        var contrib401kHistory = contributions.contrib_401k_history || [];
+        var salaryHistory = (data.salary && data.salary.history) || [];
+
+        if (contrib401kHistory.length > 0 && salaryHistory.length > 0) {
+            // Calculate average contribution rate from recent years
+            var recentYears = contrib401kHistory.slice(-3);  // Last 3 years
+            var totalContribRate = 0;
+            var validYears = 0;
+
+            for (var i = 0; i < recentYears.length; i++) {
+                var contribYear = recentYears[i].year;
+                var contribAmount = recentYears[i].amount;
+
+                // Find salary for that year (closest salary entry before year end)
+                var yearSalary = 0;
+                for (var j = salaryHistory.length - 1; j >= 0; j--) {
+                    var salaryDate = new Date(salaryHistory[j].date);
+                    if (salaryDate.getFullYear() <= contribYear) {
+                        yearSalary = salaryHistory[j].amount;
+                        break;
+                    }
+                }
+
+                if (yearSalary > 0) {
+                    totalContribRate += contribAmount / yearSalary;
+                    validYears++;
+                }
+            }
+
+            if (validYears > 0) {
+                var avgContribRate = totalContribRate / validYears;
+                annualized401k = salary * avgContribRate;
+                // Cap at the limit
+                annualized401k = Math.min(annualized401k, limits.total_401k || 23500);
+                contrib401kSource = (avgContribRate * 100).toFixed(1) + '% of salary';
+            } else {
+                annualized401k = limits.total_401k || 23500;
+                contrib401kSource = 'limit (no history)';
+            }
+        } else {
+            // No historical data - fall back to limit
+            annualized401k = limits.total_401k || 23500;
+            contrib401kSource = 'limit (no history)';
+        }
+    }
+
+    // For Roth IRA: use actual YTD contributions only (don't assume they'll max it out)
+    var rothIRALimit = limits.roth_ira || 7500;
+    var annualizedRothIRA = contribRothIRA;  // Use actual contributions, not limit
     var totalAnnualizedSavings = annualized401k + annualizedRothIRA + employerMatch;
 
     var savingsRate = totalGrossIncome > 0 ? (totalAnnualizedSavings / totalGrossIncome) * 100 : 0;
@@ -467,9 +524,13 @@ function createSavingsRate(data) {
 
     html += '<div class="savings-rate-breakdown">';
     html += '<div class="savings-rate-row"><span class="savings-rate-row-label">401(k) Contributions</span>';
-    html += '<span class="savings-rate-row-value">' + formatCurrency(annualized401k) + '/yr</span></div>';
+    html += '<span class="savings-rate-row-value">' + formatCurrency(annualized401k) + '/yr';
+    if (contrib401kSource) {
+        html += ' <span class="muted" style="font-size: 0.8em;">(' + contrib401kSource + ')</span>';
+    }
+    html += '</span></div>';
     html += '<div class="savings-rate-row"><span class="savings-rate-row-label">Roth IRA Contributions</span>';
-    html += '<span class="savings-rate-row-value">' + formatCurrency(annualizedRothIRA) + '/yr</span></div>';
+    html += '<span class="savings-rate-row-value">' + formatCurrency(contribRothIRA) + ' / ' + formatCurrency(rothIRALimit) + '</span></div>';
     html += '<div class="savings-rate-row"><span class="savings-rate-row-label">Employer Match</span>';
     html += '<span class="savings-rate-row-value">' + formatCurrency(employerMatch) + '/yr</span></div>';
     html += '<div class="savings-rate-row" style="border-top: 1px solid var(--border-color); padding-top: 8px; margin-top: 8px;">';
@@ -647,11 +708,18 @@ function createContributionLimits(data) {
 
     var limits = data.limits || {};
     var contributions = data.contributions || {};
+    var currentYear = limits.year || new Date().getFullYear();
+
+    // Update the title with the current year
+    var titleEl = document.getElementById('contributionLimitsTitle');
+    if (titleEl) {
+        titleEl.textContent = currentYear + ' Contribution Limits';
+    }
 
     var items = [
         { name: '401(k) (Pre-tax + Roth)', limit: limits.total_401k || 23500, contributed: (contributions.traditional_401k || 0) + (contributions.roth_401k || 0) },
-        { name: 'Traditional IRA', limit: limits.traditional_ira || 7000, contributed: contributions.traditional_ira || 0 },
-        { name: 'Roth IRA', limit: limits.roth_ira || 7000, contributed: contributions.roth_ira || 0 }
+        { name: 'Traditional IRA', limit: limits.traditional_ira || 7500, contributed: contributions.traditional_ira || 0 },
+        { name: 'Roth IRA', limit: limits.roth_ira || 7500, contributed: contributions.roth_ira || 0 }
     ];
 
     var html = '';
