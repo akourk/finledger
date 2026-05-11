@@ -1,0 +1,104 @@
+"""Cost basis walker tests — verifies FIFO/LIFO/HIFO/Average produce
+the right per-method totals for representative txn streams."""
+
+from __future__ import annotations
+
+import pytest
+
+
+def _txns(*rows):
+    """Build a list of post-normalization txns for the basis walker.
+
+    Each row is (date, account_group, symbol, action, qty, price, amount).
+    """
+    out = []
+    for d, ag, sym, act, qty, px, amt in rows:
+        out.append({
+            "date": d, "account_group": ag, "account_type": "Taxable",
+            "account": ag, "symbol": sym, "action": act,
+            "quantity": qty, "price": px, "fees": 0.0, "amount": amt,
+            "description": "", "source": "test",
+        })
+    return out
+
+
+class TestFIFOBasis:
+    def test_simple_buy_sell(self, isolated_workdir):
+        """One Buy, one full Sell — realized = proceeds - basis.
+
+        compute_basis_default annotates each Sell txn in-place with
+        `realized_gain`, and returns walker state with `realized_total`.
+        """
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "FOO", "Buy",  10, 10.0, 100.0),
+            ("2024-06-01", "Robinhood", "FOO", "Sell", 10, 15.0, 150.0),
+        )
+        result = compute_basis_default(txns)
+        assert result["realized_total"] == pytest.approx(50.0)
+
+    def test_partial_sell_fifo_order(self, isolated_workdir):
+        """FIFO: sells consume oldest lots first.  Buy 10 @ $10, then
+        10 @ $20, then sell 12 @ $25.  FIFO realized = (10×$25 - 10×$10)
+        + (2×$25 - 2×$20) = $150 + $10 = $160."""
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "FOO", "Buy",  10, 10.0, 100.0),
+            ("2024-02-01", "Robinhood", "FOO", "Buy",  10, 20.0, 200.0),
+            ("2024-06-01", "Robinhood", "FOO", "Sell", 12, 25.0, 300.0),
+        )
+        result = compute_basis_default(txns)
+        assert result["realized_total"] == pytest.approx(160.0)
+
+
+class TestAllMethods:
+    def test_lifo_vs_fifo_diverges(self, isolated_workdir):
+        """Same txns, LIFO vs FIFO realized gain differs because the
+        SELL consumes the most-recent lots first under LIFO."""
+        from src.basis import compute_basis_all_methods
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "FOO", "Buy",  10, 10.0, 100.0),
+            ("2024-02-01", "Robinhood", "FOO", "Buy",  10, 20.0, 200.0),
+            ("2024-06-01", "Robinhood", "FOO", "Sell", 12, 25.0, 300.0),
+        )
+        results = compute_basis_all_methods(txns)
+        # FIFO realized: (10*25 - 10*10) + (2*25 - 2*20) = 150 + 10 = 160
+        # LIFO realized: (10*25 - 10*20) + (2*25 - 2*10) = 50 + 30 = 80
+        assert results["fifo"]["realized_total"] == pytest.approx(160.0)
+        assert results["lifo"]["realized_total"] == pytest.approx(80.0)
+
+    def test_hifo_minimizes_gain(self, isolated_workdir):
+        """HIFO should never produce a higher realized gain than FIFO
+        or LIFO for the same Sell — it's the tax-optimal lot selection."""
+        from src.basis import compute_basis_all_methods
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "FOO", "Buy",  5, 10.0, 50.0),
+            ("2024-02-01", "Robinhood", "FOO", "Buy",  5, 30.0, 150.0),
+            ("2024-03-01", "Robinhood", "FOO", "Buy",  5, 20.0, 100.0),
+            ("2024-06-01", "Robinhood", "FOO", "Sell", 5, 25.0, 125.0),
+        )
+        results = compute_basis_all_methods(txns)
+        fifo_rg = results["fifo"]["realized_total"]
+        lifo_rg = results["lifo"]["realized_total"]
+        hifo_rg = results["hifo"]["realized_total"]
+        assert hifo_rg <= fifo_rg
+        assert hifo_rg <= lifo_rg
+        # HIFO should pick the $30 lot → 5*25 - 5*30 = -25 realized loss
+        assert hifo_rg == pytest.approx(-25.0)
+
+
+class TestUSDIgnored:
+    def test_usd_txns_skipped_in_lot_queue(self, isolated_workdir):
+        """USD events (deposits, dividends paying cash) shouldn't go
+        into the FIFO lot queue — they're cash, not lots.  The walker
+        ignores them and only tracks share lots."""
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "USD", "Deposit", 1000, 1.0, 1000.0),
+            ("2024-01-15", "Robinhood", "FOO", "Buy",     10,   50.0, 500.0),
+            ("2024-06-01", "Robinhood", "USD", "Dividend",  5,   1.0,    5.0),
+            ("2024-06-15", "Robinhood", "FOO", "Sell",    10,   60.0, 600.0),
+        )
+        result = compute_basis_default(txns)
+        # Realized = 600 - 500 = 100 (USD events ignored)
+        assert result["realized_total"] == pytest.approx(100.0)

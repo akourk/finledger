@@ -1,0 +1,267 @@
+"""Derived analytics package — single source of truth for dashboard figures.
+
+Submodules (one per dashboard tab):
+
+- :mod:`._shared`    — constants, classifiers, TWR core helpers
+- :mod:`.options`    — options tab
+- :mod:`.crypto`     — crypto tab
+- :mod:`.income`     — income tab
+- :mod:`.tax`        — tax tab
+- :mod:`.positions`  — performance tab position rollups
+- :mod:`.header`     — persistent top-bar summary
+
+:func:`build_analytics` is the orchestrator — it runs each per-tab
+computation and assembles the final payload embedded in the JSON
+export.
+"""
+
+from __future__ import annotations
+
+# Re-export everything from _shared so existing imports still work
+# (e.g. `from src.analytics import classify_retirement_contribution`).
+from ._shared import (
+    RETIREMENT_GROUPS, SAVINGS_GROUPS,
+    CASH_ADD_ACTIONS, CASH_SUB_ACTIONS, INCOME_ACTION_KINDS,
+    classify_retirement_contribution,
+    detect_rollover_bridges,
+    bridge_adjustment, net_cash_flow,
+    contributions_by_year,
+    compute_annual_returns, compute_twr_summary, compute_twr_daily_summary,
+)
+from .alerts import compute_alerts
+from .changes import compute_changes
+from .concentration import compute_concentration
+from .crypto import compute_crypto_analytics
+from .data_health import compute_data_health
+from .daily_pnl import compute_daily_pnl
+from .drawdown import compute_drawdown
+from .header import compute_header_summary
+from .income import compute_income_analytics
+from .income_calendar import compute_income_calendar
+from .monthly_pnl import compute_monthly_pnl
+from .monte_carlo import compute_monte_carlo
+from .options import compute_options_analytics
+from .positions import compute_position_returns
+from .tax import compute_tax_analytics
+from .trading_heatmap import compute_trading_heatmap
+from ._shared import _account_filter_sets
+
+
+def build_analytics(txns: list[dict], history: list[dict],
+                    holdings: list[dict],
+                    holdings_by_account: list[dict],
+                    retirement_meta: dict | None = None,
+                    cash_summary: dict | None = None,
+                    basis_methods: dict | None = None) -> dict:
+    """Compute the full analytics payload embedded in the export JSON.
+
+    This is the single source of truth for derived figures the
+    dashboard displays.  The dashboard JS should prefer reading from
+    this rather than recomputing.
+    """
+    from pathlib import Path
+    from ..config import CACHE_DIR
+
+    bridges = detect_rollover_bridges(txns)
+    contribs_yr = contributions_by_year(txns)
+
+    filters = _account_filter_sets(holdings_by_account)
+    performance_by_filter: dict = {}
+    for name, filt in filters.items():
+        entry = {
+            "annual":  compute_annual_returns(txns, history, bridges, filt),
+            "summary": compute_twr_summary(txns, history, bridges, filt),
+            "filter_groups": sorted(filt) if filt else None,
+        }
+        # True-Daily-TWR for retirement filters only.  See
+        # compute_twr_daily_summary for why we skip taxable accounts.
+        is_retirement_filter = (
+            name == "Retirement"
+            or (filt is not None and set(filt) <= RETIREMENT_GROUPS)
+        )
+        if is_retirement_filter:
+            daily = compute_twr_daily_summary(txns, history, bridges, filt)
+            if daily is not None:
+                entry["summary_daily"] = daily
+        performance_by_filter[name] = entry
+
+    tax = compute_tax_analytics(txns, holdings, retirement_meta or {})
+    concentration = compute_concentration(holdings_by_account)
+
+    # Monte Carlo projections — two scenarios:
+    #   Retirement-only:  401K + IRAs, contribution = avg attributed
+    #                     retirement contributions, no cash bucket
+    #                     (these accounts are 100% equity by assumption).
+    #   All-accounts:     full portfolio, contribution = trailing-3yr
+    #                     average net cash in (across all accounts),
+    #                     cash bucket = Savings + USD positions.
+    # FIRE info attaches to the All-accounts scenario only — that's the
+    # money actually available to spend.  4% rule × annual_expenses
+    # gives the FI threshold; first-crossing year per percentile band.
+    monte_carlo = None
+    rm = retirement_meta or {}
+    bd = (rm.get("birthday") or "").strip() if isinstance(rm.get("birthday"), str) else ""
+    if bd:
+        from datetime import datetime as _dt
+        try:
+            birth = _dt.strptime(bd, "%Y-%m-%d").date()
+            today = _dt.now().date()
+            age = (today - birth).days // 365
+            # Monte Carlo horizon = years until the user's target
+            # retirement age (data/metadata.csv `Retirement Age`,
+            # default 67).  Naming the local `years_to_60` is
+            # vestigial from when this was hardcoded to age 60.
+            target_age = int(rm.get("retirement_age") or 67)
+            years_to_60 = max(0, target_age - age)
+            if years_to_60 > 0:
+                # Annual retirement contribution = average of last 3
+                # years of attributed contributions, falling back to the
+                # 2024 IRS limit if no history.
+                contribs = contribs_yr or {}
+                yrs = sorted(contribs.keys())[-3:]
+                if yrs:
+                    avg_ret_contrib = sum(contribs[y].get("total", 0) for y in yrs) / len(yrs)
+                else:
+                    avg_ret_contrib = 23000   # 2024 401K limit
+
+                # Current retirement balance from latest snapshot
+                last = history[-1] if history else {}
+                ret_value = sum(
+                    (last.get("by_account_group") or {}).get(g, 0)
+                    for g in RETIREMENT_GROUPS
+                )
+
+                # All-accounts metrics
+                total_value = float(last.get("total") or 0)
+                # Cash bucket = Savings groups + cash sector (USD).  Models
+                # high-yield-savings-style accounts that shouldn't get
+                # equity volatility in the simulation.
+                cash_value = sum(
+                    (last.get("by_account_group") or {}).get(g, 0)
+                    for g in SAVINGS_GROUPS
+                )
+                cash_value += float((last.get("by_sector") or {}).get("Cash", 0))
+                # Subtract any double-count: USD positions in Savings
+                # groups would otherwise be counted twice.  Capping at
+                # total_value is a defensive belt-and-suspenders.
+                cash_value = min(cash_value, total_value)
+                equity_value = max(0.0, total_value - cash_value)
+
+                # Trailing-3-year average annual net contribution (all
+                # accounts) — pulled from history snapshots'
+                # ``net_contributed`` cumulative field.
+                avg_total_contrib = avg_ret_contrib   # default fallback
+                if len(history) >= 13:
+                    # ~36 months back if monthly snapshots, else use
+                    # whatever we've got
+                    look_back = min(36, len(history) - 1)
+                    nc_now = float(history[-1].get("net_contributed") or 0)
+                    nc_then = float(history[-1 - look_back].get("net_contributed") or 0)
+                    months = look_back
+                    if months > 0:
+                        avg_total_contrib = max(0.0, (nc_now - nc_then) * 12 / months)
+
+                # FIRE threshold: most-recent annual_expenses entry × 25
+                # (the classic 4% safe-withdrawal-rate rule).
+                fi_threshold = None
+                ann_exp_list = rm.get("annual_expenses") or []
+                if ann_exp_list:
+                    latest = max(ann_exp_list, key=lambda x: x.get("date", ""))
+                    if latest.get("amount"):
+                        fi_threshold = float(latest["amount"]) * 25
+
+                mc_retirement = compute_monte_carlo(
+                    current_balance=ret_value,
+                    annual_contribution=avg_ret_contrib,
+                    years_to_retirement=years_to_60,
+                )
+                mc_all = compute_monte_carlo(
+                    current_balance=equity_value,
+                    annual_contribution=avg_total_contrib,
+                    years_to_retirement=years_to_60,
+                    cash_balance=cash_value,
+                    fi_threshold=fi_threshold,
+                )
+                monte_carlo = {
+                    "retirement":   mc_retirement,
+                    "all_accounts": mc_all,
+                    "fi_threshold": fi_threshold,
+                    "annual_expenses":
+                        float(ann_exp_list[-1]["amount"]) if ann_exp_list else None,
+                }
+        except (ValueError, TypeError):
+            monte_carlo = None
+
+    # Run-over-run changes — also persists a fresh snapshot for next time
+    changes = compute_changes(txns, holdings_by_account, history,
+                              cash_summary or {}, basis_methods or {},
+                              CACHE_DIR)
+
+    # CUSIP collisions surface in main.py as console output.  For the
+    # alerts panel we recompute (cheap) so it lands in the JSON too.
+    from ..cusips import detect_collisions
+    coll = detect_collisions(txns)
+    rename_for_alerts = []
+    rules = []
+    try:
+        from ..parsers import _load_ticker_renames as _ldr
+        rules = (_ldr() or {}).get("Robinhood", []) or []
+    except Exception:
+        pass
+    covered = {(r.get("from"), r.get("to")) for r in rules
+               if isinstance(r, dict) and r.get("from") and r.get("to")}
+    for r in coll.get("rename_candidates", []):
+        for stale in r["stale"]:
+            if (stale, r["canonical"]) not in covered:
+                rename_for_alerts.append({
+                    "stale": stale, "canon": r["canonical"], "cusip": r["cusip"],
+                })
+
+    # Load price meta for the alerts module's failing-tickers signal
+    price_meta = {}
+    try:
+        import json as _json
+        meta_path = CACHE_DIR / "price_cache_meta.json"
+        if meta_path.exists():
+            price_meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
+    alerts = compute_alerts(
+        txns=txns,
+        holdings_by_account=holdings_by_account,
+        history=history,
+        tax_analytics=tax,
+        concentration=concentration,
+        price_meta=price_meta,
+        cusip_collisions=rename_for_alerts,
+    )
+
+    out = {
+        "rollover_bridges": bridges,
+        "retirement_contributions_by_year": contribs_yr,
+        "performance_by_filter": performance_by_filter,
+        "options": compute_options_analytics(txns),
+        "crypto": compute_crypto_analytics(txns, holdings),
+        "income": compute_income_analytics(txns),
+        "tax": tax,
+        "positions": compute_position_returns(txns, holdings),
+        "header_summary": compute_header_summary(txns, history, bridges),
+        # New (this pass)
+        "concentration":   concentration,
+        "drawdown":        compute_drawdown(history),
+        "daily_pnl":       compute_daily_pnl(history, txns),
+        "trading_heatmap": compute_trading_heatmap(txns),
+        "income_calendar": compute_income_calendar(txns, holdings_by_account),
+        "monthly_pnl":     compute_monthly_pnl(history, txns),
+        "monte_carlo":     monte_carlo,
+        "changes":         changes,
+        "alerts":          alerts,
+    }
+    # Data-health checks run last — they consult the rest of the
+    # analytics dict (e.g. options.open_contracts, tax.realized_by_year).
+    out["data_health"] = compute_data_health(
+        txns, holdings_by_account, history, out, CACHE_DIR,
+        cash_summary=cash_summary or {},
+    )
+    return out

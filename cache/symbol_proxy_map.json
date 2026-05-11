@@ -1,0 +1,45 @@
+{
+  "BRK.B": {
+    "method": "direct",
+    "note": "yfinance ticker format uses hyphen instead of dot",
+    "proxy": "BRK-B"
+  },
+  "VANG INST TR 2055": {
+    "method": "direct",
+    "note": "Vanguard Institutional Target Retirement 2055 Fund. Discontinued 2022-02 when Vanguard moved institutional clients to the Target Retirement CIT.",
+    "proxy": "VIVLX"
+  },
+  "VANG INTL GROWTH ADM": {
+    "method": "direct",
+    "note": "Vanguard International Growth Fund Admiral Shares",
+    "proxy": "VWILX"
+  },
+  "VANG TR II 2055": {
+    "anchor_date": "2021-12-10",
+    "anchor_price": 71.79,
+    "method": "scaled",
+    "note": "Target Retirement 2055 Trust II CIT. No public ticker. Uses VFFVX (retail Target 2055) return stream; acquired fund fees 0.075% vs VFFVX's 0.08% — basically identical. anchor_date / anchor_price are auto-populated on the first run from the user's earliest txn price, then frozen.",
+    "proxy": "VFFVX"
+  },
+  "VANG US GROWTH ADM": {
+    "method": "direct",
+    "note": "Vanguard U.S. Growth Fund Admiral Shares",
+    "proxy": "VWUAX"
+  },
+  "VANG WELLINGTON ADM": {
+    "method": "direct",
+    "note": "Vanguard Wellington Fund Admiral Shares",
+    "proxy": "VWENX"
+  },
+  "Vanguard Employee Benefit Index Fund": {
+    "anchor_date": "2023-06-30",
+    "anchor_price": 155.85,
+    "method": "scaled",
+    "note": "Vanguard 401K CIT tracking the S&P 500. Holds VFIAX shares internally (lower expense ratio: 0.006% vs VFIAX's 0.04%). Different NAV, identical return stream to VFIAX over any meaningful period. anchor_date / anchor_price are auto-populated on the first run from the user's earliest txn price, then frozen.",
+    "proxy": "VFIAX"
+  },
+  "_comment_1": "Hand-editable proxy map for symbols yfinance can't resolve (multi-word display names, ticker-format aliases, private collective investment trusts). Consulted by prices.get_price BEFORE the usual fetch path.",
+  "_comment_2": "method='direct'  -> use the proxy's adjusted close as-is (ticker alias or class-equivalent fund that trades at the same NAV).",
+  "_comment_3": "method='scaled'  -> anchor to the first-observed txn price for this symbol, then use the proxy's RETURN stream to drive valuations. Good for CITs that track a public fund but have different NAVs/expense ratios.",
+  "_comment_4": "Scaled entries auto-populate anchor_date + anchor_price on the first pipeline run if missing. Hand-edit to override."
+}

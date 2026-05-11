@@ -1,11 +1,17 @@
-# Data files (sensitive financial information)
-/dashboard/data/*
-/data/input/*
-/data/output/*
-# /data/*.json
+# Personal data — broker CSV exports + your metadata.csv stay local.
+# (samples/ is checked in — it's synthetic.)
+data/*.csv
+data/*.json
 
-# System files
-.DS_Store
+snap.json
+
+# Generated artifacts
+exports/
+
+# Cache: every file in cache/ is checked in EXCEPT the run-state
+# snapshot used for "What's Changed" diffs.  last_run.json captures
+# portfolio totals and is regenerated every pipeline run.
+cache/last_run.json
 
 # Python
 .venv/
@@ -21,39 +27,12 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-coverage.xml
-.tox/
 
 # IDE
 .vscode/
 .idea/
 *.swp
-*.swo
-*~
 
-# Environment
-.env
-
-# Logs
-*.log
-logs/
-
-# CSV files (may contain sensitive data)
-*.csv
-
-# Build and distribution
-build/
-dist/
-*.egg-info/
-.eggs/
-
-# Documentation
-site/
-docs/_build/
-
-# Mac
-*.DS_Store
-
-# Temporary files
-*.tmp
-.cache/
+# OS
+.DS_Store
+Thumbs.db

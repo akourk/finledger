@@ -1,0 +1,2428 @@
+  :root {
+    --bg: #111111;
+    --surface: #1a1a1a;
+    --border: #2a2a2a;
+    --text: #d4d4d4;
+    --text-dim: #777;
+    --accent: #a78bfa;
+    --green: #4ade80;
+    --red: #f87171;
+    --yellow: #facc15;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+  }
+
+  h1 {
+    font-size: 1.4rem;
+    margin-bottom: 4px;
+  }
+
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin-bottom: 0;
+  }
+
+  /* Persistent top bar — always visible regardless of which tab is
+     active.  Holds title, live summary (value / total return / 1-day
+     change), and the reload button. */
+  .top-bar {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+
+  .top-bar-title {
+    flex: 0 0 auto;
+  }
+
+  .top-bar-summary {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 22px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    min-height: 44px;
+  }
+
+  .top-bar-summary .tb-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    line-height: 1.1;
+  }
+
+  .top-bar-summary .tb-label {
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 500;
+  }
+
+  .top-bar-summary .tb-value {
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+
+  .top-bar-summary .tb-value .sub {
+    font-size: 0.78rem;
+    font-weight: 400;
+    color: var(--text-dim);
+    margin-left: 4px;
+  }
+
+  .top-bar-summary .tb-value.positive {
+    color: var(--green);
+  }
+
+  .top-bar-summary .tb-value.negative {
+    color: var(--red);
+  }
+
+  .top-bar-summary .tb-divider {
+    width: 1px;
+    align-self: stretch;
+    background: var(--border);
+  }
+
+  .top-bar-refresh {
+    flex: 0 0 auto;
+    align-self: center;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .top-bar-refresh:hover {
+    background: var(--bg);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Shared toggle button style */
+  .tbtn {
+    background: var(--surface);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding: 4px 10px;
+    border-radius: 3px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .tbtn:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .tbtn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  .tbtn-fixed-width {
+    width: 7rem;
+  }
+
+  /* Filter bar — horizontal row of field buttons */
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+    align-items: center;
+  }
+
+  .filter-bar .fbtn {
+    position: relative;
+    background: var(--surface);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding: 5px 12px;
+    border-radius: 3px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+
+  .filter-bar .fbtn:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .filter-bar .fbtn.has-filter {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .filter-bar .fbtn .badge {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.65rem;
+    padding: 0 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+
+  /* Popover panel */
+  .popover {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 6px;
+    z-index: 100;
+    background: #222;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px;
+    min-width: 180px;
+    max-width: 320px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  }
+
+  .popover .tbtn {
+    white-space: nowrap;
+  }
+
+  /* Controls bar */
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+    align-items: center;
+  }
+
+  .controls input {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    width: 260px;
+  }
+
+  .controls select {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+
+  .pill {
+    display: inline-block;
+    background: var(--border);
+    color: var(--text-dim);
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    margin-left: 8px;
+  }
+
+  /* Performance tab window selector — chip row above the stat cards. */
+  .perf-window-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .perf-window-label {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .perf-window-hint {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    margin-left: auto;
+  }
+
+  /* Performance tab: grouped Account + Window toggles in a single,
+     condensed card.  Tight padding + minimal row gap so the toggle
+     surface doesn't dominate the page; the cards above and below
+     are where the user's attention should land. */
+  .perf-toggles-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    margin: 12px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  /* Tighten the in-row spacing too: smaller gap between label and
+     chips, smaller chip padding so the rows occupy less vertical
+     space without affecting other ``.perf-window-bar`` instances
+     elsewhere (e.g. the chart-control bar in the Holdings tab). */
+  .perf-toggles-card .perf-toggles-row {
+    margin: 0;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .perf-toggles-card .perf-window-label {
+    font-size: 0.7rem;
+    min-width: 4em;
+  }
+
+  .perf-toggles-card .tbtn {
+    padding: 3px 8px;
+    font-size: 0.74rem;
+  }
+
+  .perf-toggles-card .perf-window-hint {
+    font-size: 0.68rem;
+  }
+
+  /* Benchmark-chart y-axis mode toggle (Auto / Rebased / Absolute) */
+  .bench-toggle-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 8px 0 4px;
+    flex-wrap: wrap;
+  }
+
+  .bench-toggle-bar .hist-label {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-right: 4px;
+  }
+
+  /* Date inputs in the By Account TWR window bar: full-color when
+     'Custom' preset is active, dimmed when a preset is driving the
+     window (so the user knows they're informational at that point). */
+  .hist-date.dim {
+    opacity: 0.55;
+  }
+
+  /* Date-range filter on the Transactions tab.  Pickers + quick-range
+     chips so "last 30 days" or "YTD" don't require typing dates. */
+  .date-range-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .date-range-group input[type=date] {
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    color-scheme: dark;
+  }
+
+  .date-range-group input[type=date]:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .date-range-sep {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    padding: 0 2px;
+  }
+
+  .date-range-group .date-quick {
+    font-size: 0.72rem;
+    padding: 3px 7px;
+  }
+
+  .date-range-group .date-quick.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  /* Column visibility — inline list of hidden columns + per-header
+     close affordance.  No popover; the controls live in the page. */
+  .col-toggle-wrap {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    align-items: center;
+  }
+
+  .col-toggle-wrap .label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+
+  .col-toggle-wrap .col-chip {
+    background: var(--surface);
+    color: var(--text-dim);
+    border: 1px dashed var(--border);
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .col-toggle-wrap .col-chip:hover {
+    border-color: var(--accent);
+    color: var(--text);
+    border-style: solid;
+  }
+
+  .col-toggle-wrap .col-chip::before {
+    content: '+';
+    font-weight: bold;
+  }
+
+  /* The "x" close affordance inside table headers */
+  th .col-x {
+    display: inline-block;
+    margin-left: 6px;
+    color: var(--text-dim);
+    cursor: pointer;
+    opacity: 0.4;
+    transition: opacity 0.15s, color 0.15s;
+    font-size: 0.85em;
+    padding: 0 3px;
+    border-radius: 2px;
+  }
+
+  th:hover .col-x {
+    opacity: 1;
+  }
+
+  th .col-x:hover {
+    color: var(--accent);
+    background: var(--surface);
+  }
+
+  /* Table */
+  .table-wrap {
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+
+  th,
+  td {
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  th {
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  th:hover {
+    color: #fff;
+  }
+
+  th .arrow {
+    font-size: 0.7rem;
+    margin-left: 4px;
+  }
+
+  tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  th.num {
+    text-align: right;
+  }
+
+  .negative {
+    color: var(--red);
+  }
+
+  .positive {
+    color: var(--green);
+  }
+
+  .stats {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    font-size: 0.85rem;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 10px 16px;
+    border-radius: 6px;
+    min-width: 140px;
+  }
+
+  .stat-card .label {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+  }
+
+  .stat-card .value {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+
+  .stat-card.positive {
+    border-color: var(--green);
+  }
+
+  .stat-card.positive .value {
+    color: var(--green);
+  }
+
+  .stat-card.negative {
+    border-color: var(--red);
+  }
+
+  .stat-card.negative .value {
+    color: var(--red);
+  }
+
+  .stat-card .value .sub {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-left: 4px;
+    font-weight: 400;
+  }
+
+  /* Section headers */
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 24px;
+    margin-bottom: 10px;
+  }
+
+  .section-header h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+  }
+
+  .section-header h2:hover {
+    color: #fff;
+  }
+
+  .section-header h2 .chevron {
+    display: inline-block;
+    font-size: 0.75rem;
+    margin-right: 6px;
+    transition: transform 0.15s;
+  }
+
+  .section-header h2 .chevron.open {
+    transform: rotate(90deg);
+  }
+
+  .section-header .toggle-group {
+    display: flex;
+    gap: 4px;
+  }
+
+  .section-header .total-value {
+    margin-left: auto;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--green);
+  }
+
+  .section-body {
+    display: none;
+  }
+
+  .section-body.open {
+    display: block;
+  }
+
+  /* As-of-date picker (Overview + Holdings tabs) */
+  .as-of-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  /* Compact variant — single line, tighter padding, no verbose hint
+     (moved to a title attribute on the picker). */
+  .as-of-bar-compact {
+    padding: 4px 10px;
+    margin-bottom: 10px;
+    gap: 8px;
+  }
+
+  .as-of-bar-compact label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .as-of-bar-compact .as-of-picker {
+    font-size: 0.78rem;
+    padding: 2px 6px;
+  }
+
+  .as-of-bar-compact .as-of-reset {
+    padding: 2px 8px;
+    font-size: 0.74rem;
+  }
+
+  .as-of-bar label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+
+  .as-of-picker {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .as-of-picker:focus {
+    outline: 1px solid var(--accent);
+  }
+
+  .as-of-reset {
+    font-size: 0.8rem;
+    padding: 4px 10px;
+  }
+
+  .as-of-hint {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    margin-left: auto;
+    max-width: 520px;
+    text-align: right;
+  }
+
+  .as-of-label {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-weight: 400;
+    margin-left: 8px;
+  }
+
+  /* Symbol cell: compact rendering for long fund names / option contract
+     symbols.  Max-width caps cell width; overflow ellipsises.  Hover
+     shows the full raw symbol via the `title` attribute. */
+  .sym-cell {
+    display: inline-block;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
+
+  /* Performance tab — By Account TWR window date pickers */
+  .perf-window-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    /* padding: 8px 12px; */
+    margin: 8px 0 12px;
+    background: var(--surface);
+    /* border: 1px solid var(--border); */
+    border-radius: 6px;
+  }
+
+  .perf-window-bar .hist-label {
+    min-width: 0;
+  }
+
+  .perf-window-bar .hist-date {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font: inherit;
+    font-size: 0.78rem;
+    color-scheme: dark;
+  }
+
+  /* History chart */
+  .chart-wrap {
+    position: relative;
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+  }
+
+  .chart-svg {
+    display: block;
+    width: 100%;
+    height: 340px;
+  }
+
+  .chart-svg .axis-line {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+
+  .chart-svg .grid-line {
+    stroke: var(--border);
+    stroke-width: 1;
+    stroke-dasharray: 2 4;
+  }
+
+  .chart-svg .axis-label {
+    fill: var(--text-dim);
+    font-size: 10px;
+    font-family: inherit;
+  }
+
+  .chart-svg .series-line {
+    fill: none;
+    stroke-width: 1.8;
+  }
+
+  .chart-svg .hover-v {
+    stroke: var(--text-dim);
+    stroke-width: 1;
+    stroke-dasharray: 3 3;
+  }
+
+  .chart-svg .hover-dot {
+    stroke: var(--bg);
+    stroke-width: 1.5;
+  }
+
+  .chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+    font-size: 0.78rem;
+  }
+
+  .chart-legend .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+
+  .chart-legend .legend-item:hover {
+    background: var(--border);
+  }
+
+  .chart-legend .legend-item.muted {
+    opacity: 0.35;
+  }
+
+  .chart-legend .legend-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+
+  .chart-tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: #222;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    min-width: 150px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+    display: none;
+    z-index: 20;
+  }
+
+  .chart-tooltip .tt-date {
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+
+  .chart-tooltip .tt-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chart-tooltip .tt-row .tt-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .chart-tooltip .tt-swatch {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+
+  .chart-empty {
+    padding: 40px 10px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+  }
+
+  /* Tab navigation */
+  .tabnav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--bg);
+    margin: -20px -20px 20px -20px;
+    padding: 0 20px;
+  }
+
+  .tab-btn {
+    background: transparent;
+    color: var(--text-dim);
+    border: none;
+    padding: 12px 18px;
+    font-size: 0.92rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.12s, border-color 0.12s;
+    user-select: none;
+  }
+
+  .tab-btn:hover {
+    color: var(--text);
+  }
+
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-btn .tab-badge {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    margin-left: 4px;
+  }
+
+  .tab-panel {
+    display: none;
+  }
+
+  .tab-panel.active {
+    display: block;
+  }
+
+  /* Overview sub-sections */
+  .overview-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 24px;
+  }
+
+  @media (max-width: 900px) {
+    .overview-split {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+
+  .panel h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+
+  .panel table {
+    font-size: 0.8rem;
+    width: 100%;
+  }
+
+  .panel td {
+    padding: 4px 6px;
+  }
+
+  .panel th {
+    padding: 4px 6px;
+  }
+
+  .panel .panel-foot {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    margin-top: 8px;
+    text-align: right;
+  }
+
+  .panel .panel-foot a {
+    color: var(--accent);
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .panel .panel-foot a:hover {
+    text-decoration: underline;
+  }
+
+  /* Allocation: 3 side-by-side donuts (By Account / By Type / By Sector).
+     Each card has the donut on top + a compact legend below.  Slices
+     show a hover tooltip via SVG <title>; CSS hover dims sibling
+     slices for visual emphasis. */
+  .allocation-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 14px;
+  }
+
+  @media (max-width: 900px) {
+    .allocation-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .allocation-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .allocation-card-title {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    text-align: center;
+    margin-bottom: 4px;
+  }
+
+  .allocation-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .allocation-svg {
+    width: 100%;
+    height: 180px;
+    max-width: 200px;
+    margin: 0 auto;
+  }
+
+  .alloc-slice {
+    transition: opacity 0.12s, filter 0.12s;
+    cursor: pointer;
+  }
+
+  .allocation-svg:hover .alloc-slice {
+    opacity: 0.45;
+  }
+
+  .allocation-svg .alloc-slice:hover {
+    opacity: 1;
+    filter: brightness(1.15);
+  }
+
+  .allocation-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 0.76rem;
+  }
+
+  .allocation-legend-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    align-items: center;
+  }
+
+  .allocation-legend-row:hover {
+    background: var(--border);
+  }
+
+  .allocation-legend .alloc-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    overflow: hidden;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .allocation-legend .alloc-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .allocation-legend .alloc-swatch {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    flex: 0 0 auto;
+  }
+
+  .allocation-legend .alloc-value {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    flex: 0 0 auto;
+  }
+
+  .allocation-legend .alloc-more {
+    font-style: italic;
+    color: var(--text-dim);
+  }
+
+  /* Minimal tables for panels */
+  .mini-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .mini-table td,
+  .mini-table th {
+    padding: 5px 6px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    font-size: 0.8rem;
+  }
+
+  .mini-table th {
+    color: var(--accent);
+    font-weight: 600;
+    text-align: left;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+  }
+
+  .mini-table td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mini-table th.num {
+    text-align: right;
+  }
+
+  /* "Coming soon" placeholder for tabs not yet built out */
+  .tab-placeholder {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-dim);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  /* History controls: per-item series toggles organized by group */
+  .hist-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .hist-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .hist-row .hist-label {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    min-width: 68px;
+    user-select: none;
+  }
+
+  .hist-row .tbtn {
+    font-size: 0.76rem;
+    padding: 3px 9px;
+  }
+
+  .hist-row .hist-date {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font: inherit;
+    font-size: 0.78rem;
+    color-scheme: dark;
+  }
+
+  .hist-row .hist-date:focus {
+    outline: 1px solid var(--accent);
+  }
+
+  /* Swatch inside the series pills so user can see each series's color */
+  .tbtn .pill-swatch {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    margin-right: 5px;
+    vertical-align: middle;
+  }
+
+  /* ========== Year-by-Year breakdown (Overview tab) ==========
+     Pivot table: rows are years, columns are accounts × {Σ, Δ%, Δ$}
+     plus optional contribution columns when an account is expanded.
+     Two-row header.  First column (Year) is sticky on horizontal
+     scroll so it stays visible when the table overflows. */
+  .annual-breakdown-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 18px;
+  }
+
+  .ab-scroll {
+    overflow-x: auto;
+    overflow-y: visible;
+    max-width: 100%;
+  }
+
+  .annual-breakdown {
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    min-width: 100%;
+  }
+
+  .annual-breakdown th,
+  .annual-breakdown td {
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .annual-breakdown th.num,
+  .annual-breakdown td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Header row 1: account-group titles (clickable) + Sum/Target labels */
+  .annual-breakdown thead tr:first-child th {
+    background: var(--bg);
+    font-weight: 600;
+    color: var(--text);
+    text-align: center;
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .annual-breakdown .ab-acct-head {
+    cursor: pointer;
+    user-select: none;
+    transition: filter 0.12s;
+  }
+
+  /* Per-account header text color is set inline (account_color from JS),
+     so we only adjust opacity/brightness on hover instead of overriding
+     color — keeps the column-grouping visual cue intact. */
+  .annual-breakdown .ab-acct-head:hover {
+    filter: brightness(1.25);
+  }
+
+  .annual-breakdown .ab-acct-head.ab-expanded {
+    filter: brightness(1.15);
+  }
+
+  .ab-acct-arrow {
+    margin-right: 4px;
+    font-size: 0.85em;
+    opacity: 0.75;
+  }
+
+  /* Header row 2: per-column Σ/Δ%/Δ$ sub-labels */
+  .annual-breakdown thead tr:nth-child(2) th {
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 0.7rem;
+    background: var(--surface);
+    border-bottom: 2px solid var(--border);
+  }
+
+  /* Sticky Year column for horizontal scroll */
+  .annual-breakdown .ab-sticky-col {
+    position: sticky;
+    left: 0;
+    background: var(--surface);
+    z-index: 1;
+    min-width: 56px;
+    text-align: left;
+    font-weight: 500;
+  }
+
+  .annual-breakdown thead .ab-sticky-col {
+    background: var(--bg);
+    z-index: 2;
+  }
+
+  /* Sum and Target group styling — emphasize the right edge */
+  .annual-breakdown .ab-sum-head,
+  .annual-breakdown .ab-target-head {
+    border-left: 2px solid var(--border);
+    color: var(--accent);
+  }
+
+  .annual-breakdown .ab-sum-toggle {
+    cursor: pointer;
+    user-select: none;
+    transition: filter 0.12s;
+  }
+  .annual-breakdown .ab-sum-toggle:hover { filter: brightness(1.25); }
+  .annual-breakdown .ab-sum-toggle.ab-expanded { filter: brightness(1.15); }
+
+  .annual-breakdown .ab-sum-cell {
+    border-left: 2px solid var(--border);
+    background: rgba(167, 139, 250, 0.04);
+  }
+  .annual-breakdown .ab-sum-cell:first-of-type {
+    border-left: 2px solid var(--border);
+  }
+
+  .annual-breakdown .ab-target-cell {
+    border-left: 2px solid var(--border);
+  }
+
+  /* User-entered targets render normally (clear, definite goals).
+     Suggested targets (Fidelity age × salary fallback) render dimmed
+     and italic so they read as a hint, not a commitment. */
+  .annual-breakdown .ab-target-user {
+    color: var(--text);
+  }
+  .annual-breakdown .ab-target-suggest {
+    color: var(--text-dim);
+    font-style: italic;
+    opacity: 0.7;
+  }
+  .annual-breakdown .ab-target-suggest::before {
+    content: "≈ ";
+    opacity: 0.6;
+    font-size: 0.85em;
+  }
+
+  /* Sum-vs-Target diff sub-columns.  Diffs against a suggested target
+     are dimmed to match — the column reads as a hint, not a verdict
+     against a real goal. */
+  .annual-breakdown .ab-target-diff.positive { color: var(--green); }
+  .annual-breakdown .ab-target-diff.negative { color: var(--red); }
+  .annual-breakdown .ab-target-diff-suggest { opacity: 0.6; font-style: italic; }
+
+  /* Contribution columns (visible when account is expanded) — get a
+     per-account tint inline; the dim text keeps the contribution
+     sub-group muted relative to the balance columns. */
+  .annual-breakdown .ab-contrib {
+    color: var(--text-dim);
+  }
+  .annual-breakdown .ab-contrib.positive { color: var(--green); }
+  .annual-breakdown .ab-contrib.negative { color: var(--red); }
+
+  /* Account-group column dividers — subtle vertical separators
+     between accounts so the eye can track which sub-cells belong
+     to which account. */
+  .annual-breakdown tbody td:nth-child(1),
+  .annual-breakdown tbody td:nth-child(2) {
+    border-right: 1px solid var(--border);
+  }
+
+  /* Row hover — quick scan affordance */
+  .annual-breakdown tbody tr:hover td,
+  .annual-breakdown tbody tr:hover th {
+    background: var(--bg);
+  }
+
+  /* ========== Overview status panels (combined Attention+DataHealth +
+     What's Changed).  Side-by-side when both have content; single
+     column when only one renders. ========== */
+  .overview-status-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .overview-status-grid:empty { display: none; }
+
+  /* Single-child case: span full width instead of leaving an awkward
+     empty column on the right. */
+  .overview-status-grid > :only-child {
+    grid-column: 1 / -1;
+  }
+
+  @media (max-width: 760px) {
+    .overview-status-grid { grid-template-columns: 1fr; }
+  }
+
+  /* Sub-category headers used inside the combined Status card's body
+     to keep Data Health's per-category grouping (Integrity / Coverage
+     / Reconciliation) legible alongside the Attention-section list. */
+  .dh-subcategory { margin-top: 8px; }
+  .dh-subcategory h5 {
+    color: var(--text-dim); font-size: 0.7rem; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin: 4px 0 4px;
+  }
+
+  /* ========== Overview feedback (alerts + changes since last run) ========== */
+  .overview-feedback {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  .overview-feedback:empty {
+    display: none;
+  }
+
+  .feedback-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+
+  /* Static-non-collapsible variant retains the old box padding */
+  .feedback-panel:not(.feedback-collapsible) {
+    padding: 12px 14px;
+  }
+
+  .feedback-panel h3 {
+    color: var(--accent);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+  }
+
+  .feedback-panel .empty {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    padding: 6px 0;
+  }
+
+  /* Collapsible-feedback fits in the overview-feedback grid alongside
+     non-collapsible siblings.  The body switches to a single column
+     since the Attention / Changes panels are list-shaped. */
+  .feedback-collapsible .dh-body {
+    padding: 6px 14px 12px;
+  }
+
+  .alert-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 5px 0;
+    border-top: 1px solid var(--border);
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+
+  .alert-row:first-child {
+    border-top: none;
+  }
+
+  .alert-row .sev {
+    flex: 0 0 auto;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-top: 2px;
+  }
+
+  .alert-row .sev-info {
+    background: rgba(167, 139, 250, 0.15);
+    color: var(--accent);
+  }
+
+  .alert-row .sev-warn {
+    background: rgba(250, 204, 21, 0.18);
+    color: var(--yellow);
+  }
+
+  .alert-row .sev-high {
+    background: rgba(248, 113, 113, 0.18);
+    color: var(--red);
+  }
+
+  .changes-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .change-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 0.82rem;
+    padding: 4px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .change-row:first-child {
+    border-top: none;
+  }
+
+  .change-row .ch-label {
+    color: var(--text-dim);
+  }
+
+  .change-row .ch-val {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .change-row .ch-val.positive {
+    color: var(--green);
+  }
+
+  .change-row .ch-val.negative {
+    color: var(--red);
+  }
+
+  .changes-movers {
+    margin-top: 8px;
+  }
+
+  .changes-movers h4 {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+
+  .changes-movers .mover-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.78rem;
+    padding: 2px 0;
+    gap: 10px;
+  }
+
+  .changes-movers .mover-row .sym {
+    font-weight: 600;
+  }
+
+  /* ========== Daily P&L bars ========== */
+  .daily-pnl-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 138px;
+    padding: 30px 4px 8px 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: visible;
+  }
+
+  .daily-pnl-bar {
+    flex: 1 1 8px;
+    min-width: 6px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    height: 100%;
+    position: relative;
+    cursor: default;
+  }
+
+  .daily-pnl-bar .bar {
+    width: 100%;
+    min-height: 1px;
+    border-radius: 2px 2px 0 0;
+    background: var(--green);
+  }
+
+  .daily-pnl-bar.neg .bar {
+    background: var(--red);
+  }
+
+  .daily-pnl-bar .tip {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 4px 7px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 5;
+  }
+
+  .daily-pnl-bar:hover .tip {
+    opacity: 1;
+  }
+
+  .daily-pnl-empty {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    padding: 12px;
+  }
+
+  /* ========== Concentration grid ========== */
+  .concentration-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  .concentration-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+
+  .concentration-card h4 {
+    color: var(--accent);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+  }
+
+  .concentration-card .conc-stats {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 8px;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+
+  .concentration-card .conc-stats b {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .conc-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+    padding: 3px 0;
+  }
+
+  .conc-row .conc-label {
+    flex: 0 0 90px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conc-row .conc-bar-wrap {
+    flex: 1;
+    height: 8px;
+    background: var(--bg);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .conc-row .conc-bar {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
+
+  .conc-row.high .conc-bar {
+    background: var(--red);
+  }
+
+  .conc-row.warn .conc-bar {
+    background: var(--yellow);
+  }
+
+  .conc-row .conc-pct {
+    flex: 0 0 50px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+    font-size: 0.76rem;
+  }
+
+  .conc-foot {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border);
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    line-height: 1.4;
+    cursor: help;
+  }
+
+  /* ========== Calendar heatmap (Performance tab) ========== */
+  .heatmap-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    overflow-x: auto;
+  }
+
+  .heatmap-grid {
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(7, 12px);
+    gap: 2px;
+  }
+
+  .heatmap-cell {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    background: var(--bg);
+    cursor: default;
+  }
+
+  .heatmap-cell.l1 {
+    background: rgba(167, 139, 250, 0.25);
+  }
+
+  .heatmap-cell.l2 {
+    background: rgba(167, 139, 250, 0.45);
+  }
+
+  .heatmap-cell.l3 {
+    background: rgba(167, 139, 250, 0.7);
+  }
+
+  .heatmap-cell.l4 {
+    background: var(--accent);
+  }
+
+  .heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+
+  .heatmap-legend .swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    display: inline-block;
+  }
+
+  /* ========== Drawdown panel ========== */
+  .drawdown-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .drawdown-stats .ds-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+
+  .drawdown-stats .ds-label {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+
+  .drawdown-stats .ds-value {
+    font-size: 1.05rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .drawdown-stats .ds-value.negative {
+    color: var(--red);
+  }
+
+  .drawdown-stats .ds-sub {
+    font-size: 0.74rem;
+    color: var(--text-dim);
+  }
+
+  /* ========== Monte Carlo fan ========== */
+  .mc-stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .mc-stats .ds-card {
+    padding: 8px 10px;
+  }
+
+  .mc-stats .ds-value {
+    font-size: 0.95rem;
+  }
+
+  .mc-fan-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+  }
+
+  .mc-fan {
+    width: 100%;
+    height: 280px;
+    display: block;
+  }
+
+  .mc-fan .axis-line {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+
+  .mc-fan .grid-line {
+    stroke: var(--border);
+    stroke-width: 1;
+    stroke-dasharray: 2 4;
+  }
+
+  .mc-fan .axis-label {
+    fill: var(--text-dim);
+    font-size: 10px;
+    font-family: inherit;
+  }
+
+  .mc-band-90 {
+    fill: rgba(167, 139, 250, 0.15);
+  }
+
+  .mc-band-50 {
+    fill: rgba(167, 139, 250, 0.3);
+  }
+
+  .mc-median {
+    stroke: var(--accent);
+    stroke-width: 2;
+    fill: none;
+  }
+
+  /* Monthly P&L grid (year × month heatmap on Performance tab) */
+  .monthly-pnl-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .monthly-pnl-table th,
+  .monthly-pnl-table td {
+    text-align: center;
+    padding: 5px 4px;
+    font-size: 0.78rem;
+    border: 1px solid var(--border);
+  }
+
+  .monthly-pnl-table thead th {
+    color: var(--text-dim);
+    font-weight: 500;
+    background: var(--bg);
+  }
+
+  .monthly-pnl-table th.mp-year {
+    color: var(--accent);
+    text-align: left;
+    padding: 5px 8px;
+    min-width: 50px;
+  }
+
+  .monthly-pnl-table td.mp-cell {
+    min-width: 38px;
+  }
+
+  .monthly-pnl-table td.mp-ytd {
+    background: var(--bg);
+    font-weight: 600;
+    min-width: 56px;
+  }
+
+  /* ========== Data Health collapsible panel (Overview tab) ==========
+     Shared with .feedback-collapsible (Attention / What's Changed)
+     and .hist-options-collapsible (chart-options bar) — every panel
+     that uses a <details>/<summary> pattern gets the same chevron
+     and chip styling. */
+  .data-health,
+  .feedback-collapsible,
+  .hist-options-collapsible {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 18px;
+  }
+
+  .data-health[open],
+  .feedback-collapsible[open],
+  .hist-options-collapsible[open] {
+    padding-bottom: 4px;
+  }
+
+  .feedback-collapsible .dh-body,
+  .hist-options-collapsible .dh-body {
+    padding: 4px 14px 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  /* Animate chevron rotation for the shared shape, not just data-health */
+  .feedback-collapsible[open] .dh-summary::before,
+  .hist-options-collapsible[open] .hist-options-summary::before {
+    transform: rotate(90deg);
+  }
+
+  .feedback-collapsible[open] .dh-hint,
+  .hist-options-collapsible[open] .dh-hint {
+    display: none;
+  }
+
+  /* History chart-options summary uses the same shape as dh-summary */
+  .hist-options-summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    font-size: 0.82rem;
+  }
+
+  .hist-options-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .hist-options-summary::before {
+    content: "▸";
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    transition: transform 0.12s;
+    margin-right: -6px;
+  }
+
+  .hist-options-collapsible .hist-controls {
+    padding: 8px 14px 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .dh-summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    font-size: 0.85rem;
+  }
+
+  .dh-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .dh-summary::before {
+    content: "▸";
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    transition: transform 0.12s;
+    margin-right: -6px;
+  }
+
+  .data-health[open] .dh-summary::before {
+    transform: rotate(90deg);
+  }
+
+  .dh-summary.dh-clean::before {
+    content: "✓";
+    color: var(--green);
+  }
+
+  .dh-summary.dh-clean {
+    cursor: default;
+  }
+
+  .dh-label {
+    color: var(--accent);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.78rem;
+  }
+
+  .dh-status {
+    color: var(--text-dim);
+  }
+
+  .dh-summary.dh-clean .dh-status {
+    color: var(--green);
+  }
+
+  .dh-hint {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    margin-left: auto;
+    opacity: 0.7;
+  }
+
+  .data-health[open] .dh-hint {
+    display: none;
+  }
+
+  .dh-chip {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 7px;
+    border-radius: 3px;
+  }
+
+  .dh-chip.sev-high {
+    background: rgba(248, 113, 113, 0.18);
+    color: var(--red);
+  }
+
+  .dh-chip.sev-warn {
+    background: rgba(250, 204, 21, 0.18);
+    color: var(--yellow);
+  }
+
+  .dh-chip.sev-info {
+    background: rgba(167, 139, 250, 0.15);
+    color: var(--accent);
+  }
+
+  /* Tint the summary's left edge to match dominant severity */
+  .dh-summary.dh-high {
+    border-left: 3px solid var(--red);
+  }
+
+  .dh-summary.dh-warn {
+    border-left: 3px solid var(--yellow);
+  }
+
+  .dh-summary.dh-info {
+    border-left: 3px solid var(--accent);
+  }
+
+  .dh-summary.dh-clean {
+    border-left: 3px solid var(--green);
+  }
+
+  .dh-body {
+    padding: 4px 14px 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .dh-intro {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    padding: 10px 0;
+    margin-bottom: 4px;
+  }
+
+  .dh-category {
+    margin-top: 12px;
+  }
+
+  .dh-category h4 {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px dashed var(--border);
+  }
+
+  .dh-issue {
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .dh-issue:first-of-type {
+    border-top: none;
+  }
+
+  .dh-issue-head {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
+
+  .dh-message {
+    flex: 1;
+  }
+
+  .dh-details {
+    margin: 6px 0 0 64px;
+    padding: 0;
+    list-style: disc;
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+
+  .dh-details li {
+    margin-left: 0;
+  }
+
+  /* Group header used to chunk long tabs (e.g. Tax: Planning vs Historical) */
+  .tax-group-header {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 32px;
+    padding-bottom: 6px;
+    border-bottom: 1px dashed var(--border);
+  }
+
+  /* ========== Empty-state placeholder (FIRE without expenses, etc.) */
+  .empty-state {
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    padding: 18px;
+    text-align: left;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+
+  .empty-state code {
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--accent);
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 0.78rem;
+  }
+
+  /* ========== Tax bracket bar ========== */
+  .bracket-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-bottom: 14px;
+  }
+
+  .bracket-wrap h4 {
+    color: var(--accent);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 10px;
+  }
+
+  .bracket-bar {
+    display: flex;
+    height: 26px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    margin-bottom: 8px;
+  }
+
+  .bracket-segment {
+    height: 100%;
+    position: relative;
+    border-right: 1px solid rgba(0, 0, 0, 0.4);
+    background: rgba(167, 139, 250, 0.25);
+  }
+
+  .bracket-segment.filled {
+    background: var(--accent);
+  }
+
+  .bracket-segment.partial {
+    background: linear-gradient(to right,
+        var(--accent) var(--fill, 0%),
+        rgba(167, 139, 250, 0.25) var(--fill, 0%));
+  }
+
+  .bracket-segment:last-child {
+    border-right: none;
+  }
+
+  .bracket-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+
+  .bracket-legend .seg {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .bracket-legend .swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+
+  .bracket-summary {
+    display: flex;
+    gap: 20px;
+    margin-top: 8px;
+    font-size: 0.82rem;
+  }
+
+  .bracket-summary .item {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .bracket-summary .label {
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .bracket-summary .value {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ========== Income forecast list ========== */
+  .income-forecast {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 14px;
+  }
+
+  .income-forecast .if-totals {
+    display: flex;
+    gap: 28px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .income-forecast .if-totals .item {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .income-forecast .if-totals .label {
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .income-forecast .if-totals .value {
+    font-size: 1.05rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .income-forecast table.mini-table {
+    font-size: 0.8rem;
+  }
+
+  /* ========== Roth IRA MAGI eligibility bar ========== */
+  .magi-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 130px;
+  }
+
+  .magi-bar {
+    position: relative;
+    width: 100%;
+    height: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .magi-band-phaseout {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    background: rgba(250, 204, 21, 0.28);
+    border-left: 1px dashed rgba(250, 204, 21, 0.7);
+  }
+
+  .magi-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    transition: width 0.2s;
+  }
+
+  .magi-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.72rem;
+    gap: 6px;
+  }
+
+  .magi-label .magi-amt {
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ========== Mobile responsive (≤720px) ========== */
+  @media (max-width: 720px) {
+    body {
+      padding: 10px;
+    }
+
+    h1 {
+      font-size: 1.15rem;
+    }
+
+    .top-bar {
+      gap: 10px;
+    }
+
+    .top-bar-summary {
+      gap: 12px;
+      padding: 8px 10px;
+      min-height: 36px;
+      font-size: 0.85rem;
+    }
+
+    .top-bar-summary .tb-divider {
+      display: none;
+    }
+
+    .top-bar-summary .tb-value {
+      font-size: 0.95rem;
+    }
+
+    .top-bar-refresh {
+      padding: 6px 10px;
+      font-size: 0.78rem;
+    }
+
+    .tabnav {
+      flex-wrap: wrap;
+    }
+
+    .tabnav .tab-btn {
+      flex: 0 1 auto;
+      white-space: nowrap;
+      padding: 9px 12px;
+      font-size: 0.85rem;
+    }
+
+    .stats {
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stats .stat-card {
+      padding: 8px 10px;
+    }
+
+    .stats .stat-value {
+      font-size: 1.05rem;
+    }
+
+    .overview-feedback {
+      grid-template-columns: 1fr;
+    }
+
+    .overview-split {
+      grid-template-columns: 1fr;
+    }
+
+    .concentration-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .drawdown-stats {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .mc-stats {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .allocation-wrap {
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    .table-wrap table {
+      min-width: 560px;
+      font-size: 0.78rem;
+    }
+
+    .controls {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+
+    .controls input,
+    .controls select {
+      width: 100%;
+    }
+
+    .filter-bar {
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .chart-wrap .chart-svg {
+      height: 220px;
+    }
+
+    .as-of-bar {
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .as-of-hint {
+      font-size: 0.7rem;
+    }
+
+    .heatmap-grid {
+      grid-template-rows: repeat(7, 9px);
+    }
+
+    .heatmap-cell {
+      width: 9px;
+      height: 9px;
+    }
+  }

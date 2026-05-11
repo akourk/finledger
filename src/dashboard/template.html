@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portfolio Dashboard</title>
+<style>
+/* @@STYLES@@ */
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div class="top-bar-title">
+    <h1>Portfolio Dashboard</h1>
+    <div class="subtitle">Generated: <span id="generated"></span></div>
+  </div>
+  <div class="top-bar-summary" id="topBarSummary"></div>
+  <button class="top-bar-refresh" id="topBarRefresh"
+          title="Reload this page.&#10;&#10;For up-to-date data, first run one of these in the repo, then click here:&#10;  • python -m src.main                  (full pipeline; ingests new CSVs)&#10;  • python -m src.main --refresh-prices  (~3s; just re-fetches today's close)"
+          onclick="window.location.reload()">↻ Refresh</button>
+</div>
+
+<nav class="tabnav" id="tabnav">
+  <button class="tab-btn active" data-tab="overview">Overview</button>
+  <button class="tab-btn" data-tab="holdings">Holdings</button>
+  <button class="tab-btn" data-tab="transactions">Transactions</button>
+  <button class="tab-btn" data-tab="options">Options</button>
+  <button class="tab-btn" data-tab="retirement">Retirement</button>
+  <button class="tab-btn" data-tab="planning">Planning</button>
+  <button class="tab-btn" data-tab="income">Income</button>
+  <button class="tab-btn" data-tab="tax">Tax</button>
+  <button class="tab-btn" data-tab="crypto">Crypto</button>
+  <button class="tab-btn" data-tab="performance">Performance</button>
+</nav>
+
+<!-- ============================ OVERVIEW ============================ -->
+<div id="tab-overview" class="tab-panel active">
+  <!-- Compact as-of selector — verbose explanation now lives in the
+       title attribute on the picker.  Reduced to a single line. -->
+  <div class="as-of-bar as-of-bar-compact">
+    <label for="asOfPickerOverview">As of</label>
+    <select id="asOfPickerOverview" class="as-of-picker"
+            title="Affects stat cards, top holdings, allocation, recent transactions, and the Holdings tab.  History chart stays full-range."
+            onchange="setAsOfDate(this.value)"></select>
+    <button class="tbtn as-of-reset" onclick="setAsOfDate(null)">Latest</button>
+  </div>
+
+  <!-- Main stat cards — moved up to be the first thing visible after
+       the as-of selector.  Six cards (down from twelve): redundant
+       Top-bar duplicates and inventory-style metadata trimmed. -->
+  <div class="stats" id="stats"></div>
+
+  <!-- Combined Status card (Attention + Data Health) and What's
+       Changed card.  Side-by-side when both have content; either can
+       be hidden when empty.  All collapsed by default. -->
+  <div class="overview-status-grid" id="overviewStatus"></div>
+
+  <div class="section-header" id="historyHeader">
+    <h2><span style="color:var(--accent);">History</span></h2>
+    <span class="total-value" id="historyLatestValue"></span>
+  </div>
+  <div id="historyBody">
+    <details class="hist-options-collapsible" id="histControlsWrap">
+      <summary class="hist-options-summary">
+        <span class="dh-label">Chart Options</span>
+        <span class="dh-status" id="histControlsSummaryStatus">range, overlays, series toggles</span>
+        <span class="dh-hint">click to expand</span>
+      </summary>
+      <div class="controls hist-controls" id="histControls"></div>
+    </details>
+    <div class="chart-wrap" id="chartWrap">
+      <svg class="chart-svg" id="chartSvg" preserveAspectRatio="none"></svg>
+      <div class="chart-tooltip" id="chartTooltip"></div>
+      <div class="chart-legend" id="chartLegend"></div>
+    </div>
+  </div>
+
+  <!-- Year-by-year financial overview: pivot table with accounts as
+       columns, year-end balance + Δ% + Δ$ (and contributions on
+       expand) per cell.  Each account header is clickable to expand
+       three additional contribution columns inline. -->
+  <div class="section-header" id="annualBreakdownHeader" style="margin-top:24px;">
+    <h2><span style="color:var(--accent);">Year by Year</span></h2>
+    <span class="as-of-hint" style="margin-left:auto;">Click an account name to expand contribution columns.</span>
+  </div>
+  <div class="annual-breakdown-wrap" id="annualBreakdown"></div>
+
+  <div class="overview-split">
+    <div class="panel" id="topHoldingsPanel">
+      <h3>Top Holdings</h3>
+      <table class="mini-table"><thead><tr id="topHoldingsHead"></tr></thead><tbody id="topHoldingsBody"></tbody></table>
+      <div class="panel-foot"><a onclick="activateTab('holdings')">View all holdings →</a></div>
+    </div>
+    <div class="panel" id="recentTxnsPanel">
+      <h3>Recent Transactions</h3>
+      <table class="mini-table"><thead><tr id="recentTxnsHead"></tr></thead><tbody id="recentTxnsBody"></tbody></table>
+      <div class="panel-foot"><a onclick="activateTab('transactions')">View all transactions →</a></div>
+    </div>
+  </div>
+
+  <div class="section-header" style="margin-top:24px;">
+    <h2><span style="color:var(--accent);">Allocation</span></h2>
+    <span class="as-of-hint" style="margin-left:auto;">Hover any slice for details.</span>
+  </div>
+  <div class="allocation-grid" id="allocationGrid">
+    <div class="allocation-card">
+      <div class="allocation-card-title">By Account</div>
+      <div class="allocation-wrap">
+        <svg class="allocation-svg" id="allocationSvgGroup"></svg>
+        <div class="allocation-legend" id="allocationLegendGroup"></div>
+      </div>
+    </div>
+    <div class="allocation-card">
+      <div class="allocation-card-title">By Type</div>
+      <div class="allocation-wrap">
+        <svg class="allocation-svg" id="allocationSvgType"></svg>
+        <div class="allocation-legend" id="allocationLegendType"></div>
+      </div>
+    </div>
+    <div class="allocation-card">
+      <div class="allocation-card-title">By Sector</div>
+      <div class="allocation-wrap">
+        <svg class="allocation-svg" id="allocationSvgSector"></svg>
+        <div class="allocation-legend" id="allocationLegendSector"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Concentration risk panel (precomputed in analytics.concentration) -->
+  <div class="section-header" style="margin-top:24px;">
+    <h2><span style="color:var(--accent);">Concentration Risk</span></h2>
+    <span class="as-of-hint" style="margin-left:auto;">
+      How much of the portfolio sits in any one position / sector.
+    </span>
+  </div>
+  <div id="concentrationContainer"></div>
+</div>
+
+<!-- ============================ HOLDINGS ============================ -->
+<div id="tab-holdings" class="tab-panel">
+  <div class="as-of-bar">
+    <label for="asOfPickerHoldings">View holdings as of</label>
+    <select id="asOfPickerHoldings" class="as-of-picker"
+            onchange="setAsOfDate(this.value)"></select>
+    <button class="tbtn as-of-reset" onclick="setAsOfDate(null)">Latest</button>
+    <span class="as-of-hint">Holdings tables reflect FIFO state on the selected date.  Lot Method Comparison below is always lifetime.</span>
+  </div>
+  <div class="section-header" id="holdingsHeader">
+    <h2><span style="color:var(--accent);">Holdings<span class="as-of-label"></span></span></h2>
+    <div class="toggle-group">
+      <button class="tbtn active" id="btnByAccount" onclick="setHoldingsView('account')">By Account</button>
+      <button class="tbtn" id="btnByType" onclick="setHoldingsView('type')">By Type</button>
+      <button class="tbtn" id="btnBySector" onclick="setHoldingsView('sector')">By Sector</button>
+    </div>
+    <span class="total-value" id="holdingsTotalValue"></span>
+  </div>
+  <div id="holdingsBody">
+    <div class="table-wrap">
+      <table>
+        <thead><tr id="holdingsHeaderRow"></tr></thead>
+        <tbody id="holdingsTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section-header" style="margin-top:32px;" id="byAssetHeader">
+    <h2><span style="color:var(--accent);">Holdings by Asset<span class="as-of-label"></span></span></h2>
+    <span class="total-value" id="byAssetTotalValue"></span>
+  </div>
+  <div id="byAssetBody">
+    <div class="controls" id="byAssetControls">
+      <input type="text" id="byAssetSearch" placeholder="Search symbol or sector..." />
+      <select id="byAssetAccountGroupFilter">
+        <option value="">All account groups</option>
+      </select>
+      <select id="byAssetSectorFilter">
+        <option value="">All sectors</option>
+      </select>
+      <span class="pill" id="byAssetCountPill"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr id="byAssetHeaderRow"></tr></thead>
+        <tbody id="byAssetTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="section-header" style="margin-top:32px;" id="basisHeader">
+    <h2><span style="color:var(--accent);">Lot Method Comparison</span></h2>
+    <div class="toggle-group">
+      <button class="tbtn"        id="btnBasisAll"  onclick="setBasisTypeFilter('all')">All</button>
+      <button class="tbtn"        id="btnBasisTax"  onclick="setBasisTypeFilter('Taxable')">Taxable</button>
+      <button class="tbtn active" id="btnBasisRet"  onclick="setBasisTypeFilter('Retirement')">Retirement</button>
+    </div>
+  </div>
+  <div id="basisBody">
+    <div class="table-wrap">
+      <table>
+        <thead><tr id="basisHeaderRow"></tr></thead>
+        <tbody id="basisTbody"></tbody>
+      </table>
+    </div>
+    <div class="chart-empty" id="basisNote" style="padding:12px;text-align:left;">
+      Cost basis, realized P&amp;L, and unrealized P&amp;L computed under four lot-selection methods.
+      FIFO is the default used throughout the rest of the dashboard (and the IRS default).
+      LIFO/HIFO are tax-optimization alternatives; <b>Average</b> is the mutual-fund convention.
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================ TRANSACTIONS ============================ -->
+<div id="tab-transactions" class="tab-panel">
+  <div class="section-header">
+    <h2><span style="color:var(--accent);">Transactions</span></h2>
+  </div>
+  <div class="filter-bar" id="filterBar"></div>
+  <div class="controls">
+    <input type="text" id="search" placeholder="Search all columns..." />
+    <input type="text" id="symbolFilter" placeholder="Filter symbol (e.g. ETH-USD)" />
+    <span class="date-range-group">
+      <input type="date" id="dateFrom" title="From date (inclusive)" />
+      <span class="date-range-sep">to</span>
+      <input type="date" id="dateTo" title="To date (inclusive)" />
+      <button class="tbtn date-quick" data-range="30d" title="Last 30 days">30d</button>
+      <button class="tbtn date-quick" data-range="90d" title="Last 90 days">90d</button>
+      <button class="tbtn date-quick" data-range="ytd" title="Year-to-date">YTD</button>
+      <button class="tbtn date-quick" data-range="1y" title="Last 12 months">1y</button>
+      <button class="tbtn date-quick" data-range="all" title="All time (clear filter)">All</button>
+    </span>
+    <div class="col-toggle-wrap" id="colToggleWrap"></div>
+    <span class="pill" id="countPill"></span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr id="headerRow"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============================ OPTIONS ============================ -->
+<div id="tab-options" class="tab-panel">
+  <div id="optionsContent"><div class="tab-placeholder">Options tab — rendered on activation.</div></div>
+</div>
+
+<!-- ============================ RETIREMENT ============================ -->
+<div id="tab-retirement" class="tab-panel">
+  <div id="retirementContent"><div class="tab-placeholder">Retirement tab — rendered on activation.</div></div>
+</div>
+
+<!-- ============================ PLANNING ============================ -->
+<div id="tab-planning" class="tab-panel">
+  <div id="planningContent"><div class="tab-placeholder">Planning tab — rendered on activation.</div></div>
+</div>
+
+<!-- ============================ INCOME ============================ -->
+<div id="tab-income" class="tab-panel">
+  <div id="incomeContent"><div class="tab-placeholder">Income tab — rendered on activation.</div></div>
+</div>
+
+<!-- ============================ TAX ============================ -->
+<div id="tab-tax" class="tab-panel">
+  <div id="taxContent"><div class="tab-placeholder">Tax tab — rendered on activation.</div></div>
+</div>
+
+<!-- ============================ CRYPTO ============================ -->
+<div id="tab-crypto" class="tab-panel">
+  <div id="cryptoContent"><div class="tab-placeholder">Crypto tab — rendered on activation.</div></div>
+</div>
+
+<!-- ============================ PERFORMANCE ============================ -->
+<div id="tab-performance" class="tab-panel">
+  <div id="performanceContent"><div class="tab-placeholder">Performance tab — rendered on activation.</div></div>
+</div>
+
+<script>
+// @@APP_JS@@
+</script>
+</body>
+</html>
