@@ -52,7 +52,8 @@ def build_analytics(txns: list[dict], history: list[dict],
                     holdings_by_account: list[dict],
                     retirement_meta: dict | None = None,
                     cash_summary: dict | None = None,
-                    basis_methods: dict | None = None) -> dict:
+                    basis_methods: dict | None = None,
+                    fifo_state: dict | None = None) -> dict:
     """Compute the full analytics payload embedded in the export JSON.
 
     This is the single source of truth for derived figures the
@@ -85,7 +86,8 @@ def build_analytics(txns: list[dict], history: list[dict],
                 entry["summary_daily"] = daily
         performance_by_filter[name] = entry
 
-    tax = compute_tax_analytics(txns, holdings, retirement_meta or {})
+    tax = compute_tax_analytics(txns, holdings, retirement_meta or {},
+                                  fifo_state=fifo_state)
     concentration = compute_concentration(holdings_by_account)
 
     # Monte Carlo projections — two scenarios:
@@ -206,7 +208,10 @@ def build_analytics(txns: list[dict], history: list[dict],
     try:
         from ..parsers import _load_ticker_renames as _ldr
         rules = (_ldr() or {}).get("Robinhood", []) or []
-    except Exception:
+    except (ImportError, OSError, ValueError):
+        # ImportError: shim missing in some test environments.
+        # OSError: ticker_renames.json missing or unreadable.
+        # ValueError: parents JSONDecodeError when the file is malformed.
         pass
     covered = {(r.get("from"), r.get("to")) for r in rules
                if isinstance(r, dict) and r.get("from") and r.get("to")}
@@ -224,7 +229,9 @@ def build_analytics(txns: list[dict], history: list[dict],
         meta_path = CACHE_DIR / "price_cache_meta.json"
         if meta_path.exists():
             price_meta = _json.loads(meta_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError):
+        # OSError: file vanished between exists() check and read_text().
+        # ValueError: parent of JSONDecodeError when the file is malformed.
         pass
 
     alerts = compute_alerts(

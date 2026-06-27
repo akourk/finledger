@@ -361,9 +361,10 @@ def _build(tmp: Path) -> None:
         # Tax / projection settings — drive federal bracket math,
         # Roth phaseout, and the Monte Carlo / scenario projection
         # horizon.  State is currently a display label only.
-        ["Filing Status",  "", "",  "",   "Single"],
-        ["State",          "", "",  "",   "CA"],
-        ["Retirement Age", "", "67", "",  "Target retirement age"],
+        ["Filing Status",  "", "",      "", "Single"],
+        ["State",          "", "",      "", "CA"],
+        ["State Tax Rate", "", "0.093", "", "CA marginal rate"],
+        ["Retirement Age", "", "67",    "", "Target retirement age"],
         ["Target", "2025", "100000", "USD", "End-of-year goal"],
         ["Target", "2026", "150000", "USD", "End-of-year goal"],
         ["Target", "2030", "500000", "USD", "Mid-career goal"],

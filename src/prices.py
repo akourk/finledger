@@ -42,6 +42,7 @@ day within a 7-day window.
 """
 
 import json
+import math
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -455,7 +456,14 @@ def get_price(symbol: str, on_date) -> float | None:
     for i in range(_LOOKBACK_DAYS + 1):
         probe = (target - timedelta(days=i)).isoformat()
         if probe in series:
-            return series[probe]
+            val = series[probe]
+            # Defensive: an older cache (written before _fetch_range
+            # filtered NaN) may still hold a NaN entry.  Treat it as a
+            # gap and keep walking back to a real prior close instead of
+            # propagating NaN into value/unrealized everywhere.
+            if isinstance(val, float) and math.isnan(val):
+                continue
+            return val
     return None
 
 
@@ -755,7 +763,16 @@ def _fetch_range(symbol: str, start: date, end: date) -> dict[str, float]:
         val = row.get(col)
         if val is None:
             continue
-        out[dt_str] = float(val)
+        # yfinance emits NaN for rows where the close hasn't posted yet
+        # (e.g. the most-recent day during/just after market hours, or a
+        # holiday row).  float(NaN) is still NaN and would poison the
+        # cache — and from there every value/unrealized figure that
+        # multiplies by this price.  Skip it; the backward walk in
+        # get_price falls through to the prior real close.
+        fval = float(val)
+        if math.isnan(fval):
+            continue
+        out[dt_str] = fval
     return out
 
 

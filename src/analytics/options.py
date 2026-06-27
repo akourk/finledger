@@ -101,6 +101,7 @@ def compute_options_analytics(txns: list[dict]) -> dict:
             parsed = _parse_option_symbol(sym) or {}
             closed.append({
                 "symbol": sym,
+                "account_group": t.get("account_group", ""),
                 "action": action,
                 "close_date": t.get("date", ""),
                 "open_date": earliest_open,
@@ -122,6 +123,7 @@ def compute_options_analytics(txns: list[dict]) -> dict:
     balances: dict[str, float] = defaultdict(float)
     first_date: dict[str, str] = {}
     entry_price: dict[str, float] = {}
+    contract_account: dict[str, str] = {}
     for t in txns:
         sym = t.get("symbol", "")
         if not _is_option_symbol(sym):
@@ -138,6 +140,11 @@ def compute_options_analytics(txns: list[dict]) -> dict:
             p = float(t.get("price", 0) or 0)
             if p > 0:
                 entry_price[sym] = p
+            # Capture the account_group from the opening leg so the
+            # dashboard can filter open positions by broker.  Options
+            # are account-specific in practice, so the first opener
+            # is a reliable account label for the contract.
+            contract_account[sym] = t.get("account_group", "")
 
     today_str = datetime.now().date().isoformat()
     today_d = _parse_iso(today_str)
@@ -154,6 +161,7 @@ def compute_options_analytics(txns: list[dict]) -> dict:
                 dte = (ed - today_d).days
         open_contracts.append({
             "symbol": sym,
+            "account_group": contract_account.get(sym, ""),
             "underlying": parsed.get("underlying"),
             "expiry": parsed.get("expiry"),
             "option_type": parsed.get("type"),
@@ -220,6 +228,46 @@ def compute_options_analytics(txns: list[dict]) -> dict:
     biggest_winner = by_realized[0]["realized"] if by_realized and by_realized[0]["realized"] > 0 else None
     biggest_loser = by_realized[-1]["realized"] if by_realized and by_realized[-1]["realized"] < 0 else None
 
+    # Per-type (Call / Put) breakdown — same shape as the lifetime
+    # stats but scoped to one option type.  Helps answer "am I a
+    # better call buyer or put buyer?" at a glance.
+    def _type_stats(label: str) -> dict:
+        subset = [c for c in closed if c.get("option_type") == label]
+        sub_wins = sum(1 for c in subset if c["realized"] > 0)
+        sub_losses = sum(1 for c in subset if c["realized"] < 0)
+        sub_decided = sub_wins + sub_losses
+        sub_pnl = round(sum(c["realized"] for c in subset), 2)
+        sub_holds = [c["hold_days"] for c in subset if c["hold_days"] is not None]
+        return {
+            "trades": len(subset),
+            "wins": sub_wins,
+            "losses": sub_losses,
+            "breakevens": sum(1 for c in subset if c["realized"] == 0),
+            "win_rate": (sub_wins / sub_decided) if sub_decided else None,
+            "total_pnl": sub_pnl,
+            "avg_hold_days": (sum(sub_holds) / len(sub_holds)) if sub_holds else None,
+            "avg_winner": round(
+                sum(c["realized"] for c in subset if c["realized"] > 0) / sub_wins, 2
+            ) if sub_wins else None,
+            "avg_loser": round(
+                sum(c["realized"] for c in subset if c["realized"] < 0) / sub_losses, 2
+            ) if sub_losses else None,
+        }
+
+    call_stats = _type_stats("Call")
+    put_stats  = _type_stats("Put")
+
+    # Profit factor = gross wins / |gross losses|.  > 1 means winners
+    # outweigh losers in $ terms; widely used metric in options /
+    # trading communities.  Expectancy = avg P&L per trade — combines
+    # win rate and average size into a single per-trade dollar figure.
+    gross_wins = sum(c["realized"] for c in closed if c["realized"] > 0)
+    gross_loss = sum(c["realized"] for c in closed if c["realized"] < 0)
+    profit_factor = (gross_wins / abs(gross_loss)) if gross_loss else None
+    expectancy = (total / len(closed)) if closed else None
+    avg_winner = round(gross_wins / wins, 2) if wins else None
+    avg_loser  = round(gross_loss / losses, 2) if losses else None
+
     return {
         "open_contracts": open_contracts,
         "closed_trades": closed,
@@ -237,6 +285,15 @@ def compute_options_analytics(txns: list[dict]) -> dict:
             "biggest_winner": biggest_winner,
             "biggest_loser": biggest_loser,
             "open_count": len(open_contracts),
+            # Trader-grade ratios.
+            "profit_factor": round(profit_factor, 2) if profit_factor is not None else None,
+            "expectancy":    round(expectancy, 2) if expectancy is not None else None,
+            "avg_winner":    avg_winner,
+            "avg_loser":     avg_loser,
+            # Call / Put split — each carries its own win_rate, P&L,
+            # trade count, avg hold, and avg winner/loser figures.
+            "call":          call_stats,
+            "put":           put_stats,
         },
     }
 

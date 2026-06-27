@@ -196,6 +196,63 @@ class TestDeepCacheRefresh:
         assert "retry_after" not in entry
 
 
+class TestNaNHandling:
+    """yfinance returns NaN for a close that hasn't posted yet (the
+    most-recent day during/just after market hours, holiday rows).  A
+    NaN must never enter the cache or be returned by get_price — it
+    propagates into value / unrealized / totals everywhere downstream
+    (Total Return rendered as NaN on the Performance tab)."""
+
+    def test_get_price_skips_nan_and_walks_back(self, isolated_workdir):
+        from src.prices import get_price, _load_prices
+        series = _load_prices().setdefault("WEN", {})
+        series["2026-06-25"] = 7.33
+        series["2026-06-26"] = float("nan")
+        # Querying the NaN day (or after it) must fall back to the prior
+        # real close, not return NaN.
+        assert get_price("WEN", "2026-06-27") == 7.33
+        assert get_price("WEN", "2026-06-26") == 7.33
+
+    def test_fetch_range_filters_nan_rows(self, isolated_workdir, monkeypatch):
+        import math
+        from datetime import date
+        from src import prices as _prices_mod
+
+        class _Idx:
+            def __init__(self, d): self._d = d
+            def date(self): return self._d
+
+        class _Row:
+            def __init__(self, close): self._close = close
+            def get(self, col): return self._close
+
+        class _Hist:
+            empty = False
+            def __init__(self, rows): self._rows = rows
+            @property
+            def columns(self): return ["Close"]
+            def iterrows(self):
+                for idx, row in self._rows:
+                    yield idx, row
+
+        class _Ticker:
+            def __init__(self, sym): pass
+            def history(self, **kw):
+                return _Hist([
+                    (_Idx(date(2026, 6, 25)), _Row(7.33)),
+                    (_Idx(date(2026, 6, 26)), _Row(float("nan"))),
+                ])
+
+        class _FakeYF:
+            Ticker = _Ticker
+
+        monkeypatch.setattr(_prices_mod, "_lazy_yf", lambda: _FakeYF())
+        out = _prices_mod._fetch_range("WEN", date(2026, 6, 25), date(2026, 6, 26))
+        assert "2026-06-25" in out and out["2026-06-25"] == 7.33
+        assert "2026-06-26" not in out, "NaN close must be filtered out"
+        assert not any(isinstance(v, float) and math.isnan(v) for v in out.values())
+
+
 class TestEnsureCoverageEndOverrides:
     def test_closed_position_clamps_to_last_held(self, isolated_workdir, stub_prices):
         """When a symbol has a `symbol_end_overrides` entry (closed

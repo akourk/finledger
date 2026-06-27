@@ -34,9 +34,15 @@ Type is one of:
   brackets, standard deduction, and Roth IRA MAGI phaseout window.
   Defaults to ``Single`` when absent.
 - ``State``            — Note is the 2-letter US state code
-  (e.g. ``WA``, ``CA``).  Currently a display label on the Tax
-  tab — no automatic state-tax math is applied (WA has no state
-  income tax; other states vary too much to encode reliably).
+  (e.g. ``WA``, ``CA``).  Display label on the Tax tab.  Paired
+  with the ``State Tax Rate`` row below for the marginal-rate
+  composition; the code is informational only.
+- ``State Tax Rate``   — Amount is the marginal state income tax
+  rate as a decimal (e.g. ``0.0`` for WA, ``0.093`` for CA's 9.3%
+  bracket).  State tax codes vary too much to encode brackets
+  reliably (no-tax / flat / progressive / different thresholds);
+  the user enters a single representative marginal rate that gets
+  added to the federal marginal for the "Combined" rate display.
 - ``Retirement Age``   — Amount is the integer target age (default
   67).  Drives the Monte Carlo simulation horizon and the
   scenario-projection age input on the Planning tab.
@@ -97,8 +103,11 @@ def _empty() -> dict:
         # Defaults match the legacy hardcoded behavior — Single filer,
         # retirement age 67 (Fidelity standard).  State left None so
         # the Tax tab can show "—" instead of an arbitrary guess.
+        # State tax rate defaults to 0 (no-tax states like WA / TX /
+        # FL); the Tax tab combines this with the federal marginal.
         "filing_status": "Single",
         "state": None,
+        "state_tax_rate": 0.0,
         "retirement_age": 67,
     }
 
@@ -174,6 +183,16 @@ def parse_metadata(data_dir: Path) -> dict:
                 # display consistency.
                 if note:
                     out["state"] = note.strip().upper()
+            elif typ == "State Tax Rate":
+                # Amount is the marginal state income tax rate as a
+                # decimal.  Sanity-clamp to [0, 0.20] so a typo
+                # (e.g. "9.3" meaning percent instead of "0.093"
+                # meaning decimal) doesn't render an absurd combined
+                # rate.  We accept either input via the clamp.
+                if amt > 1.0:
+                    amt = amt / 100.0
+                if 0.0 <= amt <= 0.20:
+                    out["state_tax_rate"] = amt
             elif typ == "Retirement Age":
                 # Amount carries the integer age.  Sanity-clamp to
                 # 30..100 so a typo doesn't break the projections.

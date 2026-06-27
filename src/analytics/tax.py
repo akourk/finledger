@@ -28,7 +28,7 @@ from ..prices import get_price, split_factor_since
 # needs them to detect 1256 contracts.  Importing here rather than via
 # _shared avoids _shared growing every time a helper turns out to be
 # cross-module.
-from .options import _parse_option_symbol, _is_option_symbol, _hold_days
+from .options import _parse_option_symbol, _is_option_symbol
 
 # Cash-settled broad-based index options: 60% long-term / 40% short-term
 # regardless of holding period.  ETF options (SPY, QQQ) are NOT 1256.
@@ -345,9 +345,16 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
 
 
 def compute_tax_analytics(txns: list[dict], holdings: list[dict],
-                         retirement_meta: dict) -> dict:
+                         retirement_meta: dict,
+                         fifo_state: dict | None = None) -> dict:
     """Realized gains split by year / asset / underlying, harvest
-    candidates, wash sales, and per-year tax rate estimates."""
+    candidates, wash sales, per-year tax rate estimates, and the
+    long-term-eligibility horizon for currently open taxable lots.
+
+    ``fifo_state`` is the basis-walker state dict returned by
+    ``basis.compute_basis_default`` — needed to enumerate open lots
+    per (account_group, symbol) for the LT horizon table.
+    """
     realized = [t for t in txns if isinstance(t.get("realized_gain"), (int, float))]
 
     # By year
@@ -473,6 +480,8 @@ def compute_tax_analytics(txns: list[dict], holdings: list[dict],
     }
     rate_estimates = {y: r for y, r in rate_estimates.items() if r}
 
+    lt_horizon = _compute_lt_horizon(fifo_state, holdings) if fifo_state else []
+
     return {
         "realized_by_year": realized_by_year,
         "realized_by_symbol": realized_by_symbol,
@@ -481,7 +490,108 @@ def compute_tax_analytics(txns: list[dict], holdings: list[dict],
         "wash_sales": wash_sales,
         "rate_estimates_by_year": rate_estimates,
         "section_1256_underlyings": sorted(SECTION_1256_UNDERLYINGS),
+        "lt_horizon": lt_horizon,
     }
+
+
+def _lt_eligible_date(open_d):
+    """First calendar date on which selling this lot qualifies as
+    long-term (held > 1 year, per IRS Topic 409).  Uses calendar-month
+    math so Feb 29 (leap day) maps to Feb 28 of the next year, then +1
+    day to land on Mar 1 — the standard convention.
+    """
+    try:
+        anniversary = open_d.replace(year=open_d.year + 1)
+    except ValueError:  # Feb 29 in a leap year
+        anniversary = open_d.replace(year=open_d.year + 1, month=2, day=28)
+    return anniversary + timedelta(days=1)
+
+
+def _compute_lt_horizon(fifo_state: dict, holdings: list[dict]) -> list[dict]:
+    """For every currently-open FIFO lot in a Taxable account, compute
+    when it becomes long-term-eligible (held > 1 year).  Returns a
+    list sorted by days_to_lt ascending — lots about to cross the
+    threshold land at the top, lots already long-term at the bottom.
+
+    Retirement-account lots are excluded (gains there aren't taxed
+    short-term/long-term — they're either tax-deferred or tax-free
+    inside the wrapper).  USD / cash lots are excluded.  §1256
+    contracts (index options) are excluded since they get 60/40
+    treatment regardless of holding period.
+
+    Each row carries:
+      - account_group, symbol, open_date, qty, cost_basis
+      - lt_eligible_date, days_held, days_to_lt
+      - is_long_term: bool
+      - price (per-share) and value (qty × price) when available;
+        unrealized = value − cost_basis
+    """
+    if not fifo_state or "lots" not in fifo_state:
+        return []
+
+    # Build a price lookup from the holdings table.  Holdings are
+    # already keyed by (account_group, symbol) with a per-share `price`.
+    price_by_key: dict[tuple[str, str], float | None] = {}
+    for h in holdings or []:
+        key = (h.get("account_group", ""), h.get("symbol", ""))
+        # Holdings table is per-symbol (account_group not set there in
+        # the top-level rollup) AND per-(account, symbol) — try both.
+        price_by_key[key] = h.get("price")
+        sym_only = ("", h.get("symbol", ""))
+        if sym_only not in price_by_key or price_by_key[sym_only] is None:
+            price_by_key[sym_only] = h.get("price")
+
+    today = datetime.now().date()
+    rows: list[dict] = []
+    for (acct, sym), lots in fifo_state["lots"].items():
+        # Skip retirement (no ST/LT distinction inside the wrapper).
+        if ACCOUNT_TYPES.get(acct) == "Retirement":
+            continue
+        # Skip cash + options (1256 has its own rule; non-1256 options
+        # are typically short-dated and the 1y horizon is irrelevant).
+        if sym in CASH_SYMBOLS or not sym:
+            continue
+        if _is_option_symbol(sym):
+            continue
+        if not isinstance(lots, list):
+            continue
+        # Per-share price (try (acct, sym) first, then symbol-only).
+        price = price_by_key.get((acct, sym))
+        if price is None:
+            price = price_by_key.get(("", sym))
+        for lot in lots:
+            qty = float(lot.get("qty", 0) or 0)
+            if qty <= 1e-6:
+                continue
+            open_iso = lot.get("date", "")
+            open_d = _parse_iso(open_iso) if open_iso else None
+            if not open_d:
+                continue
+            lt_date = _lt_eligible_date(open_d)
+            days_held = (today - open_d).days
+            days_to_lt = (lt_date - today).days
+            basis_per = float(lot.get("basis_per_share", 0) or 0)
+            cost_basis = round(qty * basis_per, 2)
+            value = round(qty * price, 2) if price else None
+            unrealized = round(value - cost_basis, 2) if value is not None else None
+            rows.append({
+                "account_group": acct,
+                "symbol": sym,
+                "open_date": open_iso,
+                "lt_eligible_date": lt_date.isoformat(),
+                "days_held": days_held,
+                "days_to_lt": days_to_lt,
+                "is_long_term": days_to_lt <= 0,
+                "qty": round(qty, 8),
+                "cost_basis": cost_basis,
+                "price": round(price, 4) if price else None,
+                "value": value,
+                "unrealized_gain": unrealized,
+            })
+    # ST lots first (smallest days_to_lt at top — most-imminent LT
+    # crossings).  LT lots fall to the bottom of the list.
+    rows.sort(key=lambda r: (r["is_long_term"], r["days_to_lt"]))
+    return rows
 
 
 # ---------------------------------------------------------------------------

@@ -69,24 +69,34 @@ def detect_broker(filepath: Path) -> str:
 
 
 def _detect_by_headers(filepath: Path) -> str:
-    """Detect broker from CSV column headers."""
+    """Detect broker from CSV column headers.
+
+    Scans the first several lines rather than only the first, because some
+    exports (notably Coinbase) prefix the real header row with metadata lines
+    ("Transactions", "User,...") — the actual "ID,Timestamp,Transaction Type,
+    ..." header lands on line 3+.
+    """
     try:
         with open(filepath, newline="", encoding="utf-8-sig") as f:
-            header = f.readline().strip().lower()
+            lines = [f.readline().strip().lower() for _ in range(10)]
     except Exception:
         return "unknown"
 
-    # Robinhood: "Activity Date", "Trans Code", "Instrument", etc.
-    if "activity date" in header and "trans code" in header:
-        return "robinhood"
+    for header in lines:
+        if not header:
+            continue
 
-    # Coinbase: "Timestamp", "Transaction Type", "Asset", etc.
-    if "timestamp" in header and "transaction type" in header and "asset" in header:
-        return "coinbase"
+        # Robinhood: "Activity Date", "Trans Code", "Instrument", etc.
+        if "activity date" in header and "trans code" in header:
+            return "robinhood"
 
-    # Coinbase Pro: "portfolio", "trade id", "product", "side", "size", "price", "fee"
-    if "trade id" in header and "product" in header and "side" in header:
-        return "coinbase_pro"
+        # Coinbase: "Timestamp", "Transaction Type", "Asset", etc.
+        if "timestamp" in header and "transaction type" in header and "asset" in header:
+            return "coinbase"
+
+        # Coinbase Pro: "portfolio", "trade id", "product", "side", "size", "price", "fee"
+        if "trade id" in header and "product" in header and "side" in header:
+            return "coinbase_pro"
 
     return "unknown"
 

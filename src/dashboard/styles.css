@@ -275,11 +275,17 @@
     margin-left: auto;
   }
 
-  /* Performance tab: grouped Account + Window toggles in a single,
+  /* ========== Shared toggles card ==========
+     Grouped Account + Window (and similar) toggle rows in a single
      condensed card.  Tight padding + minimal row gap so the toggle
      surface doesn't dominate the page; the cards above and below
-     are where the user's attention should land. */
-  .perf-toggles-card {
+     are where the user's attention should land.
+     Used by the Performance, Options, and Tax tabs.  Legacy
+     `.perf-toggles-card` / `.opt-filter-bar` classes alias to this
+     style for backwards compat with any uncovered call sites. */
+  .toggles-card,
+  .perf-toggles-card,
+  .opt-filter-bar {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -290,28 +296,54 @@
     gap: 4px;
   }
 
-  /* Tighten the in-row spacing too: smaller gap between label and
-     chips, smaller chip padding so the rows occupy less vertical
-     space without affecting other ``.perf-window-bar`` instances
-     elsewhere (e.g. the chart-control bar in the Holdings tab). */
-  .perf-toggles-card .perf-toggles-row {
-    margin: 0;
-    gap: 8px;
+  /* Per-row container inside the toggles card: label + chips */
+  .toggles-card .toggles-row,
+  .perf-toggles-card .perf-toggles-row,
+  .opt-filter-bar .opt-filter-row {
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    gap: 8px;
+    margin: 0;
   }
 
-  .perf-toggles-card .perf-window-label {
+  /* Left-hand label ("Account:", "Window:") on each row */
+  .toggles-card .toggles-label,
+  .perf-toggles-card .perf-window-label,
+  .opt-filter-bar .opt-filter-label {
+    color: var(--text-dim);
     font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
     min-width: 4em;
   }
 
-  .perf-toggles-card .tbtn {
+  /* Chip styling inside the card: smaller than the global .tbtn so
+     the toggle area stays compact. */
+  .toggles-card .tbtn,
+  .perf-toggles-card .tbtn,
+  .opt-filter-bar .tbtn {
     padding: 3px 8px;
     font-size: 0.74rem;
   }
 
+  /* Trailing hint text on a row (used by Performance's "X months ·
+     Y in ratio calc" indicator). */
+  .toggles-card .toggles-hint,
   .perf-toggles-card .perf-window-hint {
+    color: var(--text-dim);
     font-size: 0.68rem;
+    margin-left: auto;
+  }
+
+  /* Visual divider between groups of chips on the same row
+     (e.g. relative windows vs absolute year pills on the Options
+     window row). */
+  .toggles-card .toggles-sep,
+  .opt-filter-bar .opt-filter-sep {
+    color: var(--border);
+    margin: 0 4px;
+    font-weight: 600;
   }
 
   /* Benchmark-chart y-axis mode toggle (Auto / Rebased / Absolute) */
@@ -499,18 +531,17 @@
 
   .stats {
     display: flex;
-    gap: 20px;
+    gap: 6px;
     flex-wrap: wrap;
-    margin-bottom: 16px;
+    margin-bottom: 8px;
     font-size: 0.85rem;
   }
 
   .stat-card {
     background: var(--surface);
     border: 1px solid var(--border);
-    padding: 10px 16px;
+    padding: 6px 8px;
     border-radius: 6px;
-    min-width: 140px;
   }
 
   .stat-card .label {
@@ -615,7 +646,7 @@
      (moved to a title attribute on the picker). */
   .as-of-bar-compact {
     padding: 4px 10px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     gap: 8px;
   }
 
@@ -901,9 +932,20 @@
     margin-top: 24px;
   }
 
+  .overview-split-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin-top: 24px;
+  }
+
   @media (max-width: 900px) {
     .overview-split {
       grid-template-columns: 1fr;
+    }
+
+    .overview-split-2 {
+      grid-template-columns: 1fr 1fr;
     }
   }
 
@@ -1162,6 +1204,70 @@
     vertical-align: middle;
   }
 
+  /* ========== Options tab anchor row (lifetime, never filtered) ==
+     Small uppercase label above a compact stat-card row that always
+     shows lifetime figures regardless of the filter bar below.
+     Mirrors the Performance tab's "Whole portfolio · all-time" row. */
+  .opt-anchor-label {
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+
+  /* ========== Long-Term Eligibility table (Tax tab) ==========
+     Per-asset rows with a small horizontal bar showing the LT-vs-ST
+     split of held shares.  Rows are clickable to expand inline lot
+     detail; the expansion <tr> spans the full width below the asset
+     row.  The bar has two segments — green for LT, yellow for ST. */
+  .lt-asset-table .lt-asset-row {
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+
+  .lt-asset-table .lt-asset-row:hover {
+    background: rgba(167, 139, 250, 0.06) !important;
+  }
+
+  /* Expansion row sits under the asset row — kill the top border
+     so they read as one visual block. */
+  .lt-asset-table .lt-expansion td {
+    border-top: 0;
+  }
+
+  /* Qty column gets extra room — the inline LT/ST bar plus the
+     "X LT / Y total" text needs ~190px so the bar doesn't get
+     squeezed when the number column right of it gets long. */
+  .lt-asset-table th:nth-child(3),
+  .lt-asset-table td:nth-child(3) {
+    min-width: 190px;
+  }
+
+  /* Sortable header affordance — clickable headers underline-feedback
+     on hover so the column-header click target reads as interactive. */
+  .lt-asset-table thead th[onclick]:hover {
+    color: var(--accent);
+  }
+
+  .lt-bar {
+    display: inline-flex;
+    width: 120px;
+    height: 5px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    vertical-align: middle;
+  }
+
+  .lt-bar-lt {
+    background: var(--green);
+  }
+
+  .lt-bar-st {
+    background: var(--yellow);
+  }
+
   /* ========== Year-by-Year breakdown (Overview tab) ==========
      Pivot table: rows are years, columns are accounts × {Σ, Δ%, Δ$}
      plus optional contribution columns when an account is expanded.
@@ -1272,13 +1378,20 @@
     user-select: none;
     transition: filter 0.12s;
   }
-  .annual-breakdown .ab-sum-toggle:hover { filter: brightness(1.25); }
-  .annual-breakdown .ab-sum-toggle.ab-expanded { filter: brightness(1.15); }
+
+  .annual-breakdown .ab-sum-toggle:hover {
+    filter: brightness(1.25);
+  }
+
+  .annual-breakdown .ab-sum-toggle.ab-expanded {
+    filter: brightness(1.15);
+  }
 
   .annual-breakdown .ab-sum-cell {
     border-left: 2px solid var(--border);
     background: rgba(167, 139, 250, 0.04);
   }
+
   .annual-breakdown .ab-sum-cell:first-of-type {
     border-left: 2px solid var(--border);
   }
@@ -1293,11 +1406,13 @@
   .annual-breakdown .ab-target-user {
     color: var(--text);
   }
+
   .annual-breakdown .ab-target-suggest {
     color: var(--text-dim);
     font-style: italic;
     opacity: 0.7;
   }
+
   .annual-breakdown .ab-target-suggest::before {
     content: "≈ ";
     opacity: 0.6;
@@ -1307,9 +1422,18 @@
   /* Sum-vs-Target diff sub-columns.  Diffs against a suggested target
      are dimmed to match — the column reads as a hint, not a verdict
      against a real goal. */
-  .annual-breakdown .ab-target-diff.positive { color: var(--green); }
-  .annual-breakdown .ab-target-diff.negative { color: var(--red); }
-  .annual-breakdown .ab-target-diff-suggest { opacity: 0.6; font-style: italic; }
+  .annual-breakdown .ab-target-diff.positive {
+    color: var(--green);
+  }
+
+  .annual-breakdown .ab-target-diff.negative {
+    color: var(--red);
+  }
+
+  .annual-breakdown .ab-target-diff-suggest {
+    opacity: 0.6;
+    font-style: italic;
+  }
 
   /* Contribution columns (visible when account is expanded) — get a
      per-account tint inline; the dim text keeps the contribution
@@ -1317,8 +1441,14 @@
   .annual-breakdown .ab-contrib {
     color: var(--text-dim);
   }
-  .annual-breakdown .ab-contrib.positive { color: var(--green); }
-  .annual-breakdown .ab-contrib.negative { color: var(--red); }
+
+  .annual-breakdown .ab-contrib.positive {
+    color: var(--green);
+  }
+
+  .annual-breakdown .ab-contrib.negative {
+    color: var(--red);
+  }
 
   /* Account-group column dividers — subtle vertical separators
      between accounts so the eye can track which sub-cells belong
@@ -1344,25 +1474,35 @@
     margin-bottom: 16px;
   }
 
-  .overview-status-grid:empty { display: none; }
+  .overview-status-grid:empty {
+    display: none;
+  }
 
   /* Single-child case: span full width instead of leaving an awkward
      empty column on the right. */
-  .overview-status-grid > :only-child {
+  .overview-status-grid> :only-child {
     grid-column: 1 / -1;
   }
 
   @media (max-width: 760px) {
-    .overview-status-grid { grid-template-columns: 1fr; }
+    .overview-status-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   /* Sub-category headers used inside the combined Status card's body
      to keep Data Health's per-category grouping (Integrity / Coverage
      / Reconciliation) legible alongside the Attention-section list. */
-  .dh-subcategory { margin-top: 8px; }
+  .dh-subcategory {
+    margin-top: 8px;
+  }
+
   .dh-subcategory h5 {
-    color: var(--text-dim); font-size: 0.7rem; font-weight: 500;
-    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
     margin: 4px 0 4px;
   }
 
@@ -1859,12 +1999,19 @@
      that uses a <details>/<summary> pattern gets the same chevron
      and chip styling. */
   .data-health,
-  .feedback-collapsible,
+  /* .feedback-collapsible, */
   .hist-options-collapsible {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
     margin-bottom: 18px;
+  }
+
+  .feedback-collapsible {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    /* margin-bottom: 18px; */
   }
 
   .data-health[open],
@@ -2343,7 +2490,7 @@
 
     .stats {
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      gap: 4px;
     }
 
     .stats .stat-card {

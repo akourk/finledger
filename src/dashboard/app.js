@@ -1669,9 +1669,9 @@ function renderAnnualBreakdown() {
     if (!birthdayDate) return '';
     const yearEnd = new Date(`${year}-12-31`);
     const age = yearEnd.getFullYear() - birthdayDate.getFullYear()
-              - ((yearEnd.getMonth() < birthdayDate.getMonth() ||
-                  (yearEnd.getMonth() === birthdayDate.getMonth()
-                   && yearEnd.getDate() < birthdayDate.getDate())) ? 1 : 0);
+      - ((yearEnd.getMonth() < birthdayDate.getMonth() ||
+        (yearEnd.getMonth() === birthdayDate.getMonth()
+          && yearEnd.getDate() < birthdayDate.getDate())) ? 1 : 0);
     return age >= 0 ? age : '';
   };
 
@@ -2084,7 +2084,7 @@ function renderOverviewStatus() {
     for (const i of issues) counts[i.severity || 'info']++;
     const total = counts.high + counts.warn + counts.info;
     const dominant = counts.high > 0 ? 'high'
-                  : counts.warn > 0 ? 'warn' : 'info';
+      : counts.warn > 0 ? 'warn' : 'info';
     const breakdown = ['high', 'warn', 'info']
       .filter(s => counts[s])
       .map(s => `<span class="dh-chip sev-${s}">${counts[s]} ${s}</span>`)
@@ -2395,9 +2395,199 @@ if (document.getElementById('tab-overview').classList.contains('active')) {
   TAB_RENDERED.add('overview');
 }
 
+// Render a row of stat cards from a `[{label, value, cls?, title?}]`
+// array.  Used by every tab that has a `<div class="stats">…</div>`
+// block — Overview, Holdings, Performance, Options, etc.  Inline
+// duplicates of the same template existed at every call site before
+// this helper was extracted.
+//
+//   cards       — [{ label, value, cls?, title? }]
+//   extraClass  — optional extra class for the wrapper (e.g.
+//                 "opt-anchor-stats" for the Options anchor row)
+function _renderStatCards(cards, extraClass) {
+  const wrapCls = extraClass ? `stats ${extraClass}` : 'stats';
+  return `<div class="${wrapCls}">` + cards.map(c => {
+    const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
+    const titleAttr = c.title ? ` title="${_htmlEsc(c.title)}"` : '';
+    return `<div class="${cls}"${titleAttr}><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
+  }).join('') + '</div>';
+}
+
+// Render one account-filter chip with the standardized look used
+// across every filter bar: colored text from ACCOUNT_COLORS when
+// inactive, full purple background when active.  Drop-in for any
+// "Account:" toggle row.
+//
+//   account  — string account_group name, or null for the "All" reset
+//   active   — true if this chip is the currently-selected filter
+//   onclick  — JS string for the onclick attribute (already escaped)
+//   label    — optional override for the visible text (defaults to
+//              the account name, or "All" when account is null)
+function _renderAccountChip(account, active, onclickJs, label) {
+  const text = label != null ? label : (account || 'All');
+  const color = account ? (ACCOUNT_COLORS[account] || '') : '';
+  // Inactive chips with a known color use the color as text — matches
+  // the colored-text pattern across all tabs.  Active chips inherit
+  // the white-on-purple .tbtn.active styling, no inline color needed.
+  const styleAttr = (!active && color) ? ` style="color:${color};"` : '';
+  return `<button class="tbtn${active ? ' active' : ''}"${styleAttr} onclick="${onclickJs}">${text}</button>`;
+}
+
 // =========================================================================
 // Options tab
 // =========================================================================
+
+// Options tab filter state.
+//   _optWindow: 'lifetime' (default), or a relative key
+//               ('5y' | '3y' | '2y' | '1y' | 'ytd' | '6mo' | '3mo' | '30d'),
+//               or an absolute year ('2026' | '2025' | …).
+//   _optAccountFilter: null = all accounts; otherwise an account_group
+//                      string to restrict the view to one broker.
+// Stats / call-put / by-underlying / annual / cumulative are all
+// recomputed in JS from the filtered closed_trades subset whenever
+// either filter is non-default, so the dashboard stays in sync with
+// the visible window.  Open Contracts are filtered by account only
+// (window doesn't apply to currently-held positions).
+let _optWindow = 'lifetime';
+let _optAccountFilter = null;
+
+function _setOptWindow(v) {
+  _optWindow = v || 'lifetime';
+  renderOptions();
+}
+function _setOptAccountFilter(v) {
+  _optAccountFilter = (v === 'all' || !v) ? null : v;
+  renderOptions();
+}
+
+// Resolve _optWindow into a concrete [start_iso, end_iso] date range,
+// or null for "lifetime" (no filter).  YYYY values map to the full
+// calendar year; relative keys anchor on today's date and walk back.
+function _optWindowRange() {
+  const today = new Date();
+  const isoToday = today.toISOString().slice(0, 10);
+  const w = _optWindow;
+  if (!w || w === 'lifetime') return null;
+  if (/^\d{4}$/.test(w)) return [`${w}-01-01`, `${w}-12-31`];
+  if (w === 'ytd') return [`${today.getFullYear()}-01-01`, isoToday];
+  let m;
+  const start = new Date(today);
+  if ((m = w.match(/^(\d+)y$/))) start.setFullYear(start.getFullYear() - parseInt(m[1], 10));
+  else if ((m = w.match(/^(\d+)mo$/))) start.setMonth(start.getMonth() - parseInt(m[1], 10));
+  else if ((m = w.match(/^(\d+)d$/))) start.setDate(start.getDate() - parseInt(m[1], 10));
+  else return null;
+  return [start.toISOString().slice(0, 10), isoToday];
+}
+
+function _optWindowLabel() {
+  const w = _optWindow;
+  if (!w || w === 'lifetime') return 'Lifetime';
+  if (/^\d{4}$/.test(w)) return w;
+  if (w === 'ytd') return `${new Date().getFullYear()} YTD`;
+  let m;
+  if ((m = w.match(/^(\d+)y$/))) return `Last ${m[1]} year${m[1] === '1' ? '' : 's'}`;
+  if ((m = w.match(/^(\d+)mo$/))) return `Last ${m[1]} month${m[1] === '1' ? '' : 's'}`;
+  if ((m = w.match(/^(\d+)d$/))) return `Last ${m[1]} days`;
+  return w;
+}
+
+// Stats + analytics rebuilders.  When the window or account filter is
+// active, the precomputed Python aggregates (stats, by_underlying,
+// annual_summary, cumulative_pnl) don't apply — so we rebuild them
+// from the filtered closed_trades subset.
+
+// Single-pass accumulator shared by _computeOptionsStats and
+// _splitClosedByType.  Returns raw running totals; callers shape the
+// final stat object (rounding, win_rate, etc.) from these.
+function _accumulateTradeStats(trades) {
+  let wins = 0, losses = 0, be = 0, pnl = 0, holdSum = 0, holdN = 0;
+  let winSum = 0, lossSum = 0, topWin = null, topLoss = null;
+  for (const c of trades) {
+    const r = c.realized || 0;
+    pnl += r;
+    if (r > 0)      { wins++;   winSum  += r; if (topWin  == null || r > topWin)  topWin  = r; }
+    else if (r < 0) { losses++; lossSum += r; if (topLoss == null || r < topLoss) topLoss = r; }
+    else            { be++; }
+    if (c.hold_days != null) { holdSum += c.hold_days; holdN++; }
+  }
+  return { n: trades.length, wins, losses, be, pnl, holdSum, holdN,
+           winSum, lossSum, topWin, topLoss };
+}
+
+const _r2 = v => v == null ? null : Math.round(v * 100) / 100;
+
+function _computeOptionsStats(closed) {
+  const a = _accumulateTradeStats(closed);
+  const decided = a.wins + a.losses;
+  return {
+    total_pnl: _r2(a.pnl),
+    trades: a.n,
+    wins: a.wins, losses: a.losses, breakevens: a.be,
+    win_rate: decided > 0 ? a.wins / decided : null,
+    avg_hold_days: a.holdN > 0 ? a.holdSum / a.holdN : null,
+    biggest_winner: a.topWin,
+    biggest_loser:  a.topLoss,
+    profit_factor:  a.lossSum < 0 ? _r2(a.winSum / Math.abs(a.lossSum)) : null,
+    expectancy:     a.n > 0 ? _r2(a.pnl / a.n) : null,
+    avg_winner:     a.wins   > 0 ? _r2(a.winSum  / a.wins)   : null,
+    avg_loser:      a.losses > 0 ? _r2(a.lossSum / a.losses) : null,
+    call: _splitClosedByType(closed, 'Call'),
+    put:  _splitClosedByType(closed, 'Put'),
+  };
+}
+
+// Group closed trades by an arbitrary key (underlying / year /
+// account_group …) and produce {keyField, trades, wins, realized,
+// win_rate} rows sorted by the given comparator.
+function _groupTrades(closed, keyFn, keyField, sortFn) {
+  const by = Object.create(null);
+  for (const c of closed) {
+    const k = keyFn(c);
+    if (k == null || k === '') continue;
+    if (!by[k]) by[k] = { [keyField]: k, trades: 0, wins: 0, realized: 0 };
+    by[k].trades++;
+    if ((c.realized || 0) > 0) by[k].wins++;
+    by[k].realized += c.realized || 0;
+  }
+  return Object.values(by)
+    .map(r => ({ ...r, realized: _r2(r.realized),
+                       win_rate: r.trades > 0 ? r.wins / r.trades : null }))
+    .sort(sortFn);
+}
+const _computeByUnderlying = closed => _groupTrades(closed,
+  c => c.underlying || '(unknown)', 'underlying',
+  (a, b) => b.realized - a.realized);
+const _computeAnnualOptionsSummary = closed => _groupTrades(closed,
+  c => (c.close_date || '').slice(0, 4), 'year',
+  (a, b) => b.year.localeCompare(a.year));
+function _computeCumulativePnL(closed) {
+  let run = 0;
+  return [...closed]
+    .sort((a, b) => (a.close_date || '').localeCompare(b.close_date || ''))
+    .map(c => ({ date: c.close_date, value: Math.round((run += (c.realized || 0)) * 100) / 100 }));
+}
+
+// Fallback aggregator used when the Python analytics payload doesn't
+// carry pre-computed call/put splits (older exports).  Mirrors the
+// shape of analytics.options.stats.call / .put exactly so the
+// rendering code can read either source uniformly.
+function _splitClosedByType(closed, kind) {
+  const subset = closed.filter(c => {
+    const t = c.option_type || c.type || (parseOptionSymbol(c.symbol) || {}).type;
+    return t === kind;
+  });
+  const a = _accumulateTradeStats(subset);
+  const decided = a.wins + a.losses;
+  return {
+    trades: a.n,
+    wins: a.wins, losses: a.losses, breakevens: a.be,
+    win_rate: decided > 0 ? a.wins / decided : null,
+    total_pnl: _r2(a.pnl),
+    avg_hold_days: a.holdN > 0 ? a.holdSum / a.holdN : null,
+    avg_winner: a.wins   > 0 ? _r2(a.winSum  / a.wins)   : null,
+    avg_loser:  a.losses > 0 ? _r2(a.lossSum / a.losses) : null,
+  };
+}
 
 // Parse a Robinhood option contract symbol like
 // "META 12/18/2026 Call $800.00"  →
@@ -2536,34 +2726,131 @@ function renderOptions() {
   // Prefer pre-computed analytics (src/analytics.py).  The in-JS
   // builders are kept as fallbacks for older exports without analytics.
   const opt = ANALYTICS.options || {};
-  const closed = opt.closed_trades || (typeof buildOptionClosedTrades === 'function' ? buildOptionClosedTrades() : []);
-  const open = opt.open_contracts || (typeof buildOptionOpenContracts === 'function' ? buildOptionOpenContracts() : []);
-  const stats = opt.stats || {};
+  const allClosed = opt.closed_trades || (typeof buildOptionClosedTrades === 'function' ? buildOptionClosedTrades() : []);
+  const allOpen = opt.open_contracts || (typeof buildOptionOpenContracts === 'function' ? buildOptionOpenContracts() : []);
 
-  const total = stats.total_pnl != null ? stats.total_pnl : closed.reduce((s, c) => s + (c.realized || 0), 0);
-  const wins = stats.wins != null ? stats.wins : closed.filter(c => c.realized > 0).length;
-  const losses = stats.losses != null ? stats.losses : closed.filter(c => c.realized < 0).length;
-  const breakevens = stats.breakevens != null ? stats.breakevens : closed.filter(c => c.realized === 0).length;
+  // ---- Apply window + account filters -----------------------------
+  // Window: filter closed trades by close_date in range.  Open contracts
+  // are not filtered by date (they're current positions — the window
+  // refers to "when did the trade close", which doesn't apply to a
+  // still-open contract).  Account filter applies to both.
+  const range = _optWindowRange();
+  let closed = allClosed;
+  if (range) closed = closed.filter(c => (c.close_date || '') >= range[0] && (c.close_date || '') <= range[1]);
+  if (_optAccountFilter) closed = closed.filter(c => c.account_group === _optAccountFilter);
+
+  let open = allOpen;
+  if (_optAccountFilter) open = open.filter(o => o.account_group === _optAccountFilter);
+
+  // Stats / by_underlying / annual_summary / cumulative — always
+  // recompute from the filtered subset.  When window=lifetime and no
+  // account filter is set, the result matches the precomputed Python
+  // analytics by construction.
+  const stats = _computeOptionsStats(closed);
+  const byUnderSorted = _computeByUnderlying(closed).map(r =>
+    [r.underlying, { trades: r.trades, wins: r.wins, realized: r.realized }]);
+  const yearOptSorted = _computeAnnualOptionsSummary(closed).map(r =>
+    [r.year, { trades: r.trades, wins: r.wins, realized: r.realized }]);
+  const cumPoints = _computeCumulativePnL(closed);
+
+  const total = stats.total_pnl != null ? stats.total_pnl : 0;
+  const wins = stats.wins;
+  const losses = stats.losses;
+  const breakevens = stats.breakevens;
   const decided = wins + losses;
   const winRate = stats.win_rate != null ? stats.win_rate * 100 : (decided > 0 ? (wins / decided) * 100 : 0);
   const avgHold = stats.avg_hold_days != null ? stats.avg_hold_days : 0;
   const topWinVal = stats.biggest_winner;
   const topLossVal = stats.biggest_loser;
-
-  // P&L by underlying + annual summary + cumulative chart series
-  const byUnderSorted = (opt.by_underlying || []).map(r => [r.underlying,
-  { trades: r.trades, wins: r.wins, realized: r.realized }]);
-  const yearOptSorted = (opt.annual_summary || []).map(r => [r.year,
-  { trades: r.trades, wins: r.wins, realized: r.realized }]);
-  const cumPoints = opt.cumulative_pnl || [];
+  const winLabel = _optWindowLabel();
 
   // --- Render HTML ---
+  // ---- Anchor cards: ALL OPTIONS · LIFETIME ---------------------
+  // Mirrors the Performance tab's "Whole portfolio · all-time"
+  // anchor row.  Computed from the UNFILTERED closed-trade set so
+  // these numbers stay stable as the user changes the account /
+  // window toggles below — a fixed reference point above the
+  // filtered view.
+  const lifetimeStats = _computeOptionsStats(allClosed);
+  const lifetimeDecided = lifetimeStats.wins + lifetimeStats.losses;
+  const lifetimeWinRate = lifetimeDecided > 0
+    ? (lifetimeStats.win_rate * 100).toFixed(1) + '%' : '—';
+  const lifetimePnl = lifetimeStats.total_pnl != null ? lifetimeStats.total_pnl : 0;
+  const lifetimePf = lifetimeStats.profit_factor;
+  const anchorCards = [
+    {
+      label: 'Lifetime Options P&L',
+      value: fmtSigned(lifetimePnl),
+      cls: lifetimePnl >= 0 ? 'positive' : 'negative',
+      title: 'Realized P&L summed across every closed option trade in the dataset.  Doesn\'t change with the filters below.',
+    },
+    {
+      label: 'Lifetime Win Rate',
+      value: lifetimeWinRate,
+      title: `Decided trades only (wins + losses).  Breakevens excluded.\n${lifetimeStats.wins} wins / ${lifetimeStats.losses} losses / ${lifetimeStats.breakevens} breakeven.`,
+    },
+    {
+      label: 'Lifetime Trades',
+      value: lifetimeStats.trades.toLocaleString(),
+      title: 'Total closed option trades — sells, expirations, and exercises.',
+    },
+    {
+      label: 'Lifetime Profit Factor',
+      value: lifetimePf != null ? lifetimePf.toFixed(2) : '—',
+      cls: lifetimePf != null && lifetimePf >= 1 ? 'positive' : (lifetimePf != null && lifetimePf < 1 ? 'negative' : ''),
+      title: 'Gross dollar wins ÷ |gross dollar losses|.  >1 means winners outweigh losers in dollar terms.',
+    },
+    {
+      label: 'Open Contracts',
+      value: allOpen.length.toLocaleString(),
+      title: 'Option contracts currently held.  Not affected by the window filter (current positions are intrinsically as-of-today).',
+    },
+  ];
+  const anchorHtml =
+    `<div class="opt-anchor-label">All options · lifetime</div>` +
+    _renderStatCards(anchorCards, 'opt-anchor-stats');
+
+  // Filter bars — Performance-tab style 2-row pattern: account on the
+  // top row, window (relative + per-year) on the bottom.
+  const optAccounts = [...new Set(allClosed.map(c => c.account_group || '').filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  const acctRow = optAccounts.length > 1 ? `
+    <div class="toggles-row">
+      <span class="toggles-label">Account:</span>
+      ${_renderAccountChip(null, !_optAccountFilter, "_setOptAccountFilter('all')", 'All')}
+      ${optAccounts.map(acct =>
+        _renderAccountChip(acct, _optAccountFilter === acct,
+          `_setOptAccountFilter('${acct.replace(/'/g, "\\'")}')`)
+      ).join('')}
+    </div>` : '';
+  const optYears = [...new Set(allClosed.map(c => (c.close_date || '').slice(0, 4)).filter(Boolean))]
+    .sort((a, b) => b.localeCompare(a));   // newest year first
+  const winPill = (key, label) =>
+    `<button class="tbtn ${_optWindow === key ? 'active' : ''}" onclick="_setOptWindow('${key}')">${label}</button>`;
+  const winRow = `
+    <div class="toggles-row">
+      <span class="toggles-label">Window:</span>
+      ${winPill('lifetime', 'Lifetime')}
+      ${winPill('5y', '5y')}
+      ${winPill('3y', '3y')}
+      ${winPill('2y', '2y')}
+      ${winPill('1y', '1y')}
+      ${winPill('ytd', 'YTD')}
+      ${winPill('6mo', '6mo')}
+      ${winPill('3mo', '3mo')}
+      ${winPill('30d', '30d')}
+      ${optYears.length ? '<span class="toggles-sep">|</span>' : ''}
+      ${optYears.map(y => winPill(y, y)).join('')}
+    </div>`;
+  const filterBar = `<div class="toggles-card">${acctRow}${winRow}</div>`;
+
+  // Note: Open Contracts moved to the anchor row above — it's a
+  // current-positions count and doesn't react to the window filter.
   const statCards = [
-    { label: 'Lifetime Options P&L', value: fmtSigned(total), cls: total >= 0 ? 'positive' : 'negative' },
+    { label: `${winLabel} Options P&L`, value: fmtSigned(total), cls: total >= 0 ? 'positive' : 'negative' },
     { label: 'Win Rate', value: decided > 0 ? winRate.toFixed(1) + '%' : '—' },
     { label: 'Trades (W / L / BE)', value: `${wins} / ${losses} / ${breakevens}` },
     { label: 'Avg Hold Days', value: avgHold ? avgHold.toFixed(1) : '—' },
-    { label: 'Open Contracts', value: open.length.toString() },
     {
       label: 'Biggest Winner', value: topWinVal != null && topWinVal > 0 ? fmtSigned(topWinVal) : '—',
       cls: topWinVal != null && topWinVal > 0 ? 'positive' : ''
@@ -2573,10 +2860,60 @@ function renderOptions() {
       cls: topLossVal != null && topLossVal < 0 ? 'negative' : ''
     },
   ];
-  const statsHtml = '<div class="stats">' + statCards.map(c => {
-    const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
-    return `<div class="${cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
-  }).join('') + '</div>';
+  const statsHtml = _renderStatCards(statCards);
+
+  // ---- Call vs Put breakdown + lifetime ratios -------------------
+  // Three-column panel: per-type stats (Calls, Puts) and lifetime
+  // ratios (profit factor + expectancy).  Surfaces "am I a better
+  // call buyer than put buyer?" at a glance.  Falls back to JS
+  // aggregation when the Python analytics payload is missing.
+  const callS = stats.call || _splitClosedByType(closed, 'Call');
+  const putS = stats.put || _splitClosedByType(closed, 'Put');
+  function _fmtType(s) {
+    const wr = s.win_rate != null ? (s.win_rate * 100).toFixed(1) + '%' : '—';
+    const pnl = s.total_pnl != null ? s.total_pnl : 0;
+    const pnlCls = pnl > 0 ? 'positive' : (pnl < 0 ? 'negative' : '');
+    const wlbe = `${s.wins || 0} W / ${s.losses || 0} L${s.breakevens ? ' / ' + s.breakevens + ' BE' : ''}`;
+    const hold = s.avg_hold_days != null && s.avg_hold_days > 0
+      ? s.avg_hold_days.toFixed(1) + 'd' : '—';
+    const avgWin = s.avg_winner != null ? fmtSigned(s.avg_winner) : '—';
+    const avgLoss = s.avg_loser != null ? fmtSigned(s.avg_loser) : '—';
+    return `
+      <div style="display:grid;grid-template-columns:auto 1fr;column-gap:14px;row-gap:4px;font-size:0.85rem;">
+        <div style="color:var(--text-dim);">Trades</div>      <div><b>${s.trades || 0}</b> <span style="color:var(--text-dim);font-size:0.78rem;">(${wlbe})</span></div>
+        <div style="color:var(--text-dim);">Win Rate</div>    <div><b>${wr}</b></div>
+        <div style="color:var(--text-dim);">Total P&amp;L</div>  <div><b><span class="${pnlCls}">${fmtSigned(pnl)}</span></b></div>
+        <div style="color:var(--text-dim);">Avg Winner</div>  <div><span class="positive">${avgWin}</span></div>
+        <div style="color:var(--text-dim);">Avg Loser</div>   <div><span class="negative">${avgLoss}</span></div>
+        <div style="color:var(--text-dim);">Avg Hold</div>    <div>${hold}</div>
+      </div>`;
+  }
+  const pf = stats.profit_factor;
+  const exp = stats.expectancy;
+  const callPutPanel = `
+    <div class="overview-split-2" style="margin-top:16px;">
+      <div class="panel">
+        <h3 style="color:#60a5fa;">Calls</h3>
+        ${_fmtType(callS)}
+      </div>
+      <div class="panel">
+        <h3 style="color:#f59e0b;">Puts</h3>
+        ${_fmtType(putS)}
+      </div>
+      <div class="panel">
+        <h3>${winLabel} Ratios</h3>
+        <div style="display:grid;grid-template-columns:auto 1fr;column-gap:14px;row-gap:4px;font-size:0.85rem;">
+          <div style="color:var(--text-dim);" title="Gross wins ÷ |gross losses|.  >1 means winners outweigh losers in dollars.">Profit Factor</div>
+          <div><b>${pf != null ? pf.toFixed(2) : '—'}</b></div>
+          <div style="color:var(--text-dim);" title="Average realized P&amp;L per closed trade.">Expectancy</div>
+          <div><b class="${exp > 0 ? 'positive' : (exp < 0 ? 'negative' : '')}">${exp != null ? fmtSigned(exp) : '—'}</b></div>
+          <div style="color:var(--text-dim);">Avg Winner</div>
+          <div class="positive">${stats.avg_winner != null ? fmtSigned(stats.avg_winner) : '—'}</div>
+          <div style="color:var(--text-dim);">Avg Loser</div>
+          <div class="negative">${stats.avg_loser != null ? fmtSigned(stats.avg_loser) : '—'}</div>
+        </div>
+      </div>
+    </div>`;
 
   // Cumulative P&L chart (SVG, stand-alone mini)
   const chartHtml = renderMiniLineChart(cumPoints, {
@@ -2664,9 +3001,15 @@ function renderOptions() {
   }).join('');
 
   root.innerHTML = `
+    ${anchorHtml}
+
+    ${filterBar}
+
     ${statsHtml}
 
-    <div class="section-header"><h2><span style="color:var(--accent);">Cumulative Realized P&amp;L</span></h2></div>
+    ${callPutPanel}
+
+    <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Cumulative Realized P&amp;L</span></h2><span class="as-of-hint" style="margin-left:auto;">${winLabel}</span></div>
     ${chartHtml}
 
     <div class="overview-split">
@@ -2689,7 +3032,10 @@ function renderOptions() {
       </div>
     </div>
 
-    <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Open Contracts (${open.length})</span></h2></div>
+    <div class="section-header" style="margin-top:24px;">
+      <h2><span style="color:var(--accent);">Open Contracts (${open.length})</span></h2>
+      <span class="as-of-hint" style="margin-left:auto;">Current positions — window filter doesn't apply${_optAccountFilter ? ` · filtered to ${_htmlEsc(_optAccountFilter)}` : ''}</span>
+    </div>
     <div class="table-wrap">
       <table class="mini-table"><thead>${openHead}</thead><tbody>${openRows}</tbody></table>
     </div>
@@ -2881,26 +3227,34 @@ const K401_LIMIT_BY_YEAR = {
 // separately to access the higher single-filer thresholds.
 const ROTH_MAGI_PHASEOUT_BY_STATUS = {
   'Single': {
-    start: { 2018: 120000, 2019: 122000, 2020: 124000, 2021: 125000,
-             2022: 129000, 2023: 138000, 2024: 146000, 2025: 150000,
-             2026: 153000 },
+    start: {
+      2018: 120000, 2019: 122000, 2020: 124000, 2021: 125000,
+      2022: 129000, 2023: 138000, 2024: 146000, 2025: 150000,
+      2026: 153000
+    },
     width: 15000,
   },
   'Head of Household': {
-    start: { 2018: 120000, 2019: 122000, 2020: 124000, 2021: 125000,
-             2022: 129000, 2023: 138000, 2024: 146000, 2025: 150000,
-             2026: 153000 },
+    start: {
+      2018: 120000, 2019: 122000, 2020: 124000, 2021: 125000,
+      2022: 129000, 2023: 138000, 2024: 146000, 2025: 150000,
+      2026: 153000
+    },
     width: 15000,
   },
   'Married Filing Jointly': {
-    start: { 2018: 189000, 2019: 193000, 2020: 196000, 2021: 198000,
-             2022: 204000, 2023: 218000, 2024: 230000, 2025: 236000,
-             2026: 240000 },
+    start: {
+      2018: 189000, 2019: 193000, 2020: 196000, 2021: 198000,
+      2022: 204000, 2023: 218000, 2024: 230000, 2025: 236000,
+      2026: 240000
+    },
     width: 10000,
   },
   'Married Filing Separately': {
-    start: { 2018: 0, 2019: 0, 2020: 0, 2021: 0, 2022: 0, 2023: 0,
-             2024: 0, 2025: 0, 2026: 0 },
+    start: {
+      2018: 0, 2019: 0, 2020: 0, 2021: 0, 2022: 0, 2023: 0,
+      2024: 0, 2025: 0, 2026: 0
+    },
     width: 10000,
   },
 };
@@ -2916,7 +3270,7 @@ function filingStatus() {
 function rothEligibilityFor(yr) {
   const filing = filingStatus();
   const ps = ROTH_MAGI_PHASEOUT_BY_STATUS[filing]
-          || ROTH_MAGI_PHASEOUT_BY_STATUS['Single'];
+    || ROTH_MAGI_PHASEOUT_BY_STATUS['Single'];
   const start = ps.start[yr];
   const width = ps.width;
   if (start == null) return null;
@@ -3342,10 +3696,7 @@ function renderRetirement() {
     { label: 'Personal Rate (est)', value: personal != null ? (personal * 100).toFixed(2) + '%' : '—' },
     { label: 'Current Age', value: currentAge != null ? String(currentAge) : '—' },
   ];
-  const statsHtml = '<div class="stats">' + statCards.map(c => {
-    const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
-    return `<div class="${cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
-  }).join('') + '</div>';
+  const statsHtml = _renderStatCards(statCards);
 
   // Contributions by year table (401K column includes former Rollover IRA).
   // Hover any contribution amount to see that year's IRS limit.
@@ -3715,10 +4066,7 @@ function renderIncome() {
     { label: 'Rewards (all-time)', value: fmtMoney(allTimeRew) },
     { label: 'Lending (all-time)', value: fmtMoney(allTimeLend) },
   ];
-  const statsHtml = '<div class="stats">' + statCards.map(c => {
-    const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
-    return `<div class="${cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
-  }).join('') + '</div>';
+  const statsHtml = _renderStatCards(statCards);
 
   // Annual summary table
   const years = Object.keys(byYear).sort();
@@ -3856,11 +4204,18 @@ registerTabRenderer('income', renderIncome);
 
 // Section 1256 contracts: broad-based cash-settled index options get
 // 60% long-term / 40% short-term tax treatment regardless of holding
-// period.  This covers the major cash-settled indices seen in Robinhood
-// exports; ETF options (SPY, QQQ, etc.) are NOT Section 1256.
-const SECTION_1256_UNDERLYINGS = new Set([
-  'SPX', 'SPXW', 'NDX', 'NDXP', 'XSP', 'RUT', 'RUTW', 'DJX', 'VIX',
-]);
+// period.  This covers the major cash-settled indices; ETF options
+// (SPY, QQQ, etc.) are NOT Section 1256.
+//
+// Single source of truth lives in src/analytics/tax.py — the analytics
+// payload carries the list under `analytics.tax.section_1256_underlyings`
+// and we mirror it into a Set here.  The fallback list keeps older
+// exports rendering correctly when the analytics payload is missing.
+const SECTION_1256_UNDERLYINGS = new Set(
+  ((ANALYTICS.tax || {}).section_1256_underlyings) || [
+    'SPX', 'SPXW', 'NDX', 'NDXP', 'XSP', 'RUT', 'RUTW', 'DJX', 'VIX',
+  ]
+);
 
 function isSection1256Symbol(sym) {
   const parsed = parseOptionSymbol(sym);
@@ -3876,30 +4231,30 @@ function isSection1256Symbol(sym) {
 // income.
 const FEDERAL_BRACKETS = {
   2024: {
-    'Single':                     [[11600, 0.10], [47150, 0.12], [100525, 0.22], [191950, 0.24], [243725, 0.32], [609350, 0.35], [Infinity, 0.37]],
-    'Married Filing Jointly':     [[23200, 0.10], [94300, 0.12], [201050, 0.22], [383900, 0.24], [487450, 0.32], [731200, 0.35], [Infinity, 0.37]],
-    'Married Filing Separately':  [[11600, 0.10], [47150, 0.12], [100525, 0.22], [191950, 0.24], [243725, 0.32], [365600, 0.35], [Infinity, 0.37]],
-    'Head of Household':          [[16550, 0.10], [63100, 0.12], [100500, 0.22], [191950, 0.24], [243700, 0.32], [609350, 0.35], [Infinity, 0.37]],
+    'Single': [[11600, 0.10], [47150, 0.12], [100525, 0.22], [191950, 0.24], [243725, 0.32], [609350, 0.35], [Infinity, 0.37]],
+    'Married Filing Jointly': [[23200, 0.10], [94300, 0.12], [201050, 0.22], [383900, 0.24], [487450, 0.32], [731200, 0.35], [Infinity, 0.37]],
+    'Married Filing Separately': [[11600, 0.10], [47150, 0.12], [100525, 0.22], [191950, 0.24], [243725, 0.32], [365600, 0.35], [Infinity, 0.37]],
+    'Head of Household': [[16550, 0.10], [63100, 0.12], [100500, 0.22], [191950, 0.24], [243700, 0.32], [609350, 0.35], [Infinity, 0.37]],
   },
   2025: {
-    'Single':                     [[11925, 0.10], [48475, 0.12], [103350, 0.22], [197300, 0.24], [250525, 0.32], [626350, 0.35], [Infinity, 0.37]],
-    'Married Filing Jointly':     [[23850, 0.10], [96950, 0.12], [206700, 0.22], [394600, 0.24], [501050, 0.32], [751600, 0.35], [Infinity, 0.37]],
-    'Married Filing Separately':  [[11925, 0.10], [48475, 0.12], [103350, 0.22], [197300, 0.24], [250525, 0.32], [375800, 0.35], [Infinity, 0.37]],
-    'Head of Household':          [[17000, 0.10], [64850, 0.12], [103350, 0.22], [197300, 0.24], [250500, 0.32], [626350, 0.35], [Infinity, 0.37]],
+    'Single': [[11925, 0.10], [48475, 0.12], [103350, 0.22], [197300, 0.24], [250525, 0.32], [626350, 0.35], [Infinity, 0.37]],
+    'Married Filing Jointly': [[23850, 0.10], [96950, 0.12], [206700, 0.22], [394600, 0.24], [501050, 0.32], [751600, 0.35], [Infinity, 0.37]],
+    'Married Filing Separately': [[11925, 0.10], [48475, 0.12], [103350, 0.22], [197300, 0.24], [250525, 0.32], [375800, 0.35], [Infinity, 0.37]],
+    'Head of Household': [[17000, 0.10], [64850, 0.12], [103350, 0.22], [197300, 0.24], [250500, 0.32], [626350, 0.35], [Infinity, 0.37]],
   },
 };
 const LTCG_BRACKETS = {
   2024: {
-    'Single':                     [[47025, 0.00], [518900, 0.15], [Infinity, 0.20]],
-    'Married Filing Jointly':     [[94050, 0.00], [583750, 0.15], [Infinity, 0.20]],
-    'Married Filing Separately':  [[47025, 0.00], [291850, 0.15], [Infinity, 0.20]],
-    'Head of Household':          [[63000, 0.00], [551350, 0.15], [Infinity, 0.20]],
+    'Single': [[47025, 0.00], [518900, 0.15], [Infinity, 0.20]],
+    'Married Filing Jointly': [[94050, 0.00], [583750, 0.15], [Infinity, 0.20]],
+    'Married Filing Separately': [[47025, 0.00], [291850, 0.15], [Infinity, 0.20]],
+    'Head of Household': [[63000, 0.00], [551350, 0.15], [Infinity, 0.20]],
   },
   2025: {
-    'Single':                     [[48350, 0.00], [533400, 0.15], [Infinity, 0.20]],
-    'Married Filing Jointly':     [[96700, 0.00], [600050, 0.15], [Infinity, 0.20]],
-    'Married Filing Separately':  [[48350, 0.00], [300000, 0.15], [Infinity, 0.20]],
-    'Head of Household':          [[64750, 0.00], [566700, 0.15], [Infinity, 0.20]],
+    'Single': [[48350, 0.00], [533400, 0.15], [Infinity, 0.20]],
+    'Married Filing Jointly': [[96700, 0.00], [600050, 0.15], [Infinity, 0.20]],
+    'Married Filing Separately': [[48350, 0.00], [300000, 0.15], [Infinity, 0.20]],
+    'Head of Household': [[64750, 0.00], [566700, 0.15], [Infinity, 0.20]],
   },
 };
 const STD_DEDUCTION = {
@@ -3954,8 +4309,8 @@ function estimateTaxRates(year) {
   // no transactions in that year at all).
   const filing = filingStatus();
   const brackets = _bracketsFor(FEDERAL_BRACKETS, yNum, filing);
-  const ltcg     = _bracketsFor(LTCG_BRACKETS,    yNum, filing);
-  const stdDed   = _bracketsFor(STD_DEDUCTION,    yNum, filing);
+  const ltcg = _bracketsFor(LTCG_BRACKETS, yNum, filing);
+  const stdDed = _bracketsFor(STD_DEDUCTION, yNum, filing);
   const salaries = RETIREMENT_META.salary_history || [];
   const cutoff = y + '-12-31';
   let salary = 0;
@@ -4024,6 +4379,45 @@ function setTaxYearFilter(v) {
   const e = estimateTaxRates(y);
   taxShortRate = e.marginalShort;
   taxLongRate = e.marginalLong;
+  renderTax();
+}
+
+// "Approaching Long-Term Status" — interaction state.
+//   _ltExpanded:       which asset rows are showing per-lot detail
+//                      (keyed by "account_group|symbol")
+//   _ltSortKey:        which column is driving the sort.  'default'
+//                      = actionable-first (ST sorted by soonest
+//                      crossing, fully-LT assets at the bottom by
+//                      value desc).  Other keys: 'symbol', 'account',
+//                      'qty', 'next_lt', 'value', 'basis', 'unrealized'.
+//   _ltSortDir:        1 ascending, -1 descending
+//   _ltAccountFilter:  null = all accounts; otherwise an account_group
+//                      string to filter the table down to one broker.
+const _ltExpanded = new Set();
+let _ltSortKey = 'default';
+let _ltSortDir = 1;
+let _ltAccountFilter = null;
+
+function _setLtSort(key) {
+  if (_ltSortKey === key) {
+    _ltSortDir = -_ltSortDir;
+  } else {
+    _ltSortKey = key;
+    // Sensible default direction per column type: text asc, numeric
+    // desc (biggest first feels right for value/unrealized).
+    _ltSortDir = (key === 'symbol' || key === 'account' || key === 'next_lt') ? 1 : -1;
+  }
+  renderTax();
+}
+
+function _setLtAccountFilter(name) {
+  _ltAccountFilter = (name === 'all' || !name) ? null : name;
+  renderTax();
+}
+
+function _toggleLtAsset(key) {
+  if (_ltExpanded.has(key)) _ltExpanded.delete(key);
+  else _ltExpanded.add(key);
   renderTax();
 }
 
@@ -4171,10 +4565,7 @@ function renderTax() {
     },
     { label: 'Closed Trades', value: filtered.length.toString() },
   ];
-  const statsHtml = '<div class="stats">' + statCards.map(c => {
-    const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
-    return `<div class="${cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
-  }).join('') + '</div>';
+  const statsHtml = _renderStatCards(statCards);
 
   // Year filter pills
   const yearPills = ['all', ...allYears].map(y => {
@@ -4296,6 +4687,212 @@ function renderTax() {
     <td>${w.offending_buy_date}</td>
   </tr>`).join('');
 
+  // ---- Approaching Long-Term Status -------------------------------
+  // Per-asset roll-up of LT eligibility.  One row per
+  // (account_group, symbol); click to expand inline per-lot detail.
+  // Answers the actionable question "how many shares of X can I sell
+  // at LT rates today, and when does the next batch qualify?".
+  //
+  // Lot dust-filter: |value| or |cost_basis| ≥ $10 so sub-penny
+  // crypto residuals don't bloat the count.  Sort: assets with ST
+  // lots first (asc by their soonest LT crossing — most actionable
+  // on top); fully-LT assets at the bottom (desc by value, so big
+  // positions you can already sell at LT are easy to spot).
+  const ltLots = ((ANALYTICS.tax || {}).lt_horizon || []).filter(r => {
+    const v = r.value != null ? r.value : (r.cost_basis || 0);
+    return Math.abs(v) >= 10 || Math.abs(r.cost_basis || 0) >= 10;
+  });
+  // Roll lots up per (account_group, symbol).
+  const ltAssetMap = new Map();
+  for (const r of ltLots) {
+    const k = r.account_group + '​|' + r.symbol;
+    let a = ltAssetMap.get(k);
+    if (!a) {
+      a = {
+        key: k, account_group: r.account_group, symbol: r.symbol,
+        price: r.price, lots: [],
+        total_qty: 0, lt_qty: 0, st_qty: 0,
+        total_value: 0, total_basis: 0, total_unrealized: 0,
+        lt_value: 0, st_value: 0,
+        next_lt_days: null, next_lt_date: null,
+      };
+      ltAssetMap.set(k, a);
+    }
+    a.lots.push(r);
+    a.total_qty += r.qty;
+    a.total_basis += r.cost_basis || 0;
+    if (r.value != null) a.total_value += r.value;
+    if (r.unrealized_gain != null) a.total_unrealized += r.unrealized_gain;
+    if (r.is_long_term) {
+      a.lt_qty += r.qty;
+      if (r.value != null) a.lt_value += r.value;
+    } else {
+      a.st_qty += r.qty;
+      if (r.value != null) a.st_value += r.value;
+      if (a.next_lt_days === null || r.days_to_lt < a.next_lt_days) {
+        a.next_lt_days = r.days_to_lt;
+        a.next_lt_date = r.lt_eligible_date;
+      }
+    }
+  }
+  // Account-filter chip row needs to know what's available BEFORE
+  // filtering, so derive it from the unfiltered map.
+  const ltAccounts = [...new Set([...ltAssetMap.values()].map(a => a.account_group))]
+    .sort((a, b) => a.localeCompare(b));
+
+  // Apply account filter (single-select; null = all).
+  const ltFiltered = _ltAccountFilter
+    ? [...ltAssetMap.values()].filter(a => a.account_group === _ltAccountFilter)
+    : [...ltAssetMap.values()];
+
+  // Sort.  The 'default' sort puts actionable assets (any ST lot) on
+  // top, ordered by their soonest LT crossing; fully-LT assets fall
+  // to the bottom sorted by value desc.  All other sort keys are a
+  // single comparator with the configured direction.
+  const _next = a => a.next_lt_days === null ? Infinity : a.next_lt_days;
+  const sortComp = {
+    'default': (a, b) => {
+      const aFully = a.next_lt_days === null;
+      const bFully = b.next_lt_days === null;
+      if (aFully !== bFully) return aFully ? 1 : -1;
+      if (!aFully) return a.next_lt_days - b.next_lt_days;
+      return (b.total_value || 0) - (a.total_value || 0);
+    },
+    'symbol': (a, b) => a.symbol.localeCompare(b.symbol),
+    'account': (a, b) => a.account_group.localeCompare(b.account_group),
+    'qty': (a, b) => (a.total_qty || 0) - (b.total_qty || 0),
+    'next_lt': (a, b) => _next(a) - _next(b),
+    'value': (a, b) => (a.total_value || 0) - (b.total_value || 0),
+    'basis': (a, b) => (a.total_basis || 0) - (b.total_basis || 0),
+    'unrealized': (a, b) => (a.total_unrealized || 0) - (b.total_unrealized || 0),
+  };
+  const cmp = sortComp[_ltSortKey] || sortComp['default'];
+  const ltAssets = _ltSortKey === 'default'
+    ? ltFiltered.sort(cmp)
+    : ltFiltered.sort((a, b) => _ltSortDir * cmp(a, b));
+
+  // Render — main row + (optionally) an expansion row with per-lot
+  // detail.  The expansion <tr> spans the full table width and
+  // contains its own mini-table.
+  const LT_LIMIT = 100;
+  const ltAssetRows = ltAssets.slice(0, LT_LIMIT).map(a => {
+    const fully = a.next_lt_days === null;
+    const ltPct = a.total_qty > 0 ? (a.lt_qty / a.total_qty) * 100 : 0;
+    const stPct = Math.max(0, 100 - ltPct);
+    const imminent = !fully && a.next_lt_days <= 60;
+    const expanded = _ltExpanded.has(a.key);
+    const arrow = expanded ? '▾' : '▸';
+    // Qty rendering — show LT/Total with the visual bar inline.
+    const fmtQ = q => q.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    const qtyCell = `
+      <div style="display:flex;flex-direction:column;gap:3px;">
+        <div style="font-size:0.85rem;">
+          <b>${fmtQ(a.lt_qty)}</b> <span style="color:var(--text-dim);">LT</span>
+          <span style="color:var(--text-dim);"> / ${fmtQ(a.total_qty)}</span>
+        </div>
+        <div class="lt-bar" title="LT: ${ltPct.toFixed(0)}% · ST: ${stPct.toFixed(0)}%">
+          <div class="lt-bar-lt" style="width:${ltPct.toFixed(2)}%;"></div>
+          <div class="lt-bar-st" style="width:${stPct.toFixed(2)}%;"></div>
+        </div>
+      </div>`;
+    const nextCell = fully
+      ? '<span style="color:var(--green);font-weight:600;">✓ Fully LT</span>'
+      : `<b${imminent ? ' style="color:var(--yellow);"' : ''}>${a.next_lt_days}d</b>`
+      + ` <div style="color:var(--text-dim);font-size:0.78rem;">→ ${a.next_lt_date}</div>`;
+    const ugCls = a.total_unrealized > 0 ? 'positive' : (a.total_unrealized < 0 ? 'negative' : '');
+    const rowBg = imminent ? ' style="background:rgba(245,158,11,0.04);"' : '';
+
+    // Expanded lot detail — sorted by days_to_lt asc (imminent ST
+    // first, then LT lots in chronological order).
+    let expansion = '';
+    if (expanded) {
+      const sortedLots = [...a.lots].sort((x, y) => x.days_to_lt - y.days_to_lt);
+      const lotRows = sortedLots.map(l => {
+        const lImm = !l.is_long_term && l.days_to_lt <= 60;
+        const lUgCls = l.unrealized_gain == null ? '' : (l.unrealized_gain > 0 ? 'positive' : (l.unrealized_gain < 0 ? 'negative' : ''));
+        const statusCell = l.is_long_term
+          ? `<span style="color:var(--green);">LT · held ${l.days_held}d</span>`
+          : `<b${lImm ? ' style="color:var(--yellow);"' : ''}>${l.days_to_lt}d</b> <span style="color:var(--text-dim);font-size:0.78rem;">→ ${l.lt_eligible_date}</span>`;
+        return `<tr>
+          <td style="padding-left:24px;color:var(--text-dim);">↳ ${l.open_date}</td>
+          <td class="num">${fmtQ(l.qty)}</td>
+          <td class="num">${fmtMoney(l.cost_basis)}</td>
+          <td class="num">${l.value != null ? fmtMoney(l.value) : '—'}</td>
+          <td class="num"><span class="${lUgCls}">${l.unrealized_gain != null ? fmtSigned(l.unrealized_gain) : '—'}</span></td>
+          <td>${statusCell}</td>
+        </tr>`;
+      }).join('');
+      expansion = `<tr class="lt-expansion"><td colspan="7" style="padding:8px 24px 12px;background:rgba(167,139,250,0.03);border-top:0;">
+        <table class="mini-table" style="font-size:0.82rem;">
+          <thead><tr>
+            <th>Acquired</th><th class="num">Qty</th><th class="num">Basis</th>
+            <th class="num">Value</th><th class="num">Unrealized</th><th>Status</th>
+          </tr></thead>
+          <tbody>${lotRows}</tbody>
+        </table>
+      </td></tr>`;
+    }
+
+    return `<tr class="lt-asset-row" onclick="_toggleLtAsset('${a.key.replace(/'/g, "\\'")}')"${rowBg}>
+      <td><span class="ab-acct-arrow">${arrow}</span> <b>${symLabel(a.symbol)}</b></td>
+      <td><span style="color:${ACCOUNT_COLORS[a.account_group] || ''};">${a.account_group}</span></td>
+      <td>${qtyCell}</td>
+      <td>${nextCell}</td>
+      <td class="num">${a.total_value ? fmtMoney(a.total_value) : '—'}</td>
+      <td class="num">${fmtMoney(a.total_basis)}</td>
+      <td class="num"><span class="${ugCls}">${fmtSigned(a.total_unrealized)}</span></td>
+    </tr>${expansion}`;
+  }).join('');
+  const ltMoreNote = ltAssets.length > LT_LIMIT
+    ? `<tr><td colspan="7" style="color:var(--yellow);text-align:center;padding:6px;">Showing ${LT_LIMIT} of ${ltAssets.length} assets.</td></tr>`
+    : '';
+  // Quick stats above the table — total ST shares pending vs total LT,
+  // weighted by dollar value to highlight the magnitude of the
+  // currently-locked gains.  Reflects the filtered view so the totals
+  // line up with what's actually rendered below.
+  const stPendingValue = ltAssets.reduce((s, a) => s + a.st_value, 0);
+  const ltAlreadyValue = ltAssets.reduce((s, a) => s + a.lt_value, 0);
+  const totalPositions = ltAssets.length;
+  const fullyLtPositions = ltAssets.filter(a => a.next_lt_days === null).length;
+  const ltSummary = `
+    <span style="margin-left:12px;color:var(--text-dim);font-size:0.78rem;">
+      ${totalPositions} taxable position${totalPositions === 1 ? '' : 's'}
+      <span style="color:var(--green);">· ${fmtMoney(ltAlreadyValue)} already LT</span>
+      <span style="color:var(--yellow);">· ${fmtMoney(stPendingValue)} still ST</span>
+      <span style="color:var(--green);">· ${fullyLtPositions} fully LT</span>
+    </span>`;
+
+  // Account-filter chip bar — single-select.  "All" reset chip + one
+  // chip per account_group that actually has taxable lots.  Uses the
+  // shared _renderAccountChip helper for consistent styling across tabs.
+  const ltAcctChips = ltAccounts.length > 1 ? `
+    <div class="toggles-row" style="margin:8px 0 12px;">
+      <span class="toggles-label">Account:</span>
+      ${_renderAccountChip(null, !_ltAccountFilter, "_setLtAccountFilter('all')", 'All')}
+      ${ltAccounts.map(acct => _renderAccountChip(
+        acct, _ltAccountFilter === acct,
+        `_setLtAccountFilter('${acct.replace(/'/g, "\\'")}')`
+      )).join('')}
+    </div>` : '';
+
+  // Sortable headers.  Each clickable <th> shows a sort indicator
+  // when active; inactive ones get a faint glyph as an affordance.
+  function _sortHdr(key, label, cls) {
+    const active = _ltSortKey === key;
+    const arrow = active ? (_ltSortDir > 0 ? '↑' : '↓') : '↕';
+    const aCls = active ? 'style="color:var(--accent);"' : 'style="color:var(--text-dim);opacity:0.5;"';
+    return `<th class="${cls || ''}" style="cursor:pointer;user-select:none;" onclick="_setLtSort('${key}')">${label} <span ${aCls}>${arrow}</span></th>`;
+  }
+  const ltHeadHtml = `<tr>
+    ${_sortHdr('symbol', 'Symbol')}
+    ${_sortHdr('account', 'Account')}
+    ${_sortHdr('qty', 'Qty (LT / Total)')}
+    ${_sortHdr('next_lt', 'Next LT')}
+    ${_sortHdr('value', 'Value', 'num')}
+    ${_sortHdr('basis', 'Basis', 'num')}
+    ${_sortHdr('unrealized', 'Unrealized', 'num')}
+  </tr>`;
+
   // --- Render ---
   root.innerHTML = `
     <div style="margin-bottom:12px;">${yearPills}</div>
@@ -4331,6 +4928,21 @@ function renderTax() {
           <div style="color:var(--text-dim);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Marginal rates</div>
           <div>Estimated ordinary rate: <b>${(est.marginalShort * 100).toFixed(1)}%</b></div>
           <div>Estimated LTCG rate: <b>${(est.marginalLong * 100).toFixed(1)}%</b></div>
+          ${(RETIREMENT_META.state_tax_rate || 0) > 0 ? `
+          <div style="margin-top:6px;padding-top:6px;border-top:1px dotted var(--border);">
+            <span style="color:var(--text-dim);font-size:0.8rem;">+ ${_htmlEsc(RETIREMENT_META.state || 'State')} marginal: <b style="color:var(--text);">${(RETIREMENT_META.state_tax_rate * 100).toFixed(1)}%</b></span>
+          </div>
+          <div style="margin-top:2px;font-size:0.85rem;" title="Federal marginal + state marginal.  Useful for back-of-envelope 'if I realize $X, what's the all-in tax?' math.">
+            <b>Combined ordinary: ${((est.marginalShort + (RETIREMENT_META.state_tax_rate || 0)) * 100).toFixed(1)}%</b>
+            <span style="color:var(--text-dim);font-size:0.78rem;margin-left:6px;">(fed + state)</span>
+          </div>
+          <div style="font-size:0.85rem;">
+            <b>Combined LTCG: ${((est.marginalLong + (RETIREMENT_META.state_tax_rate || 0)) * 100).toFixed(1)}%</b>
+            <span style="color:var(--text-dim);font-size:0.78rem;margin-left:6px;">(states tax LTCG as ordinary)</span>
+          </div>` : (RETIREMENT_META.state ? `
+          <div style="margin-top:6px;padding-top:6px;border-top:1px dotted var(--border);color:var(--text-dim);font-size:0.78rem;">
+            ${_htmlEsc(RETIREMENT_META.state)} has no state income tax — federal-only.
+          </div>` : '')}
           <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);">
             <div style="color:var(--text-dim);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Override (used for the tables below)</div>
             <label style="font-size:0.85rem;color:var(--text-dim);">Short-term:
@@ -4388,6 +5000,24 @@ function renderTax() {
       <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">
         Heuristic check: exact-symbol match only.  The IRS definition of "substantially identical"
         is broader (includes options on the same underlying, some ETFs, etc.) — treat as a heads-up, not a rule.
+      </div>
+    </div>
+
+    <div class="section-header" style="margin-top:24px;">
+      <h2><span style="color:var(--accent);">Long-Term Eligibility by Asset</span></h2>
+      ${ltSummary}
+    </div>
+    <div class="panel">
+      ${ltAcctChips}
+      <table class="mini-table lt-asset-table">
+        <thead>${ltHeadHtml}</thead>
+        <tbody>${ltAssetRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">No open taxable lots.</td></tr>'}${ltMoreNote}</tbody>
+      </table>
+      <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">
+        One row per <em>(account, symbol)</em>.  Click any row to see its individual lots and timing;
+        click a column header to sort.  Yellow rows have a lot crossing into long-term within 60
+        days — selling those sooner means paying the higher ordinary-income rate.  Retirement
+        accounts are excluded (tax-deferred — the short/long distinction doesn't apply).
       </div>
     </div>
 
@@ -4535,10 +5165,7 @@ function renderCrypto() {
     { label: 'Coins Held / Ever', value: `${cryptoHoldings.length} / ${coinCount}` },
     { label: 'Transactions', value: txnCount.toString() },
   ];
-  const statsHtml = '<div class="stats">' + statCards.map(c => {
-    const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
-    return `<div class="${cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
-  }).join('') + '</div>';
+  const statsHtml = _renderStatCards(statCards);
 
   // Recent activity (last 30 crypto txns)
   const recent = preRecent || [...cryptoTxns]
@@ -5660,25 +6287,31 @@ function renderPerformance() {
   const _investmentsActive = performanceAccountFilter === '__investments__';
   const _hasSavingsAccount = availableAccounts.some(a => SAVINGS_GROUP_SET.has(a));
   const _taxableCount = availableAccounts.filter(a => TAXABLE_GROUP_SET.has(a)).length;
+  // Aggregate chips ("Investments", "Taxable", "Retirement") use a
+  // colored text style sourced from TYPE_COLORS for consistency with
+  // individual account chips below.  Active state still uses the
+  // shared .tbtn.active purple background.
+  const _aggChip = (key, label, active, color, title) => {
+    const titleAttr = title ? ` title="${_htmlEsc(title)}"` : '';
+    const styleAttr = (!active && color) ? ` style="color:${color};"` : '';
+    return `<button class="tbtn${active ? ' active' : ''}"${styleAttr}${titleAttr} onclick="setPerformanceAccountFilter('${key}')">${label}</button>`;
+  };
   const acctPills = [
     `<button class="tbtn${performanceAccountFilter === null ? ' active' : ''}" onclick="setPerformanceAccountFilter(null)">Total</button>`,
     ...(_hasSavingsAccount ? [
-      `<button class="tbtn${_investmentsActive ? ' active' : ''}" onclick="setPerformanceAccountFilter('__investments__')">` +
-      `<span class="pill-swatch" style="background:#4ade80"></span>Investments</button>`,
+      _aggChip('__investments__', 'Investments', _investmentsActive, '#4ade80'),
     ] : []),
     ...(_taxableCount > 1 ? [
-      `<button class="tbtn${_taxableActive ? ' active' : ''}" onclick="setPerformanceAccountFilter('__taxable__')" ` +
-      `title="Combined view of after-tax accounts (Robinhood + Coinbase, etc.).  Money moves freely between them — no contribution limits or withdrawal penalties like retirement accounts have.">` +
-      `<span class="pill-swatch" style="background:${TYPE_COLORS.Taxable || '#fbbf24'}"></span>Taxable</button>`,
+      _aggChip('__taxable__', 'Taxable', _taxableActive,
+        TYPE_COLORS.Taxable || '#fbbf24',
+        'Combined view of after-tax accounts (Robinhood + Coinbase, etc.).  Money moves freely between them — no contribution limits or withdrawal penalties like retirement accounts have.'),
     ] : []),
-    `<button class="tbtn${_retirementActive ? ' active' : ''}" onclick="setPerformanceAccountFilter('__retirement__')">` +
-    `<span class="pill-swatch" style="background:${TYPE_COLORS.Retirement || '#a78bfa'}"></span>Retirement</button>`,
+    _aggChip('__retirement__', 'Retirement', _retirementActive,
+      TYPE_COLORS.Retirement || '#a78bfa'),
     ...availableAccounts.map(a => {
-      const cls = 'tbtn' + (performanceAccountFilter === a ? ' active' : '');
-      const color = ACCOUNT_COLORS[a] || '';
-      const swatch = color ? `<span class="pill-swatch" style="background:${color}"></span>` : '';
       const escaped = a.replace(/'/g, "\\'");
-      return `<button class="${cls}" onclick="setPerformanceAccountFilter('${escaped}')">${swatch}${a}</button>`;
+      return _renderAccountChip(a, performanceAccountFilter === a,
+        `setPerformanceAccountFilter('${escaped}')`);
     }),
   ].join('');
 
@@ -5920,11 +6553,7 @@ function renderPerformance() {
     },
   ];
 
-  const _renderCardRow = (cards) => '<div class="stats">' + cards.map(c => {
-    const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
-    const titleAttr = c.title ? ` title="${_htmlEsc(c.title)}"` : '';
-    return `<div class="${cls}"${titleAttr}><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
-  }).join('') + '</div>';
+  const _renderCardRow = (cards) => _renderStatCards(cards);
 
   // Layout:
   //   Row 1. Whole-portfolio lifetime cards (anchor; toggle-independent)
@@ -5936,18 +6565,20 @@ function renderPerformance() {
     `<div class="perf-anchor-label" style="color:var(--text-dim);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Whole portfolio · all-time</div>` +
     _renderCardRow(anchorCards) +
     // Both toggle rows live inside a single card so they read as one
-    // grouped control surface (Account on top, Window below).
-    `<div class="perf-toggles-card">` +
-      `<div class="perf-window-bar perf-toggles-row">` +
-        `<span class="perf-window-label">Account:</span>` +
-        `<div class="toggle-group" style="flex-wrap:wrap;">${acctPills}</div>` +
-      `</div>` +
-      `<div class="perf-window-bar perf-toggles-row">` +
-        `<span class="perf-window-label">Window:</span>` +
-        `<div class="toggle-group">${windowChips}</div>` +
-        _customInputsHtml +
-        `<span class="perf-window-hint">${win.nMonths || 0} months · ${win.nInRatio || 0} in ratio calc</span>` +
-      `</div>` +
+    // grouped control surface (Account on top, Window below).  Shared
+    // .toggles-card / .toggles-row / .toggles-label classes are used
+    // across the Performance, Options, and Tax tabs.
+    `<div class="toggles-card">` +
+    `<div class="toggles-row">` +
+    `<span class="toggles-label">Account:</span>` +
+    `<div class="toggle-group" style="flex-wrap:wrap;">${acctPills}</div>` +
+    `</div>` +
+    `<div class="toggles-row">` +
+    `<span class="toggles-label">Window:</span>` +
+    `<div class="toggle-group">${windowChips}</div>` +
+    _customInputsHtml +
+    `<span class="toggles-hint">${win.nMonths || 0} months · ${win.nInRatio || 0} in ratio calc</span>` +
+    `</div>` +
     `</div>` +
     _renderCardRow(filteredCards) +
     _renderCardRow(ratioCards);

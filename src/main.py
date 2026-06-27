@@ -262,10 +262,16 @@ def _refresh_prices_only(args) -> None:
           f"to {history[-1]['date'] if history else '—'}")
 
     print("Computing analytics...")
+    # Re-derive the FIFO lot-state so the tax tab's "approaching
+    # long-term" horizon can enumerate open lots.  Idempotent — the
+    # walker re-writes identical annotations onto txns it's already
+    # seen, and we only need state["lots"] downstream.
+    refresh_fifo_state = compute_basis_default(txns)
     analytics = build_analytics(txns, history, holdings, holdings_by_account,
                                  retirement_meta,
                                  cash_summary=cash,
-                                 basis_methods=basis_methods)
+                                 basis_methods=basis_methods,
+                                 fifo_state=refresh_fifo_state)
 
     export_json(txns, output_path, holdings=holdings,
                 holdings_by_account=holdings_by_account,
@@ -723,7 +729,8 @@ def main():
     analytics = build_analytics(txns, history, holdings, holdings_by_account,
                                  retirement_meta,
                                  cash_summary=cash,
-                                 basis_methods=basis_methods)
+                                 basis_methods=basis_methods,
+                                 fifo_state=fifo_state)
     perf = analytics["performance_by_filter"]
     opt = analytics["options"]["stats"]
     tax = analytics["tax"]
