@@ -75,6 +75,14 @@ RULES = [
     {"account_group": "Robinhood", "action": "DFEE",  "normalized": "Fee"},
     {"account_group": "Robinhood", "action": "DTAX",  "normalized": "Tax"},
     {"account_group": "Robinhood", "action": "CONV",  "normalized": "Conversion"},
+    {"account_group": "Robinhood", "action": "ROC",   "normalized": "Return of Capital"},
+    # FUTSWP = "Event Contracts Inter-Entity Cash Transfer" — internal
+    # cash move to/from the prediction-markets entity; fully excluded
+    # from performance (see actions.py "Event Contract Transfer").
+    {"account_group": "Robinhood", "action": "FUTSWP", "normalized": "Event Contract Transfer"},
+    # MISC = promotional cash rewards (e.g. the prediction-markets
+    # learning bonus) — count as reward income.
+    {"account_group": "Robinhood", "action": "MISC",  "normalized": "Reward"},
 
     # ── Coinbase (regular) ───────────────────────────────────────────────
     {"account_group": "Coinbase", "action": "Buy",                          "normalized": "Buy"},

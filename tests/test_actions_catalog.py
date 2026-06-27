@@ -63,6 +63,46 @@ def test_neutral_action_is_neutral_everywhere():
     assert a.cash_flow == "ignore"
 
 
+def test_robinhood_roc_futswp_misc_classification():
+    """FUTSWP (event-contract inter-entity cash transfer), ROC (return
+    of capital), and MISC (promotional cash reward) used to fall
+    through normalize untyped and trip the action_catalog_coverage
+    data-health flag.  Pin their intended handling:
+
+    - FUTSWP → Event Contract Transfer: fully inert (neutral/ignore/
+      ignore) so prediction-markets activity is excluded from every
+      performance metric and net_contributed.
+    - ROC → Return of Capital: no share/cash-flow effect, not income.
+    - MISC → Reward: counts as reward income.
+    """
+    from src.normalize import normalize_action
+    from src.actions import ACTIONS, CASH_ADD_ACTIONS, CASH_SUB_ACTIONS
+    from src.analytics._shared import INCOME_ACTION_KINDS
+
+    def norm(code):
+        return normalize_action(
+            {"action": code, "account_group": "Robinhood", "symbol": "USD"})
+
+    # Every raw code resolves to a catalog action (clears the flag).
+    for code in ("FUTSWP", "ROC", "MISC"):
+        assert norm(code) in ACTIONS, f"{code} not mapped to a catalog action"
+
+    ect = ACTIONS[norm("FUTSWP")]
+    assert (ect.name, ect.balance, ect.basis, ect.cash_flow) == \
+        ("Event Contract Transfer", "neutral", "ignore", "ignore")
+    # Excluded from cash-flow accounting entirely.
+    assert ect.name not in CASH_ADD_ACTIONS and ect.name not in CASH_SUB_ACTIONS
+
+    roc = ACTIONS[norm("ROC")]
+    assert (roc.name, roc.balance, roc.basis, roc.cash_flow) == \
+        ("Return of Capital", "neutral", "ignore", "neutral")
+    assert roc.name not in INCOME_ACTION_KINDS, "ROC is not income"
+    assert roc.name not in CASH_ADD_ACTIONS and roc.name not in CASH_SUB_ACTIONS
+
+    assert norm("MISC") == "Reward"
+    assert INCOME_ACTION_KINDS.get("Reward") == "rewards"
+
+
 def test_action_colors_complete():
     """Every catalog entry has a color so the dashboard never gets a
     fallback gray for a known action."""

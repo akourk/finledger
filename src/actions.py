@@ -121,6 +121,15 @@ _ACTIONS: tuple[Action, ...] = (
            "around cash_flow=neutral."),
 
     # ── Corporate actions ──────────────────────────────────────────────────
+    Action("Return of Capital", "neutral", "ignore",  "neutral", "#5eead4",
+           "Non-dividend distribution (Robinhood ROC) — cash paid out of "
+           "the company's capital, not earnings.  Shares unchanged.  "
+           "Strictly it lowers cost basis, but we leave basis untouched "
+           "(basis='ignore'), consistent with the app's deliberate "
+           "non-tracking of taxable-account cash: sell proceeds and cash "
+           "dividends aren't tracked either.  NOT income — excluded from "
+           "the Income tab.  cash_flow='neutral' keeps it out of "
+           "net_contributed / performance contribution accounting."),
     Action("Split",          "add",      "split",     "neutral", "#fbbf24",
            "Forward stock split — adds new shares, scales basis-per-share."),
     Action("Spinoff",        "add",      "zero_basis", "neutral", "#9ca3af",
@@ -147,6 +156,16 @@ _ACTIONS: tuple[Action, ...] = (
            "Cash-settled exercise — proceeds = OCC cash component."),
 
     # ── Other ──────────────────────────────────────────────────────────────
+    Action("Event Contract Transfer", "neutral", "ignore", "ignore", "#94a3b8",
+           "Robinhood FUTSWP — 'Event Contracts Inter-Entity Cash "
+           "Transfer'.  Cash shuffled between the main brokerage and the "
+           "separate event-contracts (prediction-markets / futures) "
+           "entity.  Both sides are the user's own money, so it's NOT "
+           "external cash flow — and the event-contracts world has no "
+           "positions imported here.  Fully inert: balance='neutral', "
+           "basis='ignore', cash_flow='ignore' so event-contract activity "
+           "is excluded from net_contributed, TWR, Sharpe, FIRE, and every "
+           "other performance metric (per user: not tracking these)."),
     Action("Fee",            "subtract", "remove",  "ignore",  "#f87171",
            "Share-level fee (rare); USD fees route to basis 'ignore'."),
     Action("Tax",            "subtract", "remove",  "ignore",  "#fb7185"),
