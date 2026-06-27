@@ -666,6 +666,16 @@ process.
   window, `get_price` returns None and `compute_history` silently skips
   the position (reflected in `priced_pct`). Don't "fix" this with
   forward-fill — you'd inflate values during data gaps.
+- **NaN closes are never cached or returned.** yfinance emits `NaN` for
+  a row whose close hasn't posted yet (the most-recent day during /
+  just after market hours, holiday rows). `float(NaN)` stays `NaN`, so
+  `_fetch_range` drops those rows on write and `get_price` skips any
+  lingering `NaN` on read (walking back to the prior real close). This
+  matters because a single `NaN` in the cache propagates through
+  `qty × price` into value / unrealized / totals everywhere — and since
+  Python's `json.dump` writes a bare `NaN` literal (valid JS when
+  embedded), it reaches the dashboard as `NaN` Total Return rather than
+  a parse error. If you hand-edit the cache, don't introduce `NaN`.
 - **Failure backoff is exponential** (1d → 2d → 4d → 8d → 16d, capped at
   30d). A successful fetch resets `failure_count` to 0 and clears
   `retry_after` / `last_error` / `tombstone`. "No data returned" only

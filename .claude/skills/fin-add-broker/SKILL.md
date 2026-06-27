@@ -34,6 +34,13 @@ Order matters in `detect_broker` — more-specific patterns first (e.g. Coinbase
 Pro is checked before generic Coinbase). The function returns a broker **key**,
 or `"manual"` / `"skip"` / `"unknown"`.
 
+`_detect_by_headers` scans the **first 10 lines**, not just line 1 — some
+exports prefix the real header with metadata rows (Coinbase opens with
+`Transactions` / `User,...` before the `ID,Timestamp,...` header). If your
+broker's header isn't on the first line, that's already handled; just make sure
+your signature columns are unique enough not to match one of those preamble
+lines.
+
 ## 2. Canonical prefix — `src/config.py`
 
 Add the key → rename-prefix to `CANONICAL_PREFIXES`. This is the `{prefix}.csv` /
