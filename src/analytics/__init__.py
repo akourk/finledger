@@ -43,6 +43,7 @@ from .monte_carlo import compute_monte_carlo
 from .options import compute_options_analytics
 from .positions import compute_position_returns
 from .rebalancing import compute_rebalancing
+from .reconcile import compute_reconciliation
 from .tax import compute_tax_analytics
 from .trading_heatmap import compute_trading_heatmap
 from ._shared import _account_filter_sets
@@ -259,6 +260,8 @@ def build_analytics(txns: list[dict], history: list[dict],
         "concentration":   concentration,
         "rebalancing":     compute_rebalancing(
             holdings_by_account, (retirement_meta or {}).get("target_allocation")),
+        "reconciliation":  compute_reconciliation(
+            txns, history, (retirement_meta or {}).get("reconcile")),
         "drawdown":        compute_drawdown(history),
         "daily_pnl":       compute_daily_pnl(history, txns),
         "trading_heatmap": compute_trading_heatmap(txns),

@@ -152,6 +152,18 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       (`{rows: [{bucket, target_pct, current_pct, drift_pct,
       action_value}], untargeted_pct, ...}`) from `Target Allocation`
       metadata rows.  `None` when no targets defined.
+    - `reconciliation` — fin's computed figures vs broker-reported
+      ground truth from `Reconcile *` rows in `metadata.csv`
+      (`{rows: [{kind, account_group, label, reported, computed,
+      delta, status, note, detail}], summary: {total, ok, warn,
+      off}}`).  Kinds: `balance` (vs nearest history snapshot),
+      `realized` (excl §1256), `section_1256`, `income` (div+int).
+      `status` = ok / warn / off (abs-$5 floor then 0.5% / 2%
+      bands).  `None` when no `Reconcile` rows defined.  Computed by
+      `analytics/reconcile.py`; rendered as a collapsible panel on
+      the Overview tab.  Deltas are expected & explainable in known
+      cases (wash-sale deferral, broker non-FIFO lot relief, broker
+      cash-sweep interest absent from the activity CSV).
     - `positions` — per-symbol realized+unrealized rollup with
       pct_return, plus top-10 winners/losers.
     - `header_summary` — persistent top-bar (1-day change, etc.).
@@ -229,7 +241,9 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     single HTML file. One file, no external assets. The dashboard is
     organized as a **tabbed single-page app** with hash routing:
 
-    - **Overview** — alerts/changes feedback panels (collapse if empty),
+    - **Overview** — alerts/changes/reconciliation feedback panels
+      (collapse if empty; reconciliation shows fin vs broker-reported
+      figures with ok/warn/off status — see `analytics.reconciliation`),
       stat cards (Value, Cost Basis, Unrealized/Realized P&L, Net
       Contributed, Income, Total Return, Current Drawdown), history
       chart with overlay toggles (Cost Basis, Unrealized Gain, SPY
@@ -404,6 +418,17 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     Amount = target percent of portfolio (accepts `60` or `0.6`).
     Drives the Holdings tab's **Target vs Actual** rebalancing-drift
     view (`analytics/rebalancing.py`).  Absent → the section hides.
+  - `Reconcile Balance` / `Reconcile Realized` / `Reconcile Income`
+    / `Reconcile Section 1256` — broker-reported ground truth to
+    check fin against (statement balances, 1099-B realized / §1256,
+    1099-DIV box 1a + 1099-INT income).  Symbol = `account_group`;
+    Date = as-of date (balance) or year (the rest); Amount = the
+    broker figure; Note = source.  Parsed into
+    `retirement_meta["reconcile"]`, consumed by
+    `analytics/reconcile.py`, surfaced in the Overview's
+    Reconciliation panel.  Absent → the panel hides.  Realized rows
+    should be the 1099-B *equity* grand-total (exclude §1256, which
+    has its own row).
   - `Retirement Age` — Amount = integer age (sanity-clamped to
     30..100, default 67).  Drives the Monte Carlo simulation
     horizon (`analytics/__init__.py` `years_to_60` is now

@@ -2267,6 +2267,60 @@ function renderOverviewStatus() {
     }
   }
 
+  // ----- Reconciliation card ------------------------------------------
+  // fin's computed figures vs broker-reported ground truth (statement
+  // balances, 1099-B realized / §1256, 1099-DIV+INT income) supplied via
+  // `Reconcile *` rows in metadata.csv.  Surfaces drift rather than
+  // hiding it — wash sales, broker non-FIFO lot relief, and cash-sweep
+  // interest that brokers report on the 1099 but omit from the CSV all
+  // show up here as expected, explainable deltas.
+  const recon = ANALYTICS.reconciliation;
+  if (recon && recon.rows && recon.rows.length) {
+    const sevOf = { ok: 'info', warn: 'warn', off: 'high', nodata: 'info' };
+    const s = recon.summary || {};
+    const dominant = s.off ? 'high' : s.warn ? 'warn' : 'info';
+    const fmtN = v => v == null ? '—' : fmtMoney(v, 2);
+    const fmtD = v => v == null ? '—' : (v >= 0 ? '+' : '') + fmtMoney(v, 2);
+    const bodyRows = recon.rows.map(r => `<tr>
+        <td>${_htmlEsc(r.account_group || '')}</td>
+        <td>${_htmlEsc(r.label || '')}</td>
+        <td style="text-align:right;">${fmtN(r.reported)}</td>
+        <td style="text-align:right;">${fmtN(r.computed)}</td>
+        <td style="text-align:right;" class="${r.delta > 0 ? 'positive' : r.delta < 0 ? 'negative' : ''}">${fmtD(r.delta)}</td>
+        <td><span class="dh-chip sev-${sevOf[r.status] || 'info'}">${_htmlEsc(r.status)}</span>${r.detail ? ` <span style="color:var(--text-dim);font-size:0.85em;">${_htmlEsc(r.detail)}</span>` : ''}</td>
+      </tr>`).join('');
+    const breakdown = ['off', 'warn', 'ok']
+      .filter(k => s[k])
+      .map(k => `<span class="dh-chip sev-${sevOf[k]}">${s[k]} ${k}</span>`)
+      .join(' ');
+    const total = s.total || recon.rows.length;
+    parts.push(`<details class="feedback-panel feedback-collapsible">
+      <summary class="dh-summary dh-${dominant}">
+        <span class="dh-label">Reconciliation</span>
+        <span class="dh-status">${total} check${total === 1 ? '' : 's'} vs broker docs</span>
+        ${breakdown}
+        <span class="dh-hint">click to expand</span>
+      </summary>
+      <div class="dh-body">
+        <table>
+          <thead><tr>
+            <th>Account</th><th>Check</th>
+            <th style="text-align:right;">Reported</th>
+            <th style="text-align:right;">fin</th>
+            <th style="text-align:right;">Δ</th>
+            <th>Status</th>
+          </tr></thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+        <div style="color:var(--text-dim);font-size:0.8rem;margin-top:8px;">
+          Add <code>Reconcile Balance/Realized/Income/Section 1256</code> rows to
+          <code>metadata.csv</code> (Symbol = account group, Date = as-of date or year)
+          to check more accounts.
+        </div>
+      </div>
+    </details>`);
+  }
+
   host.innerHTML = parts.join('');
 }
 

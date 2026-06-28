@@ -99,6 +99,7 @@ def _empty() -> dict:
         "annual_expenses": [],
         "targets": [],
         "target_allocation": [],
+        "reconcile": [],
         "account_groups": {},
         "account_types": {},
         # Defaults match the legacy hardcoded behavior — Single filer,
@@ -209,6 +210,22 @@ def parse_metadata(data_dir: Path) -> dict:
                 age = int(round(amt))
                 if 30 <= age <= 100:
                     out["retirement_age"] = age
+            elif typ.startswith("Reconcile "):
+                # User-supplied ground truth from broker statements /
+                # 1099s, compared against fin's computed figures by
+                # analytics/reconcile.py.  Symbol = account_group;
+                # Date = as-of date (balance) or year (realized / income
+                # / §1256); Amount = the broker-reported value.
+                kind = typ[len("Reconcile "):].strip().lower().replace(" ", "_")
+                if kind in ("balance", "realized", "income", "section_1256") \
+                        and symbol:
+                    out["reconcile"].append({
+                        "kind": kind,
+                        "account_group": symbol,
+                        "date": date,
+                        "amount": amt,
+                        "note": note,
+                    })
 
     out["salary_history"].sort(key=lambda x: x["date"])
     out["bonus_history"].sort(key=lambda x: x["date"])
