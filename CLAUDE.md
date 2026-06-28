@@ -334,8 +334,27 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   other brokers don't have the same data-completeness property and
   a similar bridge would inflate values.
 - **ETH ↔ ETH2 Coinbase conversions are Neutral** (same underlying asset,
-  just the old staking wrapper). Other conversions synthesize a paired
-  `Convert In` leg for the acquired asset.
+  just the old staking wrapper; ETH2→ETH-USD via SYMBOL_MAP). Other
+  *different-asset* conversions (Convert In/Out, e.g. BTC→ETH) synthesize a
+  paired `Convert In` leg and ARE taxable disposals.
+- **Wrap / Unwrap (ETH ↔ CBETH) is basis-CARRYING, not a taxable
+  disposal.**  CBETH is its own symbol (`CBETH-USD`), so wrapping crosses
+  symbols, but it moves the same underlying — `Wrap Asset In/Out` and
+  `Unwrap In/Out` carry basis instead of realizing gain (catalog basis
+  effects `wrap_in` / `wrap_out`).  The walker processes each
+  `(account_group, date, kind=wrap|unwrap)` group atomically
+  (`_pair_wraps`): consume all source lots with NO realized gain, carry
+  the total basis rescaled to the destination quantity (`_rescale_lots`,
+  dates preserved), push to the destination symbol.  Each leg is annotated
+  with its own per-symbol basis delta (out −, in +) so
+  `derive_basis_by_key_from_txns` (the parity check + refresh path) stays
+  in sync.  Gain is realized only at the eventual real sale.  This matches
+  how brokers (Coinbase 1099-DA) report wrapping — mapping it to Buy/Sell
+  (the old behaviour) wrongly realized the full gain at every wrap.  NOTE:
+  fin still uses the *actual* historical cost of the wrapped asset; if that
+  asset was acquired off-platform / pre-Coinbase, fin's basis can be lower
+  than the broker's "customer-provided" basis (an inherent data limit, not
+  this code).
 - **USAA "Dividend" rows are reclassified to a USD cash event** — USAA
   records both the dividend share-payout *and* a matching Buy reinvestment,
   so crediting shares from the Dividend row would double-count.

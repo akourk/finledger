@@ -278,6 +278,56 @@ def _pair_transfers(txns: list[dict]) -> dict:
     }
 
 
+def _pair_wraps(txns: list[dict]) -> dict:
+    """Group wrap / unwrap legs into basis-carrying conversions.
+
+    Wrapping (e.g. ETH→CBETH) and unwrapping move the same underlying
+    asset between two symbols WITHOUT a taxable disposal — basis carries.
+    Each ``(account_group, date, kind)`` group bundles its ``wrap_out``
+    legs (the source symbol consumed) and ``wrap_in`` legs (the
+    destination symbol received).  ``kind`` is ``wrap`` (Wrap Asset*) or
+    ``unwrap`` (Unwrap*) so a same-day wrap and unwrap on the same account
+    don't get cross-wired.  The walker processes each group atomically the
+    first time it meets any leg, so same-day leg ordering is irrelevant.
+
+    Returns ``{group_key: {"out": [...], "in": [...], "src": sym,
+    "dst": sym, "q_out": float, "q_in": float}}``.
+    """
+    groups: dict[tuple, dict] = {}
+    for t in txns:
+        effect = _basis_effect(t)
+        if effect not in ("wrap_out", "wrap_in"):
+            continue
+        action = t.get("action", "") or ""
+        kind = "unwrap" if "Unwrap" in action else "wrap"
+        key = (t.get("account_group", "") or "", t.get("date", "") or "", kind)
+        g = groups.setdefault(key, {"out": [], "in": [], "src": "", "dst": "",
+                                    "q_out": 0.0, "q_in": 0.0})
+        qty = float(t.get("quantity", 0) or 0)
+        if effect == "wrap_out":
+            g["out"].append(t); g["q_out"] += qty
+            g["src"] = t.get("symbol", "") or ""
+        else:
+            g["in"].append(t); g["q_in"] += qty
+            g["dst"] = t.get("symbol", "") or ""
+    return groups
+
+
+def _rescale_lots(carried: list[dict], target_qty: float) -> list[dict]:
+    """Rebase a carried lot list onto `target_qty` units, preserving total
+    basis and each lot's acquired date.  Used to move basis across a
+    wrap's quantity change (e.g. 10 ETH → 9.39 CBETH)."""
+    src_qty = sum(l["qty"] for l in carried)
+    if src_qty <= 0 or target_qty <= 0:
+        return []
+    ratio = target_qty / src_qty
+    return [{
+        "date": l["date"],
+        "qty": l["qty"] * ratio,
+        "basis_per_share": l["basis_per_share"] / ratio,
+    } for l in carried]
+
+
 # ---------------------------------------------------------------------------
 # Lot consumption (per-method)
 # ---------------------------------------------------------------------------
@@ -478,6 +528,14 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
     # day Transfer In that walked first — skip them when we reach them.
     tout_handled: set[int] = set()
 
+    # Wrap/unwrap groups (basis-carrying conversions), processed
+    # atomically the first time any leg is met.
+    wrap_groups = _pair_wraps(txns)
+    wrap_done: set[tuple] = set()
+    # Per-leg annotations (effect, cost_basis, realized) computed when a
+    # wrap group is processed atomically, applied as each leg is reached.
+    wrap_leg_ann: dict[int, tuple] = {}
+
     txns_sorted = sorted(txns, key=_sort_key)
 
     for t in txns_sorted:
@@ -595,6 +653,56 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                     state, _method_for(src_key[0]), src_key, qty_tout)
                 cost_basis_value = _push_carried_lots(state, method, key, carried)
                 tout_handled.add(id(paired))
+
+        elif effect in ("wrap_out", "wrap_in"):
+            # Basis-carrying conversion (e.g. ETH↔CBETH).  Process the whole
+            # (account, date, kind) group atomically the first time we meet
+            # any leg — consume all source lots (NO realized gain), carry the
+            # total basis (rescaled to the destination quantity, dates
+            # preserved) to the destination symbol.  Each leg is then
+            # annotated with its OWN per-symbol basis delta (out legs
+            # subtract, in legs add) so the txn-level reconstruction
+            # (derive_basis_by_key_from_txns) and the refresh path stay in
+            # sync with the lot queue.
+            kind = "unwrap" if "Unwrap" in (t.get("action", "") or "") else "wrap"
+            gkey = (acct, t.get("date", "") or "", kind)
+            if gkey not in wrap_done:
+                wrap_done.add(gkey)
+                g = wrap_groups.get(gkey)
+                if g and g["out"] and g["in"] and g["q_out"] > 0 and g["q_in"] > 0:
+                    B, carried = _consume_from_key(
+                        state, _method_for(acct), (acct, g["src"]), g["q_out"])
+                    _push_carried_lots(state, method, (acct, g["dst"]),
+                                       _rescale_lots(carried, g["q_in"]))
+                    for ol in g["out"]:
+                        oq = float(ol.get("quantity", 0) or 0)
+                        wrap_leg_ann[id(ol)] = (
+                            "wrap_out", B * (oq / g["q_out"]), None)
+                    for il in g["in"]:
+                        iq = float(il.get("quantity", 0) or 0)
+                        wrap_leg_ann[id(il)] = (
+                            "wrap_in", B * (iq / g["q_in"]), None)
+                elif g:
+                    # Lone / malformed group — fall back per leg so basis
+                    # isn't silently lost.  A bare wrap_out behaves like a
+                    # sale (realize gain); a bare wrap_in like an FMV buy.
+                    for ol in g["out"]:
+                        oq = float(ol.get("quantity", 0) or 0)
+                        proceeds = _basis_dollars(ol)
+                        b_rm, _c = _consume_from_key(
+                            state, _method_for(acct), (acct, ol.get("symbol", "")), oq)
+                        wrap_leg_ann[id(ol)] = (
+                            "wrap_out_unpaired", b_rm, proceeds - b_rm)
+                    for il in g["in"]:
+                        iq = float(il.get("quantity", 0) or 0)
+                        px = float(il.get("price", 0) or 0)
+                        b = iq * px if px > 0 else 0.0
+                        _push_lot(state, method, (acct, il.get("symbol", "")),
+                                  iq, b, il.get("date", ""))
+                        wrap_leg_ann[id(il)] = ("wrap_in_unpaired", b, None)
+            ann = wrap_leg_ann.get(id(t))
+            if ann:
+                final_effect, cost_basis_value, realized = ann
 
         elif effect == "split":
             if method == "avg":
@@ -728,11 +836,12 @@ def derive_basis_by_key_from_txns(txns: list[dict]) -> dict[tuple[str, str], flo
         if be is None or cb is None:
             continue
         key = (t.get("account_group", ""), sym)
-        if be in ("add", "zero_basis", "transfer_in", "transfer_in_unpaired"):
+        if be in ("add", "zero_basis", "transfer_in", "transfer_in_unpaired",
+                  "wrap_in", "wrap_in_unpaired"):
             by_key[key] = by_key.get(key, 0.0) + float(cb)
-        elif be in ("remove", "transfer_out"):
+        elif be in ("remove", "transfer_out", "wrap_out", "wrap_out_unpaired"):
             by_key[key] = by_key.get(key, 0.0) - float(cb)
-        # intra_group_noop / split / ignore: no contribution
+        # intra_group_noop / split / ignore / wrap_carry_noop: no contribution
     return by_key
 
 

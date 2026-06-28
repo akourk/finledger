@@ -63,6 +63,47 @@ class TestPerAccountLotMethod:
         assert res_avg["realized_total"] == pytest.approx(600.0)  # both FIFO
 
 
+class TestWrapBasisCarry:
+    def test_wrap_defers_gain_and_carries_basis(self, isolated_workdir):
+        """Wrapping (ETH→CBETH) is basis-CARRYING, not a taxable disposal:
+        no gain at the wrap, the ETH basis flows to CBETH (rescaled to the
+        new quantity), and gain is realized only at the eventual real sale.
+        Matches how brokers (Coinbase 1099-DA) report wrapping."""
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2022-01-01", "Coinbase", "ETH-USD",   "Buy",            10, 100.0, 1000.0),
+            # Wrap 10 ETH → 9 CBETH same day (qty changes; basis carries).
+            ("2022-06-01", "Coinbase", "ETH-USD",   "Wrap Asset Out", 10, 150.0, 1500.0),
+            ("2022-06-01", "Coinbase", "CBETH-USD", "Wrap Asset In",   9, 166.7, 1500.0),
+            # Sell the 9 CBETH for $1800.
+            ("2022-12-01", "Coinbase", "CBETH-USD", "Sell",            9, 200.0, 1800.0),
+        )
+        res = compute_basis_default(txns)
+        # Gain realized only at the sale: 1800 proceeds − 1000 carried basis.
+        assert res["realized_total"] == pytest.approx(800.0)
+        # The wrap legs must NOT realize any gain.
+        wrap_out = next(t for t in txns if t["action"] == "Wrap Asset Out")
+        assert not wrap_out.get("realized_gain")
+        sell = next(t for t in txns if t["action"] == "Sell")
+        assert sell["realized_gain"] == pytest.approx(800.0)
+
+    def test_unwrap_then_sell_carries_basis(self, isolated_workdir):
+        """Round trip: buy ETH, wrap to CBETH, unwrap back to ETH, sell ETH.
+        Basis survives both conversions; gain only at the final sale."""
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2022-01-01", "Coinbase", "ETH-USD",   "Buy",            10, 100.0, 1000.0),
+            ("2022-03-01", "Coinbase", "ETH-USD",   "Wrap Asset Out", 10, 150.0, 1500.0),
+            ("2022-03-01", "Coinbase", "CBETH-USD", "Wrap Asset In",   9, 166.7, 1500.0),
+            ("2022-09-01", "Coinbase", "CBETH-USD", "Unwrap Out",      9, 200.0, 1800.0),
+            ("2022-09-01", "Coinbase", "ETH-USD",   "Unwrap In",      10, 180.0, 1800.0),
+            ("2022-12-01", "Coinbase", "ETH-USD",   "Sell",           10, 200.0, 2000.0),
+        )
+        res = compute_basis_default(txns)
+        # 2000 proceeds − 1000 original basis = 1000, only at the sale.
+        assert res["realized_total"] == pytest.approx(1000.0)
+
+
 class TestFIFOBasis:
     def test_simple_buy_sell(self, isolated_workdir):
         """One Buy, one full Sell — realized = proceeds - basis.

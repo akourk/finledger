@@ -92,10 +92,14 @@ RULES = [
     {"account_group": "Coinbase", "action": "Convert In",                     "normalized": "Buy"},
     # ETH↔ETH2 conversions are the same underlying asset — treat as neutral
     {"account_group": "Coinbase", "action": "Convert Out Neutral",            "normalized": "Neutral"},
-    {"account_group": "Coinbase", "action": "Unwrap Out",                     "normalized": "Sell"},
-    {"account_group": "Coinbase", "action": "Unwrap In",                      "normalized": "Buy"},
-    {"account_group": "Coinbase", "action": "Wrap Asset Out",                 "normalized": "Sell"},
-    {"account_group": "Coinbase", "action": "Wrap Asset In",                  "normalized": "Buy"},
+    # Wrap / Unwrap (ETH↔CBETH) keep their own canonical actions — they're
+    # basis-CARRYING conversions (non-taxable), handled atomically by the
+    # cost-basis walker.  Mapping them to Buy/Sell (the old behaviour)
+    # wrongly realized gain at every wrap.  See actions.py wrap_out/wrap_in.
+    {"account_group": "Coinbase", "action": "Unwrap Out",                     "normalized": "Unwrap Out"},
+    {"account_group": "Coinbase", "action": "Unwrap In",                      "normalized": "Unwrap In"},
+    {"account_group": "Coinbase", "action": "Wrap Asset Out",                 "normalized": "Wrap Asset Out"},
+    {"account_group": "Coinbase", "action": "Wrap Asset In",                  "normalized": "Wrap Asset In"},
     {"account_group": "Coinbase", "action": "Retail Eth2 Deprecation",      "normalized": "Neutral"},
     {"account_group": "Coinbase", "action": "Send",                         "normalized": "Transfer Out"},
     {"account_group": "Coinbase", "action": "Receive",                      "normalized": "Transfer In"},

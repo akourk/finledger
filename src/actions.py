@@ -44,6 +44,14 @@ BalanceEffect = Literal["add", "subtract", "neutral"]
 BasisEffect = Literal[
     "add", "remove", "zero_basis", "transfer_out", "transfer_in",
     "split", "ignore", "unknown",
+    # Crypto wrap/unwrap (e.g. ETH ↔ CBETH): a basis-CARRYING conversion,
+    # NOT a taxable disposal.  The walker processes each (account, date,
+    # direction) wrap group atomically — consume the source lots with no
+    # realized gain, carry the total basis (rescaled to the destination
+    # quantity, dates preserved) to the destination symbol.  Matches how
+    # brokers (Coinbase 1099-DA) report wrapping: non-taxable, basis flows
+    # through, gain deferred to the eventual real sale.
+    "wrap_out", "wrap_in",
 ]
 CashFlowEffect = Literal["in", "out", "neutral", "ignore"]
 
@@ -150,12 +158,18 @@ _ACTIONS: tuple[Action, ...] = (
     Action("Merger",         "add",      "zero_basis", "neutral", "#9ca3af"),
 
     # ── Crypto specifics ───────────────────────────────────────────────────
+    # Convert (different underlying assets, e.g. BTC→ETH) stays a taxable
+    # disposal per IRS — Convert Out realizes gain, Convert In gets FMV
+    # basis.  (ETH↔ETH2 same-asset converts are caught upstream and marked
+    # Neutral by the parser.)
     Action("Convert In",     "add",      "add",       "neutral", "#e879f9"),
     Action("Convert Out",    "subtract", "remove",    "neutral", "#e879f9"),
-    Action("Wrap Asset In",  "add",      "add",       "neutral", "#e879f9"),
-    Action("Wrap Asset Out", "subtract", "remove",    "neutral", "#e879f9"),
-    Action("Unwrap In",      "add",      "add",       "neutral", "#e879f9"),
-    Action("Unwrap Out",     "subtract", "remove",    "neutral", "#e879f9"),
+    # Wrap / Unwrap (same underlying, e.g. ETH↔CBETH) is basis-CARRYING,
+    # not a taxable disposal — see the wrap_out/wrap_in note above.
+    Action("Wrap Asset In",  "add",      "wrap_in",   "neutral", "#e879f9"),
+    Action("Wrap Asset Out", "subtract", "wrap_out",  "neutral", "#e879f9"),
+    Action("Unwrap In",      "add",      "wrap_in",   "neutral", "#e879f9"),
+    Action("Unwrap Out",     "subtract", "wrap_out",  "neutral", "#e879f9"),
 
     # ── Options ────────────────────────────────────────────────────────────
     Action("Option Buy",     "add",      "add",     "neutral", "#86efac"),
