@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The app has no runtime dependency beyond yfinance, and yfinance is
+      # imported lazily inside functions that the test suite stubs out — so
+      # the tests run fully offline.  We install yfinance anyway as cheap
+      # insurance against any lazy-import path a test might reach.
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip pytest yfinance
+
+      # conftest.py sets FIN_ASSERT_INVARIANTS=1, so the high-severity
+      # data-health checks are promoted to hard errors during the run.
+      - name: Run tests
+        run: python -m pytest tests/ -q
