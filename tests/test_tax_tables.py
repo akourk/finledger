@@ -71,6 +71,57 @@ def test_form_8949_taxable_only_and_term_classified():
     assert by_sym["TSLA"]["gain"] == -200.0
 
 
+def test_classify_realized_splits_lots_across_one_year_line():
+    """A single sell that straddles the 1-year line must split ST/LT
+    lot-by-lot, not dump the whole gain into one bucket by the weighted-
+    average holding period.  Regression for the NVDA 1099-B mismatch
+    (08/29/25 sale classified ST by fin, LT by the broker)."""
+    from src.analytics.tax import _classify_realized
+    # 100 sh from a >1yr lot (gain 4000) + 100 sh from a <1yr lot (gain
+    # 1000).  Weighted-avg days would be ~330 (< 365) → old code marked
+    # the whole $5000 short-term.  Correct answer: 4000 LT + 1000 ST.
+    txn = {
+        "symbol": "NVDA", "realized_gain": 5000,
+        "holding_days": 330,  # blended avg < 365 (the trap)
+        "lot_breakdown": [
+            {"date_acquired": "2023-06-28", "qty": 100,
+             "cost_basis": 6000, "proceeds": 10000, "days": 580},
+            {"date_acquired": "2024-09-30", "qty": 100,
+             "cost_basis": 11000, "proceeds": 12000, "days": 333},
+        ],
+    }
+    c = _classify_realized(txn)
+    assert c["lt"] == 4000.0, "long-held lot's gain must be long-term"
+    assert c["st"] == 1000.0, "short-held lot's gain must be short-term"
+    assert c["st"] + c["lt"] == txn["realized_gain"]
+
+
+def test_form_8949_emits_one_row_per_lot_with_real_dates():
+    """With a lot_breakdown, each consumed lot is its own 8949 row with
+    its true acquired date and term — no fabricated date_acquired."""
+    from src.analytics.tax import _build_form_8949
+    rows = _build_form_8949([
+        {"account_type": "Taxable", "account_group": "Robinhood",
+         "symbol": "NVDA", "date": "2025-08-29", "quantity": 200,
+         "amount": 22000, "cost_basis": 17000, "realized_gain": 5000,
+         "holding_days": 330,
+         "lot_breakdown": [
+             {"date_acquired": "2023-06-28", "qty": 100,
+              "cost_basis": 6000, "proceeds": 10000, "days": 580},
+             {"date_acquired": "2024-09-30", "qty": 100,
+              "cost_basis": 11000, "proceeds": 12000, "days": 333},
+         ]},
+    ])
+    assert len(rows) == 2, "multi-lot sell should emit one row per lot"
+    by_date = {r["date_acquired"]: r for r in rows}
+    assert by_date["2023-06-28"]["term"] == "long"
+    assert by_date["2023-06-28"]["gain"] == 4000.0
+    assert by_date["2024-09-30"]["term"] == "short"
+    assert by_date["2024-09-30"]["gain"] == 1000.0
+    # No fabricated dates — both are real acquired dates from the lots.
+    assert all(r["date_acquired"] in ("2023-06-28", "2024-09-30") for r in rows)
+
+
 def test_form_8949_various_when_no_holding_days():
     from src.analytics.tax import _build_form_8949
     rows = _build_form_8949([

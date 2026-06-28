@@ -166,6 +166,15 @@ def _basis_dollars(txn: dict) -> float:
     return qty * price
 
 
+def _safe_date(s: str):
+    """Parse an ISO ``YYYY-MM-DD`` date, returning None on anything
+    unparseable (empty string, ``VARIOUS``, malformed)."""
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
 def _sort_key(t: dict) -> tuple:
     """Sort txns for basis processing — mirrors main.py's balance-walk sort.
 
@@ -495,30 +504,39 @@ def _walk(txns: list[dict], method: str, *, annotate: bool) -> dict:
             basis_removed, carried = _consume_from_key(state, method, key, qty)
             cost_basis_value = basis_removed
             realized = proceeds - basis_removed
-            # Weighted-average holding period in days for the consumed
-            # lots.  Used by the Tax tab to split realized gain into
-            # short-term vs long-term.  Only tracked for FIFO (annotated
-            # method); other walks skip it.
+            # Per-lot breakdown of the consumed lots.  Each lot keeps its
+            # own acquired date, basis, and proceeds (apportioned by
+            # share) and days-held, so the Tax tab can classify realized
+            # gain short- vs long-term *lot by lot* — a single sell often
+            # straddles the 1-year line, and collapsing it to one
+            # weighted-average holding period mis-buckets the whole gain
+            # (and fabricates an acquired date that matches no real lot).
+            # ``holding_days`` (the weighted average) is still emitted for
+            # the transaction-detail display.  FIFO/annotate only.
             if annotate:
-                try:
-                    close_d = datetime.strptime(t.get("date", ""), "%Y-%m-%d").date()
-                    weighted_days = 0.0
-                    total_q = 0.0
-                    for lot in carried:
-                        lot_date_s = lot.get("date", "")
-                        if not lot_date_s:
-                            continue
-                        try:
-                            lot_d = datetime.strptime(lot_date_s, "%Y-%m-%d").date()
-                        except ValueError:
-                            continue
-                        d = (close_d - lot_d).days
-                        weighted_days += d * lot["qty"]
-                        total_q += lot["qty"]
-                    if total_q > 0:
-                        t["holding_days"] = round(weighted_days / total_q, 1)
-                except ValueError:
-                    pass
+                close_d = _safe_date(t.get("date", ""))
+                consumed_q = sum(lot["qty"] for lot in carried)
+                breakdown: list[dict] = []
+                weighted_days = 0.0
+                dated_q = 0.0
+                for lot in carried:
+                    lot_d = _safe_date(lot.get("date", ""))
+                    days = (close_d - lot_d).days if (close_d and lot_d) else None
+                    if days is not None:
+                        weighted_days += days * lot["qty"]
+                        dated_q += lot["qty"]
+                    breakdown.append({
+                        "date_acquired": lot.get("date", "") or "VARIOUS",
+                        "qty": lot["qty"],
+                        "cost_basis": lot["qty"] * lot["basis_per_share"],
+                        "proceeds": (proceeds * lot["qty"] / consumed_q)
+                                    if consumed_q > 0 else 0.0,
+                        "days": days,
+                    })
+                if breakdown:
+                    t["lot_breakdown"] = breakdown
+                if dated_q > 0:
+                    t["holding_days"] = round(weighted_days / dated_q, 1)
 
         elif effect == "transfer_out":
             if id(t) in tout_handled:

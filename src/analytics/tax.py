@@ -38,11 +38,30 @@ SECTION_1256_UNDERLYINGS = frozenset({
 
 
 def _classify_realized(txn: dict) -> dict:
-    """Split a realized-gain txn into ST / LT / §1256 components."""
+    """Split a realized-gain txn into ST / LT / §1256 components.
+
+    Prefers the per-lot ``lot_breakdown`` (from the FIFO walker) so a
+    sell that straddles the 1-year line is split lot-by-lot — the right
+    answer and what the broker's 1099-B reports.  Falls back to the
+    weighted-average ``holding_days`` (whole sell into one bucket) only
+    when no breakdown is present.
+    """
     gain = float(txn.get("realized_gain", 0) or 0)
     parsed = _parse_option_symbol(txn.get("symbol", ""))
     if parsed and parsed["underlying"] in SECTION_1256_UNDERLYINGS:
         return {"st": gain * 0.4, "lt": gain * 0.6, "s1256": gain, "kind": "1256"}
+    breakdown = txn.get("lot_breakdown")
+    if breakdown:
+        st = lt = 0.0
+        for lot in breakdown:
+            lot_gain = (float(lot.get("proceeds", 0) or 0)
+                        - float(lot.get("cost_basis", 0) or 0))
+            days = lot.get("days")
+            if isinstance(days, (int, float)) and days > 365:
+                lt += lot_gain
+            else:
+                st += lot_gain
+        return {"st": st, "lt": lt, "s1256": 0.0, "kind": "normal"}
     days = txn.get("holding_days")
     is_lt = days is not None and days > 365
     return {
@@ -599,18 +618,44 @@ def _build_form_8949(realized: list[dict]) -> list[dict]:
     Only **taxable-account** disposals are reportable — retirement
     accounts aren't taxed on gains, so they're excluded.  Each row mirrors
     8949's columns: description, date acquired / sold, proceeds, cost
-    basis, gain/loss, and term (short / long / §1256).  Date acquired is
-    derived from the FIFO ``holding_days`` annotation (earliest matched
-    lot); when that's unavailable we emit ``VARIOUS`` (a valid 8949 entry
-    for multi-lot dispositions).
+    basis, gain/loss, and term (short / long / §1256).
+
+    When the FIFO ``lot_breakdown`` is present, a sell is emitted as **one
+    row per consumed lot** with that lot's real acquired date and its own
+    short/long term — matching how a broker's 1099-B itemizes a
+    multi-lot disposal.  §1256 contracts stay a single row (60/40 rule).
+    Without a breakdown we fall back to a single row whose acquired date
+    is derived from the weighted-average ``holding_days`` (or ``VARIOUS``).
     """
     rows: list[dict] = []
     for t in realized:
         if t.get("account_type") != "Taxable":
             continue
-        gain = float(t.get("realized_gain", 0) or 0)
         c = _classify_realized(t)
         sold = t.get("date", "")
+        sym = t.get("symbol", "")
+        account = t.get("account_group", "")
+        breakdown = t.get("lot_breakdown")
+
+        if c["kind"] != "1256" and breakdown:
+            for lot in breakdown:
+                proceeds = round(float(lot.get("proceeds", 0) or 0), 2)
+                basis = round(float(lot.get("cost_basis", 0) or 0), 2)
+                days = lot.get("days")
+                term = "long" if (isinstance(days, (int, float)) and days > 365) else "short"
+                rows.append({
+                    "description": f"{float(lot.get('qty', 0) or 0):g} {sym}".strip(),
+                    "date_acquired": lot.get("date_acquired") or "VARIOUS",
+                    "date_sold": sold,
+                    "proceeds": proceeds,
+                    "cost_basis": basis,
+                    "gain": round(proceeds - basis, 2),
+                    "term": term,
+                    "account": account,
+                })
+            continue
+
+        # §1256 or no per-lot detail: single row.
         days = t.get("holding_days")
         acquired = "VARIOUS"
         if isinstance(days, (int, float)) and days >= 0:
@@ -623,14 +668,14 @@ def _build_form_8949(realized: list[dict]) -> list[dict]:
             term = "long" if (isinstance(days, (int, float)) and days > 365) else "short"
         qty = float(t.get("quantity", 0) or 0)
         rows.append({
-            "description": f"{qty:g} {t.get('symbol', '')}".strip(),
+            "description": f"{qty:g} {sym}".strip(),
             "date_acquired": acquired,
             "date_sold": sold,
             "proceeds": round(float(t.get("amount", 0) or 0), 2),
             "cost_basis": round(float(t.get("cost_basis", 0) or 0), 2),
-            "gain": round(gain, 2),
+            "gain": round(float(t.get("realized_gain", 0) or 0), 2),
             "term": term,
-            "account": t.get("account_group", ""),
+            "account": account,
         })
     rows.sort(key=lambda r: (r["date_sold"], r["description"]))
     return rows

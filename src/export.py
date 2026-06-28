@@ -85,13 +85,19 @@ def export_json(txns: list[dict], output_path: Path, *,
         "holding_days", "basis_effect", "description", "source",
     ]
 
+    # Internal analytics intermediates that live on the txn dict in memory
+    # but should not bloat the exported JSON.  ``lot_breakdown`` is the
+    # per-lot FIFO detail consumed by analytics/tax.py (form_8949, ST/LT
+    # split); the dashboard reads the precomputed results, not the raw lots.
+    _INTERNAL_FIELDS = {"lot_breakdown"}
+
     def _ordered(txn: dict) -> dict:
         ordered = {}
         for key in _FIELD_ORDER:
             if key in txn:
                 ordered[key] = txn[key]
         for key in txn:
-            if key not in ordered:
+            if key not in ordered and key not in _INTERNAL_FIELDS:
                 ordered[key] = txn[key]
         return ordered
 
