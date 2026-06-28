@@ -157,8 +157,14 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       (`{rows: [{kind, account_group, label, reported, computed,
       delta, status, note, detail}], summary: {total, ok, warn,
       off}}`).  Kinds: `balance` (vs nearest history snapshot),
-      `realized` (excl §1256), `section_1256`, `income` (div+int),
-      `other_income` (rewards+lending, for crypto 1099-MISC).
+      `realized` (excl §1256), `section_1256`, `income`
+      (div+int+lending — brokers bundle stock-lending "substitute
+      interest" into the 1099-INT; verified Robinhood Interest+Lending ==
+      1099-INT box 1 to the cent), `other_income` (rewards+lending, for
+      crypto 1099-MISC).  NOTE: `lending` is in both `income` and
+      `other_income` because different brokers report it on different
+      forms (Robinhood→1099-INT, Coinbase→1099-MISC) — so give any one
+      account only the row type matching its broker, never both.
       `status` = ok / warn / off (abs-$5 floor then 0.5% / 2%
       bands).  `None` when no `Reconcile` rows defined.  Computed by
       `analytics/reconcile.py`; rendered as a collapsible panel on

@@ -137,7 +137,13 @@ def compute_reconciliation(txns, history, reconcile_meta):
             computed = _computed_realized(txns, ag, yr, s1256=True)
             label = f"§1256 gains {yr}"
         elif kind == "income":
-            computed = _computed_income(txns, ag, yr, ("dividends", "interest"))
+            # div + int + lending: brokers commonly report stock-lending
+            # income as "substitute interest" bundled INTO the 1099-INT
+            # (verified for Robinhood: fin Interest + Lending == 1099-INT
+            # box 1 to the cent every year), so the lending bucket must be
+            # included for the income check to reconcile.
+            computed = _computed_income(
+                txns, ag, yr, ("dividends", "interest", "lending"))
             label = f"Income {yr}"
         elif kind == "other_income":
             computed = _computed_income(txns, ag, yr, ("rewards", "lending"))

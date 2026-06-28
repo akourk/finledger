@@ -24,12 +24,15 @@ def _txns():
         # counted under "section_1256"
         {"account_group": "Robinhood", "symbol": "SPXW 12/20/2025 Put $5000.00",
          "date": "2025-09-01", "realized_gain": 3500.00},
-        # Income: dividend + interest = 50 + 20 = 70
+        # Income: dividend 50 + interest 20 + lending 5 = 75 (brokers bundle
+        # stock-lending "substitute interest" into the 1099-INT).
         {"account_group": "Robinhood", "symbol": "AAPL", "date": "2025-02-01",
          "action": "Dividend", "amount": 50.0},
         {"account_group": "Robinhood", "symbol": "USD", "date": "2025-02-01",
          "action": "Interest", "amount": 20.0},
-        # Reward must NOT count toward div+int income
+        {"account_group": "Robinhood", "symbol": "AAPL", "date": "2025-03-01",
+         "action": "Lending", "amount": 5.0},
+        # Reward must NOT count toward income (it's other_income / 1099-MISC)
         {"account_group": "Robinhood", "symbol": "FOO", "date": "2025-02-01",
          "action": "Reward", "amount": 999.0},
     ]
@@ -65,26 +68,27 @@ def test_realized_excludes_section_1256():
     assert by_kind["section_1256"]["status"] == "ok"
 
 
-def test_income_is_dividends_plus_interest_only():
+def test_income_is_dividends_interest_and_lending():
     rec = compute_reconciliation(_txns(), _history(), [
         {"kind": "income", "account_group": "Robinhood",
          "date": "2025", "amount": 90.0, "note": "1099-DIV+INT"},
     ])
     row = rec["rows"][0]
-    assert row["computed"] == 70.0     # 50 div + 20 int; reward excluded
-    assert row["delta"] == -20.0
-    assert row["status"] == "off"      # $20 / $90 = 22% → off
+    # 50 div + 20 int + 5 lending = 75; reward (1099-MISC) excluded.
+    assert row["computed"] == 75.0
+    assert row["delta"] == -15.0
+    assert row["status"] == "off"      # $15 / $90 = 17% → off
 
 
-def test_other_income_is_rewards_not_dividends():
-    """Crypto 1099-MISC 'Other Income' is staking rewards, a different
+def test_other_income_is_rewards_and_lending_not_dividends():
+    """Crypto 1099-MISC 'Other Income' = rewards + lending, a different
     bucket than div+int — reconciled via kind 'other_income'."""
     rec = compute_reconciliation(_txns(), _history(), [
         {"kind": "other_income", "account_group": "Robinhood",
-         "date": "2025", "amount": 999.0, "note": "1099-MISC"},
+         "date": "2025", "amount": 1004.0, "note": "1099-MISC"},
     ])
     row = rec["rows"][0]
-    assert row["computed"] == 999.0   # the Reward txn; div/int excluded
+    assert row["computed"] == 1004.0   # reward 999 + lending 5; div/int excluded
     assert row["status"] == "ok"
     assert row["label"] == "Other income 2025"
 
