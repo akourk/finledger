@@ -145,7 +145,9 @@ is one of:
 | `Account Group`   | Override `ACCOUNT_GROUPS` — Symbol = broker's raw account name, Note = simplified group key      |
 | `Account Type`    | Override `ACCOUNT_TYPES` — Symbol = group key, Note = `Taxable` / `Retirement` / `Savings`       |
 | `Filing Status`   | Note = `Single` / `Married Filing Jointly` / `Married Filing Separately` / `Head of Household` (default `Single`).  Drives federal + LTCG brackets, standard deduction, Roth MAGI phaseout window. |
-| `State`           | Note = 2-letter state code (`WA`, `CA`, …).  Display label only; no automatic state-tax math.    |
+| `State`           | Note = 2-letter state code (`WA`, `CA`, …).  Display label; pair with `State Tax Rate`.            |
+| `State Tax Rate`  | Amount = marginal state income-tax rate as a decimal (`0.093`).  Added to the federal marginal for the Tax tab's combined rate + estimated capital-gains tax. |
+| `Target Allocation` | Symbol = sector bucket (`ETFs`, `Cash`, …), Amount = target %.  Drives the Holdings tab's Target vs Actual rebalancing-drift view. |
 | `Retirement Age`  | Amount = integer age (default `67`).  Drives Monte Carlo horizon + Planning tab projection-age default. |
 
 `Account Group` / `Account Type` rows let you onboard a new broker or
@@ -168,8 +170,9 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   allocation donut, concentration grid (positions / sectors / accounts
   with HHI + top-5 share).
 - **Holdings** — by Asset / Account / Type / Sector, with cost basis and
-  unrealized gain columns. Plus a lot method comparison table (FIFO /
-  LIFO / HIFO / Average).
+  unrealized gain columns. Plus a **Target vs Actual** rebalancing-drift
+  view (when `Target Allocation` is set) and a lot method comparison
+  table (FIFO / LIFO / HIFO / Average).
 - **Transactions** — every row with per-field filters, free-text search,
   symbol filter, and column visibility toggle.
 - **Options** — cumulative P&L chart, open contracts (with DTE), closed
@@ -196,7 +199,10 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   broad-based index options); §1256 columns auto-hide when there's no
   §1256 activity. Current-year figures are extrapolated from YTD pace
   (salary, bonuses, dividends, 401K — capped at IRS limit; realized
-  gains kept YTD-only since sells are lumpy).
+  gains kept YTD-only since sells are lumpy). Includes an **estimated
+  tax on realized gains** panel (federal + state + NIIT, with a
+  suggested quarterly amount) and a **Form 8949 CSV** export of
+  taxable-account disposals.
 - **Crypto** — per-coin holdings, realized & income, recent activity,
   conversion/wrap log.
 - **Performance** — stat cards (Total Gain, Realized, Unrealized, Net
@@ -273,8 +279,8 @@ fin/
 │       ├── __init__.py    #   Bundler: splices CSS + JS + JSON into one HTML
 │       ├── template.html  #   Page structure with @@STYLES@@ / @@APP_JS@@ markers
 │       ├── styles.css     #   Dashboard CSS
-│       └── app.js         #   Dashboard JS (~4000 lines)
-└── tests/                 # pytest test suite (~88 tests, no network calls)
+│       └── app.js         #   Dashboard JS (~7500 lines)
+└── tests/                 # pytest test suite (~130 tests, no network calls)
     ├── conftest.py        #   Fixtures: isolated_workdir, stub_prices, writers
     ├── fixtures/          #   Synthetic multi-broker portfolio for E2E test
     └── test_*.py          #   One file per concern

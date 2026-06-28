@@ -106,9 +106,14 @@ assuming a syntax-clean diff worked.
   action there threads its `(balance, basis, cash_flow, color)` classification
   through `main.py`, `basis.py`, `history.py`, `analytics`, and `dashboard` —
   don't hand-maintain those sets.
-- **Two hardcoded-and-must-agree pairs** (Python + JS): Section 1256 underlyings
-  (`analytics/tax.py` ↔ `dashboard/app.js`) and the tax bracket / LTCG / standard
-  deduction / Roth-phaseout tables. Edit both copies together.
+- **Tax reference data is single-sourced in Python.** The bracket / LTCG /
+  standard-deduction / Roth-MAGI / §1256 tables live in `analytics/tax.py`,
+  are emitted into the export via `tax_tables_to_json()` (under
+  `DATA.tax_tables`), and `app.js` reads them from there. The literals still in
+  `app.js` are emergency fallbacks only — **add a new tax year in
+  `analytics/tax.py`, not in the JS.** (One genuine Python+JS pair remains: the
+  `K401_LIMIT_BY_YEAR` and 401k logic, but that too now flows through
+  `tax_tables`.)
 
 ## Before you call a change done
 

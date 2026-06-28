@@ -8,10 +8,13 @@ Guidance for Claude Code when working in this repo.
 from brokerages, normalizes them into a common schema, and produces a
 self-contained HTML dashboard.
 
-The entire app is ~11 Python files under `src/` with **no external dependencies
-beyond `yfinance`** (used for sector lookups AND historical price fetching,
-with on-disk caches and exponential-backoff failure handling to avoid
-repeated calls). No framework, no database, no build step.
+The app is ~45 Python modules under `src/` (~11k lines), organized into
+the `parsers/`, `analytics/`, and `dashboard/` packages plus top-level
+pipeline modules — with **no external dependencies beyond `yfinance`**
+(used for sector lookups AND historical price fetching, with on-disk
+caches and exponential-backoff failure handling to avoid repeated
+calls). No framework, no database, no build step. See the "Architecture"
+section below and README.md's project-layout tree for the module map.
 
 ## Run it
 
@@ -130,15 +133,25 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     - `income` — by_year, by_month, by_source, total.
     - `tax` — realized_by_year / _by_symbol / _by_underlying,
       harvest_candidates, wash_sales, rate_estimates_by_year,
-      section_1256_underlyings.  `rate_estimates_by_year[Y]` includes
+      section_1256_underlyings, `form_8949` (taxable-account
+      disposals in IRS Form 8949 layout — description, acquired/sold
+      dates, proceeds, basis, gain, term — for the Tax tab's CSV
+      download).  `rate_estimates_by_year[Y]` includes
       `bracket_fill` (per-IRS-bracket fill amounts, drives the Tax
-      tab's bracket bar), `headroom_to_next_bracket`, `realized_st` /
+      tab's bracket bar; top bracket's `room_left` is `None`, never
+      `inf`), `headroom_to_next_bracket`, `realized_st` /
       `realized_lt` (taxable-account sells classified by
-      `_classify_realized` — feed AGI), and an `is_projection` flag
-      with `year_fraction_observed` for the current year (salary,
-      bonuses, dividends, and 401K extrapolated from YTD pace; 401K
-      capped at IRS limit; realized gains kept YTD-only since sells
-      are lumpy).
+      `_classify_realized` — feed AGI), the estimated tax on YTD
+      realized gains (`est_cap_gains_tax_federal` / `_state` /
+      `est_niit` / `_total` / `est_quarterly_payment`), and an
+      `is_projection` flag with `year_fraction_observed` for the
+      current year (salary, bonuses, dividends, and 401K extrapolated
+      from YTD pace; 401K capped at IRS limit; realized gains kept
+      YTD-only since sells are lumpy).
+    - `rebalancing` — Target vs Actual sector-allocation drift
+      (`{rows: [{bucket, target_pct, current_pct, drift_pct,
+      action_value}], untargeted_pct, ...}`) from `Target Allocation`
+      metadata rows.  `None` when no targets defined.
     - `positions` — per-symbol realized+unrealized rollup with
       pct_return, plus top-10 winners/losers.
     - `header_summary` — persistent top-bar (1-day change, etc.).
@@ -369,17 +382,28 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     `Married Filing Separately` / `Head of Household` (case-
     insensitive; aliases like `MFJ` / `joint` / `HoH` accepted).
     Drives `_BRACKETS_BY_YEAR_STATUS` / `_LTCG_BY_YEAR_STATUS` /
-    `_STD_DED_BY_YEAR_STATUS` selection in `src/analytics/tax.py`
-    and the same tables in `src/dashboard/app.js`'s
-    `FEDERAL_BRACKETS` / `LTCG_BRACKETS` / `STD_DEDUCTION` (keep
-    in sync), plus the per-status Roth MAGI phaseout window in
-    `ROTH_MAGI_PHASEOUT_BY_STATUS`.
-  - `State` — Note = 2-letter state code (e.g. `WA`, `CA`).
-    Currently a display label only (surfaced in the Tax tab
-    header) — no automatic state-tax math is applied.  State
-    income tax varies too much (no-tax / flat / progressive /
-    different brackets) to encode reliably; leave it for the
-    user's marginal-rate override input.
+    `_STD_DED_BY_YEAR_STATUS` / `_ROTH_MAGI_PHASEOUT_BY_STATUS`
+    selection in `src/analytics/tax.py`.  These tables are now the
+    **single source of truth**: `tax_tables_to_json()` serializes
+    them into the JSON export under `tax_tables`, and the dashboard
+    JS reads `DATA.tax_tables` (the `FEDERAL_BRACKETS` etc. literals
+    in `app.js` are emergency fallbacks only).  Adding a new tax year
+    is a one-file change in `analytics/tax.py`.
+  - `State` — Note = 2-letter state code (e.g. `WA`, `CA`).  A
+    display label (surfaced in the Tax tab header); no automatic
+    state-tax *brackets* are applied (state tax varies too much to
+    encode reliably).  Pair it with a `State Tax Rate` row for a
+    single representative marginal rate.
+  - `State Tax Rate` — Amount = marginal state income tax rate as a
+    decimal (e.g. `0.093`; `9.3` is also accepted and divided by 100;
+    clamped to `[0, 0.20]`, default `0`).  Added to the federal
+    marginal for the Tax tab's "Combined" rate display and the
+    estimated-capital-gains-tax computation.
+  - `Target Allocation` — Symbol = sector bucket (matches the
+    holdings' sectors, e.g. `Technology` / `ETFs` / `Cash`),
+    Amount = target percent of portfolio (accepts `60` or `0.6`).
+    Drives the Holdings tab's **Target vs Actual** rebalancing-drift
+    view (`analytics/rebalancing.py`).  Absent → the section hides.
   - `Retirement Age` — Amount = integer age (sanity-clamped to
     30..100, default 67).  Drives the Monte Carlo simulation
     horizon (`analytics/__init__.py` `years_to_60` is now
@@ -394,15 +418,16 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   if both exist, `metadata.csv` wins.  `src/retirement.py` is a
   re-export shim — prefer `from .metadata import parse_metadata` in
   new code.
-- **Section 1256 options are hardcoded in two places that must agree**:
-  `SECTION_1256_UNDERLYINGS` in `src/analytics/tax.py` (drives the
-  Python-side tax classifications) and the same constant in
-  `src/dashboard/app.js` (drives the JS bracket / harvest math when a
-  user adjusts rates).  These are cash-settled broad-based index
-  options (SPX, NDX, NDXP, SPXW, XSP, RUT, DJX, VIX) that get 60%
-  long-term / 40% short-term tax treatment regardless of holding
-  period. ETF options (SPY, QQQ) are NOT Section 1256. If you trade a
-  broad-based index option not in the list, add it to BOTH copies.
+- **Section 1256 underlyings are single-sourced from
+  `SECTION_1256_UNDERLYINGS` in `src/analytics/tax.py`**.  They're
+  emitted into the export (under `analytics.tax.section_1256_underlyings`
+  AND `tax_tables.section_1256_underlyings`) and the dashboard JS reads
+  them from there (the `app.js` literal is an emergency fallback only).
+  These are cash-settled broad-based index options (SPX, NDX, NDXP,
+  SPXW, XSP, RUT, DJX, VIX) that get 60% long-term / 40% short-term tax
+  treatment regardless of holding period.  ETF options (SPY, QQQ) are
+  NOT Section 1256.  To add a broad-based index option, edit the Python
+  constant only.
 
 - **External cash-flow accounting goes through one helper:
   `basis.txn_external_cash_flow(t) -> float`**.  Returns +amount for
@@ -515,12 +540,17 @@ threads through every consumer.
   later.
 
 - **`src/actions.py`** — single source of truth for the canonical
-  action vocabulary.  Owns the `(balance, basis, cash_flow, color)`
-  classification for every action; downstream modules import the
-  pre-baked sets (`SUBTRACT_ACTIONS`, `BASIS_EFFECTS`, etc.).  The
-  catalog is also serialized into the JSON export under
-  `action_catalog`, which the dashboard JS consumes to derive its own
-  membership sets — same source-of-truth on both sides.
+  action vocabulary.  Owns the `(balance, basis, cash_flow, income,
+  color)` classification for every action; downstream modules import
+  the pre-baked sets (`SUBTRACT_ACTIONS`, `BASIS_EFFECTS`,
+  `INCOME_ACTION_KINDS`, etc.).  The `income` field (bucket name or
+  None) is the single source for income membership — `basis.py`,
+  `analytics/_shared.py`, and `analytics/income_calendar.py` all derive
+  their income sets from it rather than hardcoding.  The catalog is also
+  serialized into the JSON export under `action_catalog`, which the
+  dashboard JS consumes to derive its own membership sets (including
+  `INCOME_ACTIONS` from the `income` field) — same source-of-truth on
+  both sides.
 - **`src/schema.py`** — `TypedDict` definitions for the core data
   structures (`Transaction`, `Holding`, `Snapshot`).  Used for IDE
   autocomplete and type-check catches of field-name drift.  Runtime
@@ -538,6 +568,21 @@ threads through every consumer.
   Avidity then Atrium).  `main.py` prints novel collisions on each
   run so the user can decide whether to add them to
   `cache/ticker_renames.json`.
+- **`src/coinbase_reconcile.py`** — Coinbase-specific *reconciliation*
+  (named to disambiguate from `src/parsers/coinbase.py`, which only
+  *parses* the raw CSV).
+  Owns the three post-parse Coinbase quirk fixes referenced in pipeline
+  steps 5 and the "USD balance tracking" carve-out: synthesizing
+  Deposit rows for bank-funded Buys that lack an ACH row
+  (`reconcile_external_funding`, cumulative-min approach), re-tagging
+  Coinbase-regular↔Pro shuffles as intra-group Transfer In/Out
+  (`reconcile_intra_transfers`), and exposing the implicit USD-wallet
+  balance per-row / per-date (`usd_effect` / `usd_series`) for the
+  history-snapshot bridge.  `main.py` keeps thin aliases
+  (`main._reconcile_coinbase_external_funding`,
+  `main._reconcile_coinbase_intra_transfers`, `main.coinbase_usd_series`)
+  so older references still resolve — but the logic lives here.  Keeping
+  it out of `main.py` lets `main` stay a generic orchestrator.
 - **`src/parsers/`** — package directory.  `__init__.py` owns the
   broker→parser dispatch table and re-exports the public API;
   `_helpers.py` has the shared `_txn()`, `_num()`, `_date_*()`
@@ -555,6 +600,7 @@ threads through every consumer.
   - Cross-cutting: `concentration.py`, `drawdown.py`, `daily_pnl.py`,
     `trading_heatmap.py`, `monthly_pnl.py` (Sharpe / Sortino),
     `income_calendar.py` (12mo dividend forecast),
+    `rebalancing.py` (Target vs Actual sector drift),
     `monte_carlo.py` (retirement + all-accounts scenarios with
     cash-bucket model + FIRE crossings)
   - Plumbing: `changes.py` (run-over-run diff vs `cache/last_run.json`),
