@@ -76,6 +76,19 @@ def test_income_is_dividends_plus_interest_only():
     assert row["status"] == "off"      # $20 / $90 = 22% → off
 
 
+def test_other_income_is_rewards_not_dividends():
+    """Crypto 1099-MISC 'Other Income' is staking rewards, a different
+    bucket than div+int — reconciled via kind 'other_income'."""
+    rec = compute_reconciliation(_txns(), _history(), [
+        {"kind": "other_income", "account_group": "Robinhood",
+         "date": "2025", "amount": 999.0, "note": "1099-MISC"},
+    ])
+    row = rec["rows"][0]
+    assert row["computed"] == 999.0   # the Reward txn; div/int excluded
+    assert row["status"] == "ok"
+    assert row["label"] == "Other income 2025"
+
+
 def test_summary_counts_statuses():
     rec = compute_reconciliation(_txns(), _history(), [
         {"kind": "balance", "account_group": "Roth IRA",

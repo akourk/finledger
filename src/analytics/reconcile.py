@@ -90,14 +90,18 @@ def _computed_realized(txns, account_group, year, *, s1256: bool) -> float:
     return total
 
 
-def _computed_income(txns, account_group, year) -> float:
+def _computed_income(txns, account_group, year, buckets) -> float:
+    """Sum income for an account/year across the given income buckets.
+    ``buckets`` is e.g. ``("dividends", "interest")`` to match a
+    1099-DIV+INT, or ``("rewards", "lending")`` to match a crypto
+    1099-MISC "Other Income"."""
     total = 0.0
     for t in txns:
         if t.get("account_group") != account_group:
             continue
         if (t.get("date") or "")[:4] != year:
             continue
-        if INCOME_ACTION_KINDS.get(t.get("action")) in ("dividends", "interest"):
+        if INCOME_ACTION_KINDS.get(t.get("action")) in buckets:
             total += float(t.get("amount", 0) or 0)
     return total
 
@@ -133,8 +137,11 @@ def compute_reconciliation(txns, history, reconcile_meta):
             computed = _computed_realized(txns, ag, yr, s1256=True)
             label = f"§1256 gains {yr}"
         elif kind == "income":
-            computed = _computed_income(txns, ag, yr)
+            computed = _computed_income(txns, ag, yr, ("dividends", "interest"))
             label = f"Income {yr}"
+        elif kind == "other_income":
+            computed = _computed_income(txns, ag, yr, ("rewards", "lending"))
+            label = f"Other income {yr}"
         else:
             continue
 

@@ -217,8 +217,8 @@ def parse_metadata(data_dir: Path) -> dict:
                 # Date = as-of date (balance) or year (realized / income
                 # / §1256); Amount = the broker-reported value.
                 kind = typ[len("Reconcile "):].strip().lower().replace(" ", "_")
-                if kind in ("balance", "realized", "income", "section_1256") \
-                        and symbol:
+                if kind in ("balance", "realized", "income",
+                            "section_1256", "other_income") and symbol:
                     out["reconcile"].append({
                         "kind": kind,
                         "account_group": symbol,

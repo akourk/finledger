@@ -157,7 +157,8 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       (`{rows: [{kind, account_group, label, reported, computed,
       delta, status, note, detail}], summary: {total, ok, warn,
       off}}`).  Kinds: `balance` (vs nearest history snapshot),
-      `realized` (excl §1256), `section_1256`, `income` (div+int).
+      `realized` (excl §1256), `section_1256`, `income` (div+int),
+      `other_income` (rewards+lending, for crypto 1099-MISC).
       `status` = ok / warn / off (abs-$5 floor then 0.5% / 2%
       bands).  `None` when no `Reconcile` rows defined.  Computed by
       `analytics/reconcile.py`; rendered as a collapsible panel on
@@ -419,9 +420,12 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     Drives the Holdings tab's **Target vs Actual** rebalancing-drift
     view (`analytics/rebalancing.py`).  Absent → the section hides.
   - `Reconcile Balance` / `Reconcile Realized` / `Reconcile Income`
-    / `Reconcile Section 1256` — broker-reported ground truth to
-    check fin against (statement balances, 1099-B realized / §1256,
-    1099-DIV box 1a + 1099-INT income).  Symbol = `account_group`;
+    / `Reconcile Section 1256` / `Reconcile Other Income` —
+    broker-reported ground truth to check fin against (statement
+    balances, 1099-B realized / §1256, 1099-DIV box 1a + 1099-INT
+    income, and crypto 1099-MISC "Other Income" = staking rewards
+    via `Reconcile Other Income`, which sums the rewards+lending
+    income buckets).  Symbol = `account_group`;
     Date = as-of date (balance) or year (the rest); Amount = the
     broker figure; Note = source.  Parsed into
     `retirement_meta["reconcile"]`, consumed by
