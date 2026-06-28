@@ -259,12 +259,30 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
             )
             never_held = underlying not in held_at_some_point
             if is_merger_fractional or never_held:
+                # Fractional share that was never issued as a whole share
+                # (stock-for-stock merger remainder, or a spin-off on a
+                # ticker we never held).  The IRS — and Robinhood's
+                # 1099-B — treat the cash as PROCEEDS from selling that
+                # fractional share: a (usually tiny) capital gain, NOT
+                # dividend income.  Model it as a $0-basis Buy of the
+                # fraction immediately followed by a Sell at the cash
+                # proceeds — net-zero share balance, realized gain = cash.
+                # (Basis continuity through mergers/spinoffs is already
+                # lost in fin's model, so the fraction's basis is $0,
+                # the same simplification as the MRGS/SPR receive legs.)
                 tag = ("Stock-for-stock CIL (fractional, never issued)"
                        if is_merger_fractional
                        else "Spin-off CIL (no held shares)")
                 txns.append(_txn(
-                    date=date, account="Robinhood", symbol="USD",
-                    action="Dividend", quantity=abs(amount), price=1.0,
+                    date=date, account="Robinhood", symbol=underlying,
+                    action="Buy", quantity=cil_qty, price=0.0,
+                    fees=0.0, amount=0.0,
+                    description=(description or "") + f" | {tag} (basis leg)",
+                    source=filepath.name,
+                ))
+                txns.append(_txn(
+                    date=date, account="Robinhood", symbol=underlying,
+                    action="Sell", quantity=cil_qty, price=cil_px,
                     fees=0.0, amount=abs(amount),
                     description=(description or "") + f" | {tag}",
                     source=filepath.name,

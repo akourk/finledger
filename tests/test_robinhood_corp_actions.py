@@ -135,9 +135,11 @@ class TestCashInLieu:
         assert len(cil_sells) == 1
         assert cil_sells[0]["quantity"] == pytest.approx(0.5)
 
-    def test_cil_on_unheld_symbol_emits_dividend(self, isolated_workdir):
-        """CIL for a spin-off warrant the user never held as shares —
-        emits a USD Dividend instead of a phantom-negative Sell."""
+    def test_cil_on_unheld_symbol_emits_capital_gain(self, isolated_workdir):
+        """CIL for a spin-off the user never held as whole shares is
+        proceeds from selling the fractional — a capital gain on that
+        symbol (matches the broker 1099-B), NOT dividend income.  Modeled
+        as a $0-basis Buy + Sell so the balance nets to zero."""
         csv = isolated_workdir / "data" / "robinhood-1.csv"
         write_robinhood_csv(csv, [
             {"Activity Date": "11/28/2025", "Trans Code": "CIL",
@@ -146,16 +148,21 @@ class TestCashInLieu:
              "Amount": "$1.62"},
         ])
         txns = _parse(csv)
-        # Should emit a USD Dividend, NOT a Sell on OPENW
+        # No USD dividend; a Sell on OPENW with net-zero balance.
         assert _balance(txns, "OPENW") == pytest.approx(0.0)
-        usd_divs = [t for t in txns
+        assert not [t for t in txns
                     if t["symbol"] == "USD" and t["action"] == "Dividend"]
-        assert any(t["amount"] == pytest.approx(1.62) for t in usd_divs)
+        cil_sells = [t for t in txns
+                     if t["symbol"] == "OPENW" and t["action"] == "Sell"]
+        assert len(cil_sells) == 1
+        assert cil_sells[0]["amount"] == pytest.approx(1.62)
 
-    def test_cil_after_merger_receive_emits_dividend(self, isolated_workdir):
-        """CIL within 30 days of a MRGS-receive on the same symbol is
-        the cash-out for the unissued fractional share — those shares
-        never hit the user's balance, so emit Dividend, not Sell."""
+    def test_cil_after_merger_receive_is_capital_gain(self, isolated_workdir):
+        """CIL within 30 days of a MRGS-receive on the same symbol is the
+        cash-out for the unissued fractional share.  It's proceeds from
+        selling that fraction (capital gain on the 1099-B), not a
+        dividend.  A $0-basis Buy + Sell keeps the AMD balance at exactly
+        1 (the whole share from MRGS) while booking the cash as a sale."""
         csv = isolated_workdir / "data" / "robinhood-1.csv"
         write_robinhood_csv(csv, [
             {"Activity Date": "2/15/2022", "Trans Code": "MRGS",
@@ -170,11 +177,14 @@ class TestCashInLieu:
         txns = _parse(csv)
         assert _balance(txns, "AMD") == pytest.approx(1.0), \
             "AMD balance should be exactly 1 (whole share from MRGS)"
-        merger_divs = [t for t in txns
-                       if t["symbol"] == "USD" and t["action"] == "Dividend"
-                       and "Stock-for-stock CIL" in (t.get("description") or "")]
-        assert len(merger_divs) == 1
-        assert merger_divs[0]["amount"] == pytest.approx(84.72)
+        assert not [t for t in txns
+                    if t["symbol"] == "USD" and t["action"] == "Dividend"
+                    and "CIL" in (t.get("description") or "")]
+        cil_sells = [t for t in txns
+                     if t["symbol"] == "AMD" and t["action"] == "Sell"
+                     and "CIL" in (t.get("description") or "")]
+        assert len(cil_sells) == 1
+        assert cil_sells[0]["amount"] == pytest.approx(84.72)
 
 
 # ---------------------------------------------------------------------------

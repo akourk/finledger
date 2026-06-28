@@ -153,8 +153,12 @@ class TestRealizedGains:
                      for t in synthetic_pipeline["transactions"]
                      if t.get("action") == "Option Expire")
         assert opt_rg == pytest.approx(-500.0)
+        # AMD cash-in-lieu now realizes as a $0-basis capital gain (was
+        # previously booked as a dividend — see TestMergerFractional).
+        amd_cil_rg = _realized_for_symbol(synthetic_pipeline, "AMD")
+        assert amd_cil_rg == pytest.approx(108.45)
         # Overall realized should match sum-of-parts within rounding
-        expected_total = 150.0 + 8.40 + -200.0 + -500.0
+        expected_total = 150.0 + 8.40 + -200.0 + -500.0 + 108.45
         assert totals["realized_gain"] == pytest.approx(expected_total)
 
 
@@ -163,15 +167,27 @@ class TestRealizedGains:
 # ---------------------------------------------------------------------------
 
 class TestMergerFractional:
-    def test_cil_after_merger_is_dividend_not_sell(self, synthetic_pipeline):
-        """The AMD CIL is within 30 days after the XLNX→AMD MRGS-receive
-        — must emit as a Dividend on USD so balance doesn't go negative."""
-        cil_divs = [t for t in synthetic_pipeline["transactions"]
+    def test_cil_after_merger_is_capital_gain_not_dividend(self, synthetic_pipeline):
+        """The AMD CIL (cash in lieu of a fractional never issued as a
+        whole share) is proceeds from selling that fraction — a capital
+        gain on AMD, NOT dividend income (matches the broker 1099-B).
+        Modeled as a $0-basis Buy + Sell so the AMD balance stays 1.0."""
+        txns = synthetic_pipeline["transactions"]
+        # It must no longer be booked as a dividend.
+        cil_divs = [t for t in txns
                     if t.get("symbol") == "USD"
                     and t.get("action") == "Dividend"
-                    and "Stock-for-stock CIL" in (t.get("description") or "")]
-        assert len(cil_divs) == 1
-        assert cil_divs[0]["amount"] == pytest.approx(108.45)
+                    and "CIL" in (t.get("description") or "")]
+        assert cil_divs == [], "CIL must no longer be a dividend"
+        # Instead: a Sell on AMD realizing the cash (~$108.45) as gain
+        # against a $0-basis fractional lot.
+        cil_sells = [t for t in txns
+                     if t.get("symbol") == "AMD"
+                     and t.get("action") == "Sell"
+                     and "CIL" in (t.get("description") or "")]
+        assert len(cil_sells) == 1
+        assert cil_sells[0]["amount"] == pytest.approx(108.45)
+        assert cil_sells[0]["realized_gain"] == pytest.approx(108.45)
 
 
 # ---------------------------------------------------------------------------
