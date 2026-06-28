@@ -715,6 +715,18 @@ process.
   alphabetically-later source account), the TIN eagerly consumes from
   the source queue and marks the TOUT `transfer_out_eager_consumed` so
   it's a no-op when its turn comes.
+- **Unpaired Transfer In uses FMV-at-transfer basis** (`qty × price`)
+  when the broker recorded a spot price, else `$0`.  These are external
+  deposits with no visible origin leg (most commonly crypto received from
+  an off-platform wallet).  FMV is the correct basis for assets acquired
+  at market and a far better estimate than `$0` (which books the entire
+  proceeds as gain on a later sale).  **Caveat / known limitation**: this
+  is only an estimate — if the asset was acquired *before* the transfer
+  (held, then moved in), its true basis is the original purchase, which
+  fin can't see.  The authoritative basis lives with the broker (e.g.
+  Coinbase's "Customer provided" cost-basis column).  fin cannot
+  reconstruct off-platform basis; reconcile against the broker's
+  gain/loss report and, where it matters for tax, supply the real figure.
 - **FIFO is the annotated default, overridable per account**. The
   annotated walk (`compute_basis_default`) uses FIFO unless an account is
   given a different lot-relief method via the `Lot Method` row in

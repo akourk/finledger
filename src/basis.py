@@ -570,8 +570,18 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             paired = tin_to_tout.get(id(t))
             if paired is None:
                 final_effect = "transfer_in_unpaired"
-                _push_lot(state, method, key, qty, 0.0, t.get("date", ""))
-                cost_basis_value = 0.0
+                # External deposit with no visible origin leg (e.g. crypto
+                # received from an off-platform wallet).  We can't recover
+                # the true basis, so use FMV at the transfer date
+                # (qty × price) when the broker recorded a spot price —
+                # the correct basis for assets acquired at market, and a
+                # far better estimate than $0 (which would book the entire
+                # proceeds as gain on a later sale).  Falls back to $0 only
+                # when no price is available.
+                price = float(t.get("price", 0) or 0)
+                basis = qty * price if price > 0 else 0.0
+                _push_lot(state, method, key, qty, basis, t.get("date", ""))
+                cost_basis_value = basis
             elif id(paired) in stashed_tout_lots:
                 carried = stashed_tout_lots.pop(id(paired))
                 cost_basis_value = _push_carried_lots(state, method, key, carried)
