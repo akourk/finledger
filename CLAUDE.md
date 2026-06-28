@@ -458,7 +458,16 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     `analytics/reconcile.py`, surfaced in the Overview's
     Reconciliation panel.  Absent → the panel hides.  Realized rows
     should be the 1099-B *equity* grand-total (exclude §1256, which
-    has its own row).
+    has its own row).  **`Reconcile Realized` also acts as a
+    tax-override**: `analytics/tax.py._tax_rate_estimate` trusts the
+    broker figure over fin's reconstructed realized for that
+    account/year when computing AGI / MAGI / Roth eligibility /
+    cap-gains tax (fin can't reconstruct off-platform cost basis —
+    e.g. crypto acquired before/outside the broker — so the
+    broker-reported number, which the IRS already has, wins).  The
+    override preserves fin's ST/LT character ratio
+    (`_realized_override_delta`) and is surfaced via
+    `rate_estimates_by_year[Y].realized_override_accounts`.
   - `Retirement Age` — Amount = integer age (sanity-clamped to
     30..100, default 67).  Drives the Monte Carlo simulation
     horizon (`analytics/__init__.py` `years_to_60` is now

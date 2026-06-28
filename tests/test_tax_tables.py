@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import math
 
+import pytest
+
 
 def test_tax_tables_emit_is_finite_json():
     from src.analytics.tax import tax_tables_to_json
@@ -129,6 +131,40 @@ def test_form_8949_various_when_no_holding_days():
          "quantity": 1, "amount": 10, "cost_basis": 5, "realized_gain": 5},
     ])
     assert rows[0]["date_acquired"] == "VARIOUS"
+
+
+def test_reconcile_realized_override_replaces_fin_computed():
+    """A Reconcile Realized row makes the tax/MAGI calc trust the broker
+    figure over fin's reconstruction (off-platform basis fin can't see).
+    fin computes $80k realized; the broker reported $19,025.81 → AGI uses
+    the broker number, preserving fin's short-term character."""
+    from src.analytics.tax import _tax_rate_estimate
+    meta = {"filing_status": "Single",
+            "salary_history": [{"date": "2023-01-01", "amount": 120000}],
+            "reconcile": [{"kind": "realized", "account_group": "Coinbase",
+                           "date": "2024", "amount": 20000.00}]}
+    txns = [{"date": "2024-03-01", "account_type": "Taxable",
+             "account_group": "Coinbase", "symbol": "ETH-USD",
+             "realized_gain": 80000, "holding_days": 100,
+             "amount": 100000, "cost_basis": 20000}]
+    e = _tax_rate_estimate("2024", meta, txns)
+    assert e["realized_st"] == pytest.approx(20000.00)   # overridden, not 80000
+    assert e["realized_lt"] == 0.0
+    assert e["realized_override_accounts"] == ["Coinbase"]
+
+
+def test_reconcile_realized_override_absent_uses_fin_figure():
+    """Without a Reconcile Realized row, fin's own computed realized stands."""
+    from src.analytics.tax import _tax_rate_estimate
+    meta = {"filing_status": "Single",
+            "salary_history": [{"date": "2023-01-01", "amount": 120000}]}
+    txns = [{"date": "2024-03-01", "account_type": "Taxable",
+             "account_group": "Coinbase", "symbol": "ETH-USD",
+             "realized_gain": 80000, "holding_days": 100,
+             "amount": 100000, "cost_basis": 20000}]
+    e = _tax_rate_estimate("2024", meta, txns)
+    assert e["realized_st"] == pytest.approx(80000)
+    assert e["realized_override_accounts"] == []
 
 
 def test_estimated_cap_gains_tax_federal_state_niit():

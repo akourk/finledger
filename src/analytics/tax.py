@@ -37,6 +37,49 @@ SECTION_1256_UNDERLYINGS = frozenset({
 })
 
 
+def _realized_override_delta(txns, retirement_meta, year_str):
+    """Per-year (st_delta, lt_delta, accounts) so that any account with a
+    ``Reconcile Realized`` row for that year reports the *broker-authoritative*
+    realized gain instead of fin's reconstruction.
+
+    fin cannot reconstruct off-platform cost basis (e.g. crypto acquired
+    before/outside the broker), so its computed realized can diverge from the
+    figure the broker reported to the IRS on a 1099-B / 1099-DA.  For
+    tax-decision purposes (AGI / MAGI / Roth eligibility / cap-gains tax)
+    the broker figure is what's on record, so we trust it.  The override
+    replaces the account's whole-year realized, preserving fin's ST/LT
+    character ratio (defaulting to short-term when fin had none — typical
+    for crypto)."""
+    rm = retirement_meta or {}
+    overrides = {r.get("account_group"): float(r.get("amount", 0) or 0)
+                 for r in rm.get("reconcile", [])
+                 if r.get("kind") == "realized"
+                 and (r.get("date") or "")[:4] == year_str}
+    if not overrides:
+        return 0.0, 0.0, []
+    acct = defaultdict(lambda: {"st": 0.0, "lt": 0.0})
+    for t in txns:
+        if _year(t.get("date", "")) != year_str:
+            continue
+        ag = t.get("account_group", "")
+        if ag not in overrides:
+            continue
+        if t.get("realized_gain") in (None, 0) or t.get("account_type") != "Taxable":
+            continue
+        c = _classify_realized(t)
+        acct[ag]["st"] += c["st"]
+        acct[ag]["lt"] += c["lt"]
+    st_delta = lt_delta = 0.0
+    for ag, ov in overrides.items():
+        cur = acct.get(ag, {"st": 0.0, "lt": 0.0})
+        cur_total = cur["st"] + cur["lt"]
+        frac = cur["st"] / cur_total if cur_total > 0 else 1.0
+        frac = min(1.0, max(0.0, frac))
+        st_delta += ov * frac - cur["st"]
+        lt_delta += ov * (1.0 - frac) - cur["lt"]
+    return st_delta, lt_delta, sorted(overrides)
+
+
 def _classify_realized(txn: dict) -> dict:
     """Split a realized-gain txn into ST / LT / §1256 components.
 
@@ -347,6 +390,15 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
     realized_st = realized_st_ytd
     realized_lt = realized_lt_ytd
 
+    # Broker-authoritative override: for any account with a Reconcile
+    # Realized row this year, trust the broker's reported gain over fin's
+    # reconstruction (fin can't see off-platform cost basis).  Drives AGI /
+    # MAGI / Roth eligibility / cap-gains tax below.
+    _st_d, _lt_d, _override_accts = _realized_override_delta(
+        txns, retirement_meta, year_str)
+    realized_st += _st_d
+    realized_lt += _lt_d
+
     # Ordinary income = salary + bonuses + dividends/interest + ST capital
     # gains.  ST gains stack with the ordinary bracket schedule, so they
     # belong in the bracket-fill display.  LT gains feed AGI separately.
@@ -432,6 +484,9 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
         "portfolio_income_ytd": round(portfolio_income_ytd, 2),
         "realized_st": round(realized_st, 2),
         "realized_lt": round(realized_lt, 2),
+        # Accounts whose realized gain was overridden by a broker-reported
+        # Reconcile Realized figure (off-platform basis fin can't see).
+        "realized_override_accounts": _override_accts,
         "k401": round(k401, 2),
         "k401_ytd": round(k401_ytd, 2),
         "k401_limit": _K401_LIMIT_BY_YEAR.get(yr),
