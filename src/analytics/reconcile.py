@@ -41,18 +41,27 @@ def _is_1256(symbol) -> bool:
     return bool(parsed and parsed["underlying"] in SECTION_1256_UNDERLYINGS)
 
 
-def _status(reported: float, delta: float) -> str:
-    """ok / warn / off for color-coding.  Absolute floor ($5) so tiny
-    dollar items don't flash red, then a percentage band."""
+def _status(kind: str, reported: float, delta: float) -> str:
+    """ok / warn / off for color-coding.
+
+    Percentage-based with an absolute floor so tiny-dollar items don't
+    flash.  **Balance** checks get looser bands + a bigger floor because
+    they're inherently noisy: the statement date rarely lines up with a
+    fin snapshot to the day, intraday-vs-close prices differ, fin omits
+    broker cash-sweep balances, and un-tickerable funds (e.g. a 401k CIT)
+    are valued via a proxy — a 1–2% drift there is expected, not a bug.
+    **Form figures** (realized / income / §1256 — exact dollar amounts off
+    a 1099) stay tight.
+    """
     a = abs(delta)
-    if a < 5.0:
-        return "ok"
     pct = a / (abs(reported) or 1.0)
-    if pct < 0.005:
+    if kind == "balance":
+        if a < 25.0 or pct < 0.015:
+            return "ok"
+        return "warn" if pct < 0.04 else "off"
+    if a < 5.0 or pct < 0.005:
         return "ok"
-    if pct < 0.02:
-        return "warn"
-    return "off"
+    return "warn" if pct < 0.02 else "off"
 
 
 def _computed_balance(history, account_group, target):
@@ -164,7 +173,7 @@ def compute_reconciliation(txns, history, reconcile_meta):
         rows.append({
             "kind": kind, "account_group": ag, "label": label,
             "reported": round(reported, 2), "computed": round(computed, 2),
-            "delta": round(delta, 2), "status": _status(reported, delta),
+            "delta": round(delta, 2), "status": _status(kind, reported, delta),
             "note": note, "detail": detail,
         })
 

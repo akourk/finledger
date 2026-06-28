@@ -165,8 +165,12 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       `other_income` because different brokers report it on different
       forms (Robinhood→1099-INT, Coinbase→1099-MISC) — so give any one
       account only the row type matching its broker, never both.
-      `status` = ok / warn / off (abs-$5 floor then 0.5% / 2%
-      bands).  `None` when no `Reconcile` rows defined.  Computed by
+      `status` = ok / warn / off, kind-aware (`_status`): exact form
+      figures (realized / income / §1256) use a tight $5-floor / 0.5% /
+      2% band; **balance** checks use a looser $25-floor / 1.5% / 4%
+      band because they're inherently noisy (statement-vs-snapshot date
+      mismatch, intraday-vs-close prices, omitted cash sweep, proxy-priced
+      funds).  `None` when no `Reconcile` rows defined.  Computed by
       `analytics/reconcile.py`; rendered as a collapsible panel on
       the Overview tab.  Deltas are expected & explainable in known
       cases (wash-sale deferral, broker non-FIFO lot relief, broker

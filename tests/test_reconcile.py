@@ -93,6 +93,24 @@ def test_other_income_is_rewards_and_lending_not_dividends():
     assert row["label"] == "Other income 2025"
 
 
+def test_balance_band_looser_than_form_figures():
+    """A ~1.06% gap is 'ok' for a balance (proxy drift / price-timing
+    noise) but 'warn' for an exact form figure like income."""
+    hist = [{"date": "2026-03-31", "by_account_group": {"401K": 69900.00}}]
+    rec = compute_reconciliation([], hist, [
+        {"kind": "balance", "account_group": "401K",
+         "date": "2026-03-31", "amount": 70000.00}])
+    assert rec["rows"][0]["status"] == "ok"     # ~1.06% balance → ok
+
+    rec2 = compute_reconciliation(
+        [{"account_group": "X", "date": "2025-01-01",
+          "action": "Dividend", "amount": 69900.00}],
+        [],
+        [{"kind": "income", "account_group": "X",
+          "date": "2025", "amount": 70000.00}])
+    assert rec2["rows"][0]["status"] == "warn"  # same ~1.06% on income → warn
+
+
 def test_summary_counts_statuses():
     rec = compute_reconciliation(_txns(), _history(), [
         {"kind": "balance", "account_group": "Roth IRA",
