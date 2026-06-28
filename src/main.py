@@ -266,7 +266,8 @@ def _refresh_prices_only(args) -> None:
     # long-term" horizon can enumerate open lots.  Idempotent — the
     # walker re-writes identical annotations onto txns it's already
     # seen, and we only need state["lots"] downstream.
-    refresh_fifo_state = compute_basis_default(txns)
+    refresh_fifo_state = compute_basis_default(
+        txns, account_methods=retirement_meta.get("lot_methods"))
     analytics = build_analytics(txns, history, holdings, holdings_by_account,
                                  retirement_meta,
                                  cash_summary=cash,
@@ -525,7 +526,8 @@ def main():
     # Annotates each txn with cost_basis, realized_gain (sells only), and
     # basis_effect.  Returns the final lot state keyed on
     # (account_group, symbol) for merging into the holdings table below.
-    fifo_state = compute_basis_default(txns)
+    fifo_state = compute_basis_default(
+        txns, account_methods=retirement_meta.get("lot_methods"))
     fifo_basis_by_key: dict[tuple[str, str], float] = {}
     for row in state_to_holdings(fifo_state, "fifo"):
         fifo_basis_by_key[(row["account_group"], row["symbol"])] = row["cost_basis"]

@@ -100,6 +100,7 @@ def _empty() -> dict:
         "targets": [],
         "target_allocation": [],
         "reconcile": [],
+        "lot_methods": {},
         "account_groups": {},
         "account_types": {},
         # Defaults match the legacy hardcoded behavior — Single filer,
@@ -210,6 +211,15 @@ def parse_metadata(data_dir: Path) -> dict:
                 age = int(round(amt))
                 if 30 <= age <= 100:
                     out["retirement_age"] = age
+            elif typ == "Lot Method":
+                # Symbol = account_group; Note = lot-relief method the
+                # broker actually uses (FIFO / LIFO / HIFO).  Overrides
+                # the FIFO default for that account's realized-gain /
+                # cost-basis attribution (e.g. Coinbase defaults to
+                # HIFO).  Affects realized gains / MAGI, never balances.
+                m = note.strip().lower()
+                if symbol and m in ("fifo", "lifo", "hifo"):
+                    out["lot_methods"][symbol] = m
             elif typ.startswith("Reconcile "):
                 # User-supplied ground truth from broker statements /
                 # 1099s, compared against fin's computed figures by

@@ -22,6 +22,47 @@ def _txns(*rows):
     return out
 
 
+class TestPerAccountLotMethod:
+    def test_account_methods_override_realized_gain(self, isolated_workdir):
+        """A per-account HIFO override (e.g. Coinbase) consumes the
+        highest-cost lot first, changing realized gain — but not balances.
+        Buy 1 @ $100, Buy 1 @ $300, Sell 1 @ $400.
+          FIFO: realize 400 - 100 = $300
+          HIFO: realize 400 - 300 = $100
+        """
+        from src.basis import compute_basis_default
+        rows = (
+            ("2024-01-01", "Coinbase", "BTC-USD", "Buy",  1, 100.0, 100.0),
+            ("2024-02-01", "Coinbase", "BTC-USD", "Buy",  1, 300.0, 300.0),
+            ("2024-03-01", "Coinbase", "BTC-USD", "Sell", 1, 400.0, 400.0),
+        )
+        fifo = compute_basis_default(_txns(*rows))
+        assert fifo["realized_total"] == pytest.approx(300.0)
+
+        hifo = compute_basis_default(_txns(*rows),
+                                     account_methods={"Coinbase": "hifo"})
+        assert hifo["realized_total"] == pytest.approx(100.0)
+
+    def test_override_is_scoped_to_named_account(self, isolated_workdir):
+        """The override only affects the named account; others stay FIFO."""
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Coinbase",  "BTC-USD", "Buy",  1, 100.0, 100.0),
+            ("2024-02-01", "Coinbase",  "BTC-USD", "Buy",  1, 300.0, 300.0),
+            ("2024-03-01", "Coinbase",  "BTC-USD", "Sell", 1, 400.0, 400.0),
+            ("2024-01-01", "Robinhood", "FOO", "Buy",  1, 100.0, 100.0),
+            ("2024-02-01", "Robinhood", "FOO", "Buy",  1, 300.0, 300.0),
+            ("2024-03-01", "Robinhood", "FOO", "Sell", 1, 400.0, 400.0),
+        )
+        res = compute_basis_default(txns, account_methods={"Coinbase": "hifo"})
+        # Coinbase HIFO (100) + Robinhood FIFO (300) = 400
+        assert res["realized_total"] == pytest.approx(400.0)
+        # avg override is unsupported for the annotated walk → falls back
+        # to FIFO (no crash, no structural confusion).
+        res_avg = compute_basis_default(txns, account_methods={"Coinbase": "avg"})
+        assert res_avg["realized_total"] == pytest.approx(600.0)  # both FIFO
+
+
 class TestFIFOBasis:
     def test_simple_buy_sell(self, isolated_workdir):
         """One Buy, one full Sell — realized = proceeds - basis.

@@ -419,6 +419,13 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     Amount = target percent of portfolio (accepts `60` or `0.6`).
     Drives the Holdings tab's **Target vs Actual** rebalancing-drift
     view (`analytics/rebalancing.py`).  Absent → the section hides.
+  - `Lot Method` — Symbol = `account_group`, Note = the lot-relief
+    method that account's broker actually uses (`FIFO` / `LIFO` /
+    `HIFO`).  Overrides the FIFO default for that account's realized-gain
+    / cost-basis attribution (e.g. Coinbase defaults to HIFO).  Parsed
+    into `retirement_meta["lot_methods"]` and passed to
+    `compute_basis_default(txns, account_methods=...)`.  Affects realized
+    gains / holding period / MAGI / Roth eligibility, never balances.
   - `Reconcile Balance` / `Reconcile Realized` / `Reconcile Income`
     / `Reconcile Section 1256` / `Reconcile Other Income` —
     broker-reported ground truth to check fin against (statement
@@ -708,10 +715,22 @@ process.
   alphabetically-later source account), the TIN eagerly consumes from
   the source queue and marks the TOUT `transfer_out_eager_consumed` so
   it's a no-op when its turn comes.
-- **FIFO is the annotated default**. LIFO / HIFO / Average walks don't
-  annotate txns — they produce summary totals only. If you ever want
-  per-txn basis under non-FIFO methods, you'd need per-method cost_basis
-  fields, which would bloat the JSON significantly.
+- **FIFO is the annotated default, overridable per account**. The
+  annotated walk (`compute_basis_default`) uses FIFO unless an account is
+  given a different lot-relief method via the `Lot Method` row in
+  `metadata.csv` (Symbol = `account_group`, Note = `FIFO`/`LIFO`/`HIFO`),
+  threaded through as `account_methods={account_group: method}`.  This
+  exists because brokers differ (Coinbase defaults to HIFO) and the
+  method changes realized gain / holding period / MAGI / Roth
+  eligibility — only *which* lots' basis is realized, never balances
+  (same total qty consumed, so basis↔balance parity holds).  Overrides
+  are restricted to the lot-list methods (fifo/lifo/hifo); an `avg`
+  override falls back to FIFO (avg uses a different lot-queue structure).
+  The Lot-Method Comparison table (`compute_basis_all_methods`) still
+  reports *pure* single-method totals for what-if comparison, so its
+  "FIFO" column can differ from the annotated realized total once any
+  account is overridden — that's expected.  LIFO / HIFO / Average walks
+  don't annotate txns — they produce summary totals only.
 - **Realized gain is not split by account_type** in the export. A single
   sell can (in principle) affect lots across types — though in practice
   it doesn't — and the summation is clean at the portfolio level.

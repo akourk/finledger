@@ -438,14 +438,29 @@ def _push_carried_lots(state: dict, method: str, key: tuple, carried: list[dict]
     return total
 
 
-def _walk(txns: list[dict], method: str, *, annotate: bool) -> dict:
+def _walk(txns: list[dict], method: str, *, annotate: bool,
+          account_methods: dict[str, str] | None = None) -> dict:
     """Walk `txns` applying basis rules under `method`.
 
     If `annotate` is True, mutates each txn with `cost_basis`,
     `realized_gain`, and `basis_effect`.  Returns the final state dict
     (lot queues, realized total).
+
+    `account_methods` optionally overrides the lot-relief method per
+    `account_group` (e.g. ``{"Coinbase": "hifo"}`` to match a broker
+    that defaults to HIFO).  Only the *consume order* varies per account;
+    the lot-queue structure stays uniform, so overrides are restricted to
+    the lot-list methods (fifo / lifo / hifo) — an ``avg`` override falls
+    back to the base ``method``.  Balances are unaffected (same total qty
+    consumed), only which lots' basis is realized.
     """
     state = _empty_state(method)
+
+    def _method_for(acct: str) -> str:
+        if not account_methods:
+            return method
+        m = account_methods.get(acct, method)
+        return m if m in ("fifo", "lifo", "hifo") else method
 
     # Pre-pair transfers across accounts.  Each Transfer In either has a
     # matching Transfer Out (cross-group — basis carries), belongs to an
@@ -501,7 +516,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool) -> dict:
 
         elif effect == "remove":
             proceeds = _basis_dollars(t)
-            basis_removed, carried = _consume_from_key(state, method, key, qty)
+            basis_removed, carried = _consume_from_key(state, _method_for(acct), key, qty)
             cost_basis_value = basis_removed
             realized = proceeds - basis_removed
             # Per-lot breakdown of the consumed lots.  Each lot keeps its
@@ -543,7 +558,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool) -> dict:
                 # Already moved eagerly by the paired TIN — skip.
                 final_effect = "transfer_out_eager_consumed"
             else:
-                basis_removed, carried = _consume_from_key(state, method, key, qty)
+                basis_removed, carried = _consume_from_key(state, _method_for(acct), key, qty)
                 if id(t) in paired_touts:
                     stashed_tout_lots[id(t)] = carried
                 # Unpaired: lots are orphaned (transferred to some account
@@ -566,7 +581,8 @@ def _walk(txns: list[dict], method: str, *, annotate: bool) -> dict:
                 # and mark the TOUT to noop when its turn comes.
                 src_key = (paired.get("account_group", ""), paired.get("symbol", ""))
                 qty_tout = float(paired.get("quantity", 0) or 0)
-                _bsum, carried = _consume_from_key(state, method, src_key, qty_tout)
+                _bsum, carried = _consume_from_key(
+                    state, _method_for(src_key[0]), src_key, qty_tout)
                 cost_basis_value = _push_carried_lots(state, method, key, carried)
                 tout_handled.add(id(paired))
 
@@ -598,10 +614,19 @@ def _walk(txns: list[dict], method: str, *, annotate: bool) -> dict:
 # Public entry points
 # ---------------------------------------------------------------------------
 
-def compute_basis_default(txns: list[dict]) -> dict:
-    """Run the FIFO walker, annotating txns in place.  Returns the final
-    lot state for merging into holdings."""
-    return _walk(txns, "fifo", annotate=True)
+def compute_basis_default(txns: list[dict],
+                          account_methods: dict[str, str] | None = None) -> dict:
+    """Run the annotated walker (FIFO by default), annotating txns in
+    place.  Returns the final lot state for merging into holdings.
+
+    `account_methods` overrides the lot-relief method per `account_group`
+    (e.g. ``{"Coinbase": "hifo"}``) so realized gains / cost basis match
+    what the broker actually used.  Affects which lots' basis is realized
+    (and thus realized_gain, holding period, MAGI), never balances.  The
+    Lot-Method Comparison table (compute_basis_all_methods) still reports
+    pure single-method totals for what-if comparison.
+    """
+    return _walk(txns, "fifo", annotate=True, account_methods=account_methods)
 
 
 def compute_basis_all_methods(txns: list[dict]) -> dict[str, dict]:
