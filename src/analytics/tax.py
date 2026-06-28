@@ -128,12 +128,76 @@ _STD_DED_BY_YEAR: dict[int, float] = {
     for yr in {k[0] for k in _STD_DED_BY_YEAR_STATUS}
 }
 # IRS 401(k) elective deferral limits — used to cap end-of-year projections
-# of contributions extrapolated from YTD pace.  Keep in sync with the
-# dashboard's K401_LIMIT_BY_YEAR table in src/dashboard/app.js.
+# of contributions extrapolated from YTD pace.
 _K401_LIMIT_BY_YEAR: dict[int, float] = {
     2018: 18500, 2019: 19000, 2020: 19500, 2021: 19500, 2022: 20500,
     2023: 22500, 2024: 23000, 2025: 23500, 2026: 24500,
 }
+
+# Roth IRA MAGI phase-out windows by filing status.  `start` is the MAGI
+# at which the contribution limit begins to phase out; full phase-out is
+# `start + width`.  (MFS phases out over $0..$10k regardless of year.)
+# Drives the Retirement tab's Roth Eligibility column.
+_ROTH_MAGI_PHASEOUT_BY_STATUS: dict[str, dict] = {
+    "Single": {
+        "start": {2018: 120000, 2019: 122000, 2020: 124000, 2021: 125000,
+                  2022: 129000, 2023: 138000, 2024: 146000, 2025: 150000,
+                  2026: 153000},
+        "width": 15000,
+    },
+    "Head of Household": {
+        "start": {2018: 120000, 2019: 122000, 2020: 124000, 2021: 125000,
+                  2022: 129000, 2023: 138000, 2024: 146000, 2025: 150000,
+                  2026: 153000},
+        "width": 15000,
+    },
+    "Married Filing Jointly": {
+        "start": {2018: 189000, 2019: 193000, 2020: 196000, 2021: 198000,
+                  2022: 204000, 2023: 218000, 2024: 230000, 2025: 236000,
+                  2026: 240000},
+        "width": 10000,
+    },
+    "Married Filing Separately": {
+        "start": {y: 0 for y in range(2018, 2027)},
+        "width": 10000,
+    },
+}
+
+
+def _brackets_table_to_json(table: dict) -> dict:
+    """Convert a {(year, status): [(threshold, rate), ...]} table to the
+    JS-shaped {year_str: {status: [[threshold|null, rate], ...]}}.  The
+    top bracket's `math.inf` threshold becomes JSON `null` (the dashboard
+    converts it back to Infinity) so we never emit a non-finite literal."""
+    out: dict = {}
+    for (yr, status), rows in table.items():
+        out.setdefault(str(yr), {})[status] = [
+            [None if (isinstance(thr, float) and math.isinf(thr)) else thr, rate]
+            for thr, rate in rows
+        ]
+    return out
+
+
+def tax_tables_to_json() -> dict:
+    """Serialize the canonical federal tax tables for the JSON export.
+
+    This is the **single source of truth** for the bracket / LTCG /
+    standard-deduction / 401(k)-limit / Roth-MAGI / §1256 reference data.
+    The dashboard JS reads these from ``DATA.tax_tables`` instead of
+    keeping its own hardcoded copies — so adding a new tax year touches
+    only this file.  Embedded by ``export.export_json`` (mirrors the
+    ``action_catalog`` pattern)."""
+    std_deduction: dict = {}
+    for (yr, status), amt in _STD_DED_BY_YEAR_STATUS.items():
+        std_deduction.setdefault(str(yr), {})[status] = amt
+    return {
+        "federal_brackets": _brackets_table_to_json(_BRACKETS_BY_YEAR_STATUS),
+        "ltcg_brackets":    _brackets_table_to_json(_LTCG_BY_YEAR_STATUS),
+        "std_deduction":    std_deduction,
+        "k401_limit": {str(y): v for y, v in _K401_LIMIT_BY_YEAR.items()},
+        "roth_magi_phaseout": _ROTH_MAGI_PHASEOUT_BY_STATUS,
+        "section_1256_underlyings": sorted(SECTION_1256_UNDERLYINGS),
+    }
 
 
 def _pick_by_year(yr: int, table: dict):
@@ -288,12 +352,17 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
         width = cap - prev_cap
         in_this = min(remaining, width) if remaining > 0 else 0.0
         room = max(0.0, width - in_this)
+        is_top = cap == float("inf")
         bracket_fill.append({
             "rate":  rate,
             "lower": round(prev_cap, 2),
-            "upper": round(cap, 2) if cap != float("inf") else None,
+            "upper": round(cap, 2) if not is_top else None,
             "in_bracket":  round(in_this, 2),
-            "room_left":   round(room, 2),
+            # Top bracket has no ceiling → room is unbounded; emit None
+            # (not inf, which would serialize as an invalid JSON literal
+            # and leak Infinity into the dashboard — same class as the
+            # NaN price-cache bug).
+            "room_left":   None if is_top else round(room, 2),
             "tax_paid":    round(in_this * rate, 2),
         })
         remaining = max(0.0, remaining - in_this)
@@ -306,13 +375,34 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
     headroom_to_next = 0.0
     next_rate = None
     for b in bracket_fill:
-        if b["room_left"] > 0:
+        if b["room_left"] and b["room_left"] > 0:   # None (top bracket) is falsy
             headroom_to_next = b["room_left"]
             # Next bracket = the one immediately after this row
             idx = bracket_fill.index(b)
             if idx + 1 < len(bracket_fill):
                 next_rate = bracket_fill[idx + 1]["rate"]
             break
+
+    # --- Estimated tax on YTD realized capital gains ---------------------
+    # The thing that drives surprise quarterly-estimated-tax obligations.
+    # ST gains taxed at the marginal ordinary rate; LT (and the 60/40-split
+    # §1256 portion, already folded into realized_st/lt by _classify_realized)
+    # at the LTCG rate.  Plus a flat state rate (states generally tax gains
+    # as ordinary income) and a simplified NIIT (3.8% on net investment
+    # income above the MAGI threshold — AGI used as a MAGI proxy).
+    marginal_short = _marginal_for(taxable_ordinary, brackets)
+    marginal_long = _marginal_for(taxable_income, ltcg)
+    state_rate = float((retirement_meta or {}).get("state_tax_rate", 0) or 0)
+    est_fed = realized_st * marginal_short + realized_lt * marginal_long
+    est_state = (realized_st + realized_lt) * state_rate
+    # NIIT: 3.8% on the lesser of net investment income or (MAGI − threshold).
+    niit_threshold = {
+        "Single": 200000, "Head of Household": 200000,
+        "Married Filing Jointly": 250000, "Married Filing Separately": 125000,
+    }.get(status, 200000)
+    net_investment_income = max(0.0, realized_st + realized_lt + portfolio_income)
+    est_niit = 0.038 * min(net_investment_income, max(0.0, agi - niit_threshold))
+    est_cap_gains_total = est_fed + est_state + est_niit
 
     return {
         "year": yr,
@@ -334,11 +424,19 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
         # Marginal ordinary rate is driven by taxable_ordinary (salary +
         # bonuses + dividends + ST gains − k401 − std).  LTCG bracket is
         # driven by total taxable_income (since LTCG slots above ordinary).
-        "marginal_short": round(_marginal_for(taxable_ordinary, brackets), 4),
-        "marginal_long": round(_marginal_for(taxable_income, ltcg), 4),
+        "marginal_short": round(marginal_short, 4),
+        "marginal_long": round(marginal_long, 4),
         "bracket_fill": bracket_fill,
         "headroom_to_next_bracket": round(headroom_to_next, 2),
         "next_bracket_rate": next_rate,
+        # Estimated tax on YTD realized capital gains (federal + state +
+        # NIIT) and a naive even-quarters suggested estimated payment.
+        "est_cap_gains_tax_federal": round(est_fed, 2),
+        "est_cap_gains_tax_state": round(est_state, 2),
+        "est_niit": round(est_niit, 2),
+        "est_cap_gains_tax_total": round(est_cap_gains_total, 2),
+        "est_quarterly_payment": round(est_cap_gains_total / 4, 2),
+        "state_tax_rate": round(state_rate, 4),
         "is_projection": bool(is_current_year and year_fraction < 1.0),
         "year_fraction_observed": round(year_fraction, 4),
     }
@@ -491,7 +589,51 @@ def compute_tax_analytics(txns: list[dict], holdings: list[dict],
         "rate_estimates_by_year": rate_estimates,
         "section_1256_underlyings": sorted(SECTION_1256_UNDERLYINGS),
         "lt_horizon": lt_horizon,
+        "form_8949": _build_form_8949(realized),
     }
+
+
+def _build_form_8949(realized: list[dict]) -> list[dict]:
+    """Per-disposal rows for an IRS Form 8949-style realized-gains CSV.
+
+    Only **taxable-account** disposals are reportable — retirement
+    accounts aren't taxed on gains, so they're excluded.  Each row mirrors
+    8949's columns: description, date acquired / sold, proceeds, cost
+    basis, gain/loss, and term (short / long / §1256).  Date acquired is
+    derived from the FIFO ``holding_days`` annotation (earliest matched
+    lot); when that's unavailable we emit ``VARIOUS`` (a valid 8949 entry
+    for multi-lot dispositions).
+    """
+    rows: list[dict] = []
+    for t in realized:
+        if t.get("account_type") != "Taxable":
+            continue
+        gain = float(t.get("realized_gain", 0) or 0)
+        c = _classify_realized(t)
+        sold = t.get("date", "")
+        days = t.get("holding_days")
+        acquired = "VARIOUS"
+        if isinstance(days, (int, float)) and days >= 0:
+            sold_d = _parse_iso(sold)
+            if sold_d:
+                acquired = (sold_d - timedelta(days=int(days))).isoformat()
+        if c["kind"] == "1256":
+            term = "1256"
+        else:
+            term = "long" if (isinstance(days, (int, float)) and days > 365) else "short"
+        qty = float(t.get("quantity", 0) or 0)
+        rows.append({
+            "description": f"{qty:g} {t.get('symbol', '')}".strip(),
+            "date_acquired": acquired,
+            "date_sold": sold,
+            "proceeds": round(float(t.get("amount", 0) or 0), 2),
+            "cost_basis": round(float(t.get("cost_basis", 0) or 0), 2),
+            "gain": round(gain, 2),
+            "term": term,
+            "account": t.get("account_group", ""),
+        })
+    rows.sort(key=lambda r: (r["date_sold"], r["description"]))
+    return rows
 
 
 def _lt_eligible_date(open_d):

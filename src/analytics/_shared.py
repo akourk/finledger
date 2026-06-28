@@ -39,23 +39,20 @@ RETIREMENT_GROUPS = frozenset({"401K", "Roth IRA", "Rollover IRA"})
 # comparisons vs. equity benchmarks don't get diluted by HYSA yield.
 SAVINGS_GROUPS    = frozenset({"Apple Savings"})
 
-# Actions that count as inflows/outflows of user cash for the account.
-# Sourced from src/actions.py.
+# Actions that count as inflows/outflows of user cash for the account,
+# and the income classification — all sourced from src/actions.py's
+# catalog (single source of truth; see the `income` field on Action).
 from ..actions import (
     CASH_ADD_ACTIONS as _CASH_ADD_ACTIONS,
     CASH_SUB_ACTIONS as _CASH_SUB_ACTIONS,
+    INCOME_ACTION_KINDS as _INCOME_ACTION_KINDS,
 )
 CASH_ADD_ACTIONS = _CASH_ADD_ACTIONS
 CASH_SUB_ACTIONS = _CASH_SUB_ACTIONS
 
 # Actions treated as income (dividends, interest, rewards, lending rebates).
 # Used by the cash summary and the Income tab aggregation.
-INCOME_ACTION_KINDS = {
-    "Dividend": "dividends",
-    "Interest": "interest",
-    "Reward":   "rewards",
-    "Lending":  "lending",
-}
+INCOME_ACTION_KINDS = _INCOME_ACTION_KINDS
 
 
 def _parse_iso(d: str):

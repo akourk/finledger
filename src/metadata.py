@@ -98,6 +98,7 @@ def _empty() -> dict:
         "bonus_history": [],
         "annual_expenses": [],
         "targets": [],
+        "target_allocation": [],
         "account_groups": {},
         "account_types": {},
         # Defaults match the legacy hardcoded behavior — Single filer,
@@ -162,6 +163,15 @@ def parse_metadata(data_dir: Path) -> dict:
                 if year:
                     out["targets"].append(
                         {"year": year, "amount": amt, "note": note})
+            elif typ == "Target Allocation":
+                # Symbol = sector bucket name (matches the sectors the
+                # holdings are classified into, e.g. Technology, Cash,
+                # Cryptocurrency); Amount = target percent of portfolio.
+                # Drives the Holdings tab's Target vs Actual / drift view.
+                if symbol and amt > 0:
+                    pct = amt * 100.0 if amt <= 1.0 else amt   # accept 0.6 or 60
+                    out["target_allocation"].append(
+                        {"bucket": symbol, "pct": round(pct, 4)})
             elif typ == "Account Group":
                 # Symbol = broker's raw account name; Note = simplified
                 # group key (Roth IRA, 401K, …).  Both required.

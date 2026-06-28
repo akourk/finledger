@@ -19,8 +19,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-
-_INCOME_ACTIONS = frozenset({"Dividend", "Interest", "Lending", "Reward"})
+from ..actions import INCOME_ACTIONS as _INCOME_ACTIONS
 
 
 def compute_income_calendar(txns: list[dict],

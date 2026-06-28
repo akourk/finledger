@@ -103,6 +103,27 @@ def test_robinhood_roc_futswp_misc_classification():
     assert INCOME_ACTION_KINDS.get("Reward") == "rewards"
 
 
+def test_income_classification_is_catalog_derived():
+    """Income membership lives on the Action.income field; the three
+    downstream consumers must all derive from it (no hardcoded copies)."""
+    from src.actions import INCOME_ACTION_KINDS, INCOME_ACTIONS
+    from src.analytics._shared import INCOME_ACTION_KINDS as shared_kinds
+    from src.basis import _INCOME_ACTIONS as basis_set
+    from src.analytics.income_calendar import _INCOME_ACTIONS as cal_set
+
+    assert INCOME_ACTION_KINDS == {
+        "Dividend": "dividends", "Interest": "interest",
+        "Reward": "rewards", "Lending": "lending",
+    }
+    assert shared_kinds is INCOME_ACTION_KINDS or shared_kinds == INCOME_ACTION_KINDS
+    assert set(basis_set) == set(INCOME_ACTIONS)
+    assert set(cal_set) == set(INCOME_ACTIONS)
+    # Non-income actions must not leak an income bucket.
+    from src.actions import ACTIONS
+    assert ACTIONS["Buy"].income is None
+    assert ACTIONS["Return of Capital"].income is None
+
+
 def test_action_colors_complete():
     """Every catalog entry has a color so the dashboard never gets a
     fallback gray for a known action."""

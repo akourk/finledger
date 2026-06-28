@@ -56,6 +56,12 @@ class Action:
     cash_flow: CashFlowEffect
     color: str = "#9ca3af"
     description: str = ""
+    # Income bucket this action contributes to (dividends / interest /
+    # rewards / lending), or None for non-income actions.  Single source
+    # of truth for the Income tab + cash-summary income tally — the
+    # consumer sets (basis._INCOME_ACTIONS, _shared.INCOME_ACTION_KINDS,
+    # income_calendar._INCOME_ACTIONS) all derive from this field.
+    income: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -93,12 +99,16 @@ _ACTIONS: tuple[Action, ...] = (
     # ── Income (cash flowing in via dividend/interest/etc.) ────────────────
     Action("Dividend",       "add",      "add",     "neutral", "#34d399",
            "Mutual-fund dividend reinvested as shares; for cash dividends "
-           "(symbol=USD) the basis walker auto-routes to 'ignore'."),
-    Action("Interest",       "add",      "add",     "neutral", "#2dd4bf"),
+           "(symbol=USD) the basis walker auto-routes to 'ignore'.",
+           income="dividends"),
+    Action("Interest",       "add",      "add",     "neutral", "#2dd4bf",
+           income="interest"),
     Action("Reward",         "add",      "zero_basis", "neutral", "#fbbf24",
            "Stake/airdrop/loyalty reward — FMV-at-receipt if known, "
-           "else 0 cost basis."),
-    Action("Lending",        "add",      "add",     "neutral", "#67e8f9"),
+           "else 0 cost basis.",
+           income="rewards"),
+    Action("Lending",        "add",      "add",     "neutral", "#67e8f9",
+           income="lending"),
 
     # ── Account-internal movements ─────────────────────────────────────────
     Action("Transfer In",    "add",      "transfer_in",  "ignore", "#818cf8",
@@ -211,6 +221,16 @@ BASIS_EFFECTS: dict[str, str] = {a.name: a.basis for a in _ACTIONS}
 
 ACTION_COLORS: dict[str, str] = {a.name: a.color for a in _ACTIONS}
 
+# Income classification — single source of truth derived from the
+# `income` field.  `INCOME_ACTION_KINDS` maps action name → bucket;
+# `INCOME_ACTIONS` is just the key set.  Downstream income consumers
+# (basis.compute_cash_summary, analytics.income, income_calendar)
+# import these instead of each maintaining their own hardcoded set.
+INCOME_ACTION_KINDS: dict[str, str] = {
+    a.name: a.income for a in _ACTIONS if a.income
+}
+INCOME_ACTIONS = frozenset(INCOME_ACTION_KINDS)
+
 
 def to_json_dict() -> dict:
     """Serialize the catalog to a plain dict for embedding in the JSON
@@ -226,6 +246,7 @@ def to_json_dict() -> dict:
                 "cash_flow": a.cash_flow,
                 "color": a.color,
                 "description": a.description,
+                "income": a.income,
             }
             for a in _ACTIONS
         ],

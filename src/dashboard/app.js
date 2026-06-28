@@ -510,6 +510,66 @@ function renderHoldings() {
   const total = data.reduce((s, r) => s + (typeof r.value === 'number' ? r.value : 0), 0);
   document.getElementById('holdingsTotalValue').textContent =
     total ? '$' + total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+
+  renderRebalancing();
+}
+
+// Target vs Actual allocation (Holdings tab).  Reads ANALYTICS.rebalancing
+// (computed in analytics/rebalancing.py from data/metadata.csv "Target
+// Allocation" rows).  Renders nothing if no targets are defined.  Always
+// reflects the latest holdings (not the as-of-date picker).
+function renderRebalancing() {
+  const el = document.getElementById('rebalanceSection');
+  if (!el) return;
+  const rb = ANALYTICS.rebalancing;
+  if (!rb || !rb.rows || !rb.rows.length) { el.innerHTML = ''; return; }
+  const money = (v) => (v < 0 ? '−' : '') + '$' +
+    Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const rows = rb.rows.map(r => {
+    const driftCls = Math.abs(r.drift_pct) < 2 ? 'positive'
+      : (Math.abs(r.drift_pct) < 5 ? '' : 'negative');
+    const driftStr = (r.drift_pct >= 0 ? '+' : '') + r.drift_pct.toFixed(1) + '%';
+    const action = Math.abs(r.action_value) < 1 ? '<span style="color:var(--text-dim);">on target</span>'
+      : (r.action_value > 0
+          ? `<span class="positive">Buy ${money(r.action_value)}</span>`
+          : `<span class="negative">Sell ${money(-r.action_value)}</span>`);
+    // Mini bar: current (filled) vs target (tick).
+    const maxPct = Math.max(r.current_pct, r.target_pct, 1);
+    const curW = (r.current_pct / maxPct) * 100;
+    const tgtW = (r.target_pct / maxPct) * 100;
+    const bar = `<div class="rb-bar"><div class="rb-bar-fill" style="width:${curW}%;"></div>`
+      + `<div class="rb-bar-tick" style="left:${tgtW}%;" title="Target ${r.target_pct}%"></div></div>`;
+    return `<tr>
+      <td>${_htmlEsc(r.bucket)}</td>
+      <td class="num">${r.target_pct.toFixed(1)}%</td>
+      <td class="num">${r.current_pct.toFixed(1)}%</td>
+      <td style="min-width:140px;">${bar}</td>
+      <td class="num ${driftCls}">${driftStr}</td>
+      <td class="num">${action}</td>
+    </tr>`;
+  }).join('');
+  const untargeted = rb.untargeted_pct > 0.05
+    ? `<div class="chart-empty" style="padding:8px 12px;text-align:left;">
+         ${rb.untargeted_pct.toFixed(1)}% (${money(rb.untargeted_value)}) of the portfolio is in sectors with no target.
+         ${Math.abs(rb.total_target_pct - 100) > 1 ? `Targets sum to ${rb.total_target_pct.toFixed(0)}%.` : ''}
+       </div>`
+    : '';
+  el.innerHTML = `
+    <div class="section-header" style="margin-top:32px;">
+      <h2><span style="color:var(--accent);">Target vs Actual</span></h2>
+      <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">
+        allocation drift by sector vs <code>Target Allocation</code> in metadata.csv · max drift ${rb.max_abs_drift.toFixed(1)}%</span>
+    </div>
+    <div class="panel">
+      <table class="mini-table">
+        <thead><tr>
+          <th>Bucket</th><th class="num">Target</th><th class="num">Current</th>
+          <th>Current vs Target</th><th class="num">Drift</th><th class="num">Suggested</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${untargeted}
+    </div>`;
 }
 
 // Holdings header click → sort
@@ -2610,124 +2670,18 @@ function isOptionSymbol(sym) {
   return !!sym && (sym.includes(' Call ') || sym.includes(' Put ') || sym.endsWith(' OPTION'));
 }
 
-// Build a list of "closed trade" rows — every option txn with a
-// realized_gain annotation (STC / OEXP / OEXCS / etc).  For each, find
-// the basis entry date by walking backwards through opening txns of
-// the same contract and FIFO-picking the oldest open qty.  We already
-// have basis dollars on the closing row; the hold-days stat needs an
-// entry date, which we derive here.
-function buildOptionClosedTrades() {
-  // Map symbol -> list of {date, qty_remaining} for open lots (FIFO).
-  const openLots = {};
-  const closed = [];
-  // Process in chronological order (same sort basis.py uses).
-  const sorted = [...txns].sort((a, b) => {
-    const da = a.date || '', db = b.date || '';
-    if (da !== db) return da < db ? -1 : 1;
-    // adds before subtracts on same date+symbol
-    const aSub = (a.basis_effect === 'remove' || a.basis_effect === 'transfer_out') ? 1 : 0;
-    const bSub = (b.basis_effect === 'remove' || b.basis_effect === 'transfer_out') ? 1 : 0;
-    return aSub - bSub;
-  });
-  for (const t of sorted) {
-    const sym = t.symbol || '';
-    if (!isOptionSymbol(sym)) continue;
-    const action = t.action || '';
-    const qty = t.quantity || 0;
-    if (!openLots[sym]) openLots[sym] = [];
-
-    if (action === 'Option Buy' && qty > 0) {
-      openLots[sym].push({ date: t.date, qty });
-    } else if (qty > 0 && (action === 'Option Sell' || action === 'Option Expire' || action === 'Option Exercise')) {
-      // FIFO-consume to find the earliest open date for this close
-      let remaining = qty;
-      let earliestOpen = null;
-      const q = openLots[sym];
-      while (remaining > 1e-9 && q.length) {
-        const take = Math.min(q[0].qty, remaining);
-        if (!earliestOpen) earliestOpen = q[0].date;
-        q[0].qty -= take;
-        remaining -= take;
-        if (q[0].qty <= 1e-9) q.shift();
-      }
-      closed.push({
-        symbol: sym,
-        action,
-        close_date: t.date,
-        open_date: earliestOpen,
-        qty,
-        proceeds: t.amount || 0,
-        basis: t.cost_basis || 0,
-        realized: t.realized_gain || 0,
-      });
-    }
-  }
-  return closed;
-}
-
-function buildOptionOpenContracts() {
-  // Sum quantity per option symbol from all txns; positive balance == open.
-  // Mirrors main.py's balance walk (adds vs subtracts).
-  const SUB = new Set(['Sell', 'Withdrawal', 'Transfer Out', 'Distribution', 'Fee', 'Tax', 'Option Sell', 'Option Expire', 'Option Exercise']);
-  const NEU = new Set(['Neutral']);
-  const bal = {};
-  const firstDate = {};
-  const lastEntryPrice = {};
-  for (const t of txns) {
-    const sym = t.symbol || '';
-    if (!isOptionSymbol(sym)) continue;
-    const a = t.action || '';
-    const q = t.quantity || 0;
-    if (NEU.has(a)) continue;
-    if (!(sym in bal)) bal[sym] = 0;
-    if (SUB.has(a)) bal[sym] -= q;
-    else bal[sym] += q;
-    // Track the earliest opening date
-    if (a === 'Option Buy' && q > 0) {
-      if (!firstDate[sym] || t.date < firstDate[sym]) firstDate[sym] = t.date;
-      if (t.price > 0) lastEntryPrice[sym] = t.price;
-    }
-  }
-  const today = new Date(DATA.generated || new Date().toISOString().slice(0, 10));
-  const open = [];
-  for (const sym of Object.keys(bal)) {
-    if (bal[sym] <= 1e-9) continue;
-    const parsed = parseOptionSymbol(sym);
-    let dte = null;
-    if (parsed) {
-      const exp = new Date(parsed.expiry);
-      dte = Math.floor((exp - today) / (1000 * 60 * 60 * 24));
-    }
-    open.push({
-      symbol: sym,
-      underlying: parsed ? parsed.underlying : '',
-      expiry: parsed ? parsed.expiry : '',
-      type: parsed ? parsed.type : '',
-      strike: parsed ? parsed.strike : null,
-      qty: bal[sym],
-      dte,
-      open_date: firstDate[sym] || '',
-      entry_price: lastEntryPrice[sym] || null,
-    });
-  }
-  open.sort((a, b) => {
-    // Sort by DTE ascending (soonest-to-expire first); nulls last
-    const aD = a.dte == null ? 1e9 : a.dte;
-    const bD = b.dte == null ? 1e9 : b.dte;
-    return aD - bD;
-  });
-  return open;
-}
-
 function renderOptions() {
   const root = document.getElementById('optionsContent');
   if (!root) return;
 
-  // Prefer pre-computed analytics (src/analytics.py).  The in-JS
-  // builders are kept as fallbacks for older exports without analytics.
+  // Closed trades + open contracts come straight from the precomputed
+  // analytics (analytics/options.py).  The stats / by-underlying /
+  // annual / cumulative figures below ARE recomputed in JS — not as a
+  // fallback, but because they're re-derived from the window/account-
+  // filtered subset (lifetime+no-filter matches Python by construction).
   const opt = ANALYTICS.options || {};
-  const allClosed = opt.closed_trades || (typeof buildOptionClosedTrades === 'function' ? buildOptionClosedTrades() : []);
-  const allOpen = opt.open_contracts || (typeof buildOptionOpenContracts === 'function' ? buildOptionOpenContracts() : []);
+  const allClosed = opt.closed_trades || [];
+  const allOpen = opt.open_contracts || [];
 
   // ---- Apply window + account filters -----------------------------
   // Window: filter closed trades by close_date in range.  Open contracts
@@ -3212,20 +3166,33 @@ const IRA_LIMIT_BY_YEAR = {
   2018: 5500, 2019: 6000, 2020: 6000, 2021: 6000, 2022: 6000,
   2023: 6500, 2024: 7000, 2025: 7000, 2026: 7500,
 };
-const K401_LIMIT_BY_YEAR = {
-  2018: 18500, 2019: 19000, 2020: 19500, 2021: 19500, 2022: 20500,
-  2023: 22500, 2024: 23000, 2025: 23500, 2026: 24500,
-};
+// --- Federal tax reference tables ---
+// Single source of truth is Python (src/analytics/tax.py), emitted into
+// the JSON export under DATA.tax_tables.  We read from there so adding a
+// new tax year is a one-file (Python) change.  `_TAX_TABLES` is always
+// present in exports from current code (export.py always emits it, in the
+// same run that generates this HTML).  `_loadBracketTable` converts the
+// emitted `null` top-threshold sentinel back to Infinity.
+const _TAX_TABLES = DATA.tax_tables || {};
+function _loadBracketTable(emitted) {
+  const out = {};
+  for (const yr of Object.keys(emitted || {})) {
+    out[yr] = {};
+    for (const status of Object.keys(emitted[yr])) {
+      out[yr][status] = emitted[yr][status].map(
+        row => [row[0] === null ? Infinity : row[0], row[1]]);
+    }
+  }
+  return out;
+}
+const K401_LIMIT_BY_YEAR = _TAX_TABLES.k401_limit || {};
 // Roth IRA MAGI phase-out windows per filing status.  Above the
 // start, the allowable contribution scales linearly to zero across
 // the window.  We use AGI as a MAGI proxy — close enough for most
 // users (true MAGI adds back student-loan interest deduction,
 // traditional IRA deduction, and a few rarer items).
-//
-// MFS has an unusually narrow $0–$10k window: Congress designed it
-// to prevent married couples from gaming the system by filing
-// separately to access the higher single-filer thresholds.
-const ROTH_MAGI_PHASEOUT_BY_STATUS = {
+// MFS has an unusually narrow $0–$10k window.
+const ROTH_MAGI_PHASEOUT_BY_STATUS = _TAX_TABLES.roth_magi_phaseout || {
   'Single': {
     start: {
       2018: 120000, 2019: 122000, 2020: 124000, 2021: 125000,
@@ -3938,12 +3905,10 @@ registerTabRenderer('planning', renderPlanning);
 // Income tab — dividends, interest, staking rewards, lending rebates
 // =========================================================================
 
-const INCOME_ACTIONS = {
-  'Dividend': 'dividends',
-  'Interest': 'interest',
-  'Reward': 'rewards',
-  'Lending': 'lending',
-};
+// Derived from the action catalog's `income` field (single source of
+// truth — src/actions.py), mapping action name → income bucket.
+const INCOME_ACTIONS = Object.fromEntries(
+  _ACTION_CATALOG.filter(a => a.income).map(a => [a.name, a.income]));
 
 // Build the 12-month total cash-flow forecast (Income tab).  Combines:
 //   - Passive investment income (already projected by analytics.income_calendar)
@@ -4015,41 +3980,19 @@ function renderIncome() {
   const root = document.getElementById('incomeContent');
   if (!root) return;
 
-  // Prefer pre-computed analytics (src/analytics.py compute_income_analytics).
+  // Straight from the precomputed analytics (compute_income_analytics).
+  // Empty arrays render the empty-state cleanly — no JS recompute needed.
   const inc = ANALYTICS.income || {};
-  let byYear = {};
-  let byMonth = {};
-  let bySource = {};
-  let total = 0;
-  if (Array.isArray(inc.by_year) && inc.by_year.length) {
-    total = inc.total || 0;
-    for (const r of inc.by_year) byYear[r.year] = r;
-    for (const p of (inc.by_month || [])) {
-      const key = (p.date || '').slice(0, 7);
-      if (key) byMonth[key] = p.value;
-    }
-    for (const s of (inc.by_source || [])) bySource[s.source] = s;
-  } else {
-    // Fallback — legacy JS aggregation
-    for (const t of txns) {
-      const kind = INCOME_ACTIONS[t.action];
-      if (!kind) continue;
-      const amt = t.amount || 0;
-      if (amt <= 0) continue;
-      total += amt;
-      const y = yearOf(t.date);
-      const m = (t.date || '').slice(0, 7);
-      if (!byYear[y]) byYear[y] = { year: y, dividends: 0, interest: 0, rewards: 0, lending: 0, total: 0 };
-      if (!byMonth[m]) byMonth[m] = 0;
-      byYear[y][kind] += amt;
-      byYear[y].total += amt;
-      byMonth[m] += amt;
-      const src = (t.symbol && t.symbol !== 'USD') ? t.symbol : (t.account_group || '(unknown)');
-      if (!bySource[src]) bySource[src] = { source: src, dividends: 0, interest: 0, rewards: 0, lending: 0, total: 0, account: t.account_group };
-      bySource[src][kind] += amt;
-      bySource[src].total += amt;
-    }
+  const byYear = {};
+  const byMonth = {};
+  const bySource = {};
+  const total = inc.total || 0;
+  for (const r of (inc.by_year || [])) byYear[r.year] = r;
+  for (const p of (inc.by_month || [])) {
+    const key = (p.date || '').slice(0, 7);
+    if (key) byMonth[key] = p.value;
   }
+  for (const s of (inc.by_source || [])) bySource[s.source] = s;
 
   // Stat cards
   const ytdKey = String(new Date().getFullYear());
@@ -4222,14 +4165,16 @@ function isSection1256Symbol(sym) {
   return !!(parsed && SECTION_1256_UNDERLYINGS.has(parsed.underlying));
 }
 
-// 2024 / 2025 federal tax brackets keyed by filing status — Single,
-// Married Filing Jointly (MFJ), Married Filing Separately (MFS), and
-// Head of Household (HoH).  Older / future years fall back to the
-// 2024 brackets.  The Python side (analytics/tax.py) has the same
-// tables; keep them in sync.  The tax tab applies these to estimate
-// a marginal rate from W-2 income + 401K contributions + portfolio
-// income.
-const FEDERAL_BRACKETS = {
+// Federal ordinary-income brackets, LTCG brackets, and standard
+// deduction keyed by year → filing status.  SINGLE SOURCE OF TRUTH is
+// Python (src/analytics/tax.py), emitted into DATA.tax_tables; the
+// literals below are an emergency fallback only (kept for parity with
+// the §1256 pattern) and are NOT the place to add a new tax year — do
+// that in analytics/tax.py.  The tax tab applies these to estimate a
+// marginal rate from W-2 income + 401K + portfolio income.
+const FEDERAL_BRACKETS = _TAX_TABLES.federal_brackets
+  ? _loadBracketTable(_TAX_TABLES.federal_brackets)
+  : {
   2024: {
     'Single': [[11600, 0.10], [47150, 0.12], [100525, 0.22], [191950, 0.24], [243725, 0.32], [609350, 0.35], [Infinity, 0.37]],
     'Married Filing Jointly': [[23200, 0.10], [94300, 0.12], [201050, 0.22], [383900, 0.24], [487450, 0.32], [731200, 0.35], [Infinity, 0.37]],
@@ -4243,7 +4188,9 @@ const FEDERAL_BRACKETS = {
     'Head of Household': [[17000, 0.10], [64850, 0.12], [103350, 0.22], [197300, 0.24], [250500, 0.32], [626350, 0.35], [Infinity, 0.37]],
   },
 };
-const LTCG_BRACKETS = {
+const LTCG_BRACKETS = _TAX_TABLES.ltcg_brackets
+  ? _loadBracketTable(_TAX_TABLES.ltcg_brackets)
+  : {
   2024: {
     'Single': [[47025, 0.00], [518900, 0.15], [Infinity, 0.20]],
     'Married Filing Jointly': [[94050, 0.00], [583750, 0.15], [Infinity, 0.20]],
@@ -4257,7 +4204,7 @@ const LTCG_BRACKETS = {
     'Head of Household': [[64750, 0.00], [566700, 0.15], [Infinity, 0.20]],
   },
 };
-const STD_DEDUCTION = {
+const STD_DEDUCTION = _TAX_TABLES.std_deduction || {
   2024: { 'Single': 14600, 'Married Filing Jointly': 29200, 'Married Filing Separately': 14600, 'Head of Household': 21900 },
   2025: { 'Single': 15000, 'Married Filing Jointly': 30000, 'Married Filing Separately': 15000, 'Head of Household': 22500 },
 };
@@ -4299,6 +4246,11 @@ function estimateTaxRates(year) {
       stdDed: py.std_deduction,
       marginalShort: py.marginal_short,
       marginalLong: py.marginal_long,
+      estCapGainsTaxFederal: py.est_cap_gains_tax_federal,
+      estCapGainsTaxState: py.est_cap_gains_tax_state,
+      estNiit: py.est_niit,
+      estCapGainsTaxTotal: py.est_cap_gains_tax_total,
+      estQuarterlyPayment: py.est_quarterly_payment,
       isProjection: !!py.is_projection,
       yearFraction: py.year_fraction_observed,
     };
@@ -4434,6 +4386,48 @@ function classifyRealized(t) {
 }
 
 // --- Tax bracket fill bar --------------------------------------------------
+// Estimated tax on YTD realized capital gains (federal + state + NIIT)
+// with a naive even-quarters suggested estimated payment.  All figures
+// precomputed in Python (analytics/tax.py rate_estimates_by_year).
+// Renders nothing when there are no realized gains for the year.
+function _buildEstimatedTaxSection(e) {
+  if (!e || e.estCapGainsTaxTotal == null) return '';
+  const total = e.estCapGainsTaxTotal;
+  const realized = (e.realizedST || 0) + (e.realizedLT || 0);
+  if (Math.abs(total) < 0.5 && Math.abs(realized) < 0.5) return '';
+  const proj = e.isProjection
+    ? ` <span style="color:var(--text-dim);font-size:0.75rem;">(YTD, ${(e.yearFraction * 100).toFixed(0)}% of year)</span>` : '';
+  const item = (label, val, cls) => `
+    <div class="item"><span class="label">${label}</span>
+      <span class="value ${cls || ''}">${fmtMoney(val, 0)}</span></div>`;
+  const stateItem = (e.estCapGainsTaxState > 0)
+    ? item('State', e.estCapGainsTaxState) : '';
+  const niitItem = (e.estNiit > 0)
+    ? item('NIIT (3.8%)', e.estNiit) : '';
+  return `
+    <div class="section-header" style="margin-top:24px;">
+      <h2><span style="color:var(--accent);">Estimated Tax on Realized Gains</span></h2>
+      <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">${e.year}${proj} · what to set aside for estimated payments</span>
+    </div>
+    <div class="panel">
+      <div class="bracket-summary">
+        ${item('Federal (ST + LT)', e.estCapGainsTaxFederal)}
+        ${stateItem}
+        ${niitItem}
+        ${item('Total estimated', total, 'negative')}
+        ${item('≈ per quarter (÷4)', e.estQuarterlyPayment)}
+      </div>
+      <div style="color:var(--text-dim);font-size:0.72rem;margin-top:10px;line-height:1.5;">
+        Rough set-aside for IRS Form 1040-ES on <b>taxable-account</b> realized gains only:
+        ST at your ordinary marginal rate, LT at the LTCG rate, plus state (gains taxed as
+        ordinary income in most states) and NIIT (3.8% above the MAGI threshold).  Not a
+        substitute for a tax pro — ignores withholding, credits, AMT, and safe-harbor
+        prior-year rules.  Even-quarters split is a simplification; gains realized late in
+        the year may shift the due date.
+      </div>
+    </div>`;
+}
+
 function _buildBracketSection(year) {
   const rates = ((ANALYTICS.tax || {}).rate_estimates_by_year) || {};
   const est = rates[String(year)] || rates[year] || null;
@@ -4471,7 +4465,8 @@ function _buildBracketSection(year) {
       cls = 'partial';
       fillPct = (b.in_bracket / bracketWidth) * 100;
     }
-    const label = `${(b.rate * 100).toFixed(0)}% bracket: ${fmtMoney(lower, 0)}–${b.upper != null ? fmtMoney(upper, 0) : '∞'}\nIncome in this bracket: ${fmtMoney(b.in_bracket)}\nRoom left: ${fmtMoney(b.room_left)}`;
+    const roomStr = b.room_left == null ? 'no upper limit' : fmtMoney(b.room_left);
+    const label = `${(b.rate * 100).toFixed(0)}% bracket: ${fmtMoney(lower, 0)}–${b.upper != null ? fmtMoney(upper, 0) : '∞'}\nIncome in this bracket: ${fmtMoney(b.in_bracket)}\nRoom left: ${roomStr}`;
     const styleVars = cls === 'partial' ? `--fill:${fillPct}%;` : '';
     return `<div class="bracket-segment ${cls}" style="width:${width}%;${styleVars}" title="${_htmlEsc(label)}"></div>`;
   }).join('');
@@ -4511,6 +4506,41 @@ function _buildBracketSection(year) {
       </div>
     </div>
   `;
+}
+
+// Generic client-side CSV download.  rows = array of objects; columns =
+// [[key, header], ...].  Triggers a browser download of a .csv file.
+function _downloadCsv(filename, columns, rows) {
+  const esc = (v) => {
+    const s = (v == null) ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const lines = [columns.map(c => esc(c[1])).join(',')];
+  for (const r of rows) lines.push(columns.map(c => esc(r[c[0]])).join(','));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+// Download taxable-account realized disposals as a Form 8949-style CSV.
+// Term maps to 8949 logic: long/§1256 → Part II (long-term box), short →
+// Part I.  Precomputed in Python (analytics.tax.form_8949).
+function downloadForm8949() {
+  const rows = (ANALYTICS.tax || {}).form_8949 || [];
+  if (!rows.length) return;
+  _downloadCsv('form_8949_realized_gains.csv', [
+    ['description', 'Description'],
+    ['date_acquired', 'Date Acquired'],
+    ['date_sold', 'Date Sold'],
+    ['proceeds', 'Proceeds'],
+    ['cost_basis', 'Cost Basis'],
+    ['gain', 'Gain/Loss'],
+    ['term', 'Term'],
+    ['account', 'Account'],
+  ], rows);
 }
 
 function renderTax() {
@@ -4967,6 +4997,8 @@ function renderTax() {
 
     ${_buildBracketSection(est.year)}
 
+    ${_buildEstimatedTaxSection(est)}
+
     <h3 class="tax-group-header">Forward planning — actionable today</h3>
 
     <div class="section-header" style="margin-top:16px;">
@@ -5023,7 +5055,12 @@ function renderTax() {
 
     <h3 class="tax-group-header">Historical realizations</h3>
 
-    <div class="section-header" style="margin-top:16px;"><h2><span style="color:var(--accent);">Realized Gains by Year</span></h2></div>
+    <div class="section-header" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;">
+      <h2><span style="color:var(--accent);">Realized Gains by Year</span></h2>
+      ${((ANALYTICS.tax || {}).form_8949 || []).length
+        ? '<button class="tbtn" onclick="downloadForm8949()" title="Download taxable-account disposals as a Form 8949-style CSV (description, dates, proceeds, basis, gain, term) for your tax software / preparer.">⬇ Form 8949 CSV</button>'
+        : ''}
+    </div>
     <div class="panel">
       <table class="mini-table">
         <thead><tr>
@@ -5084,37 +5121,12 @@ function renderCrypto() {
   const cryptoTxns = txns.filter(t => isCryptoSymbol(t.symbol));
   const cryptoHoldings = holdingsByAsset.filter(h => isCryptoSymbol(h.symbol));
 
-  // Build byCoin either from analytics (preferred) or in-JS fallback
+  // byCoin comes straight from the precomputed analytics (per_coin is a
+  // 1:1 structural match — see analytics/crypto.py).  The old in-JS
+  // re-aggregation was a dead fallback for pre-analytics exports and a
+  // recompute-divergence hazard; removed.
   const byCoin = {};
-  if (perCoin) {
-    for (const c of perCoin) byCoin[c.symbol] = { ...c };
-  } else {
-    for (const t of cryptoTxns) {
-      const sym = t.symbol;
-      if (!byCoin[sym]) byCoin[sym] = {
-        symbol: sym, first_date: null, last_date: null,
-        realized: 0, income: 0, txn_count: 0,
-      };
-      const c = byCoin[sym];
-      c.txn_count++;
-      if (!c.first_date || t.date < c.first_date) c.first_date = t.date;
-      if (!c.last_date || t.date > c.last_date) c.last_date = t.date;
-      if (typeof t.realized_gain === 'number') c.realized += t.realized_gain;
-      if ((t.action === 'Reward' || t.action === 'Interest') && typeof t.amount === 'number')
-        c.income += t.amount;
-    }
-    for (const h of cryptoHoldings) {
-      if (!byCoin[h.symbol]) byCoin[h.symbol] = {
-        symbol: h.symbol, first_date: null, last_date: null,
-        realized: 0, income: 0, txn_count: 0,
-      };
-      byCoin[h.symbol].quantity = h.quantity;
-      byCoin[h.symbol].price = h.price;
-      byCoin[h.symbol].value = h.value;
-      byCoin[h.symbol].basis = h.cost_basis;
-      byCoin[h.symbol].unrealized = h.unrealized_gain;
-    }
-  }
+  for (const c of (perCoin || [])) byCoin[c.symbol] = { ...c };
 
   const coinRows = Object.values(byCoin)
     .sort((a, b) => (b.value || 0) - (a.value || 0))

@@ -368,6 +368,14 @@ def _build(tmp: Path) -> None:
         ["Target", "2025", "100000", "USD", "End-of-year goal"],
         ["Target", "2026", "150000", "USD", "End-of-year goal"],
         ["Target", "2030", "500000", "USD", "Mid-career goal"],
+        # Target Allocation — Symbol = sector bucket, Amount = target %.
+        # Drives the Holdings tab's Target vs Actual / rebalancing-drift
+        # view (analytics/rebalancing.py).
+        ["Target Allocation", "", "45", "Mutual Funds",   "Index-fund core"],
+        ["Target Allocation", "", "30", "ETFs",           "Broad-market ETFs"],
+        ["Target Allocation", "", "10", "Cryptocurrency", "Speculative sleeve"],
+        ["Target Allocation", "", "10", "Cash",           "Dry powder"],
+        ["Target Allocation", "",  "5", "Technology",     "Single-stock tilt"],
         # Account Group / Account Type mappings.  These are no longer
         # baked into src/config.py — every install configures them
         # here, in the user's own metadata.csv, so they stay

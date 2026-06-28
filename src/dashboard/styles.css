@@ -2281,6 +2281,28 @@
     margin-bottom: 10px;
   }
 
+  /* Rebalancing drift bar: filled = current weight, tick = target. */
+  .rb-bar {
+    position: relative;
+    height: 14px;
+    border-radius: 3px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .rb-bar-fill {
+    height: 100%;
+    background: rgba(167, 139, 250, 0.55);
+  }
+  .rb-bar-tick {
+    position: absolute;
+    top: -2px;
+    width: 2px;
+    height: 18px;
+    background: var(--yellow);
+    transform: translateX(-1px);
+  }
+
   .bracket-bar {
     display: flex;
     height: 26px;

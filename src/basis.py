@@ -44,13 +44,14 @@ from datetime import datetime, timedelta
 # module re-exports BASIS_EFFECTS for backward compatibility with
 # callers that imported it from here.
 
-from .actions import BASIS_EFFECTS, CASH_ADD_ACTIONS, CASH_SUB_ACTIONS
+from .actions import (
+    BASIS_EFFECTS, CASH_ADD_ACTIONS, CASH_SUB_ACTIONS, INCOME_ACTIONS,
+)
 
-# Income actions used by compute_cash_summary's "income" rollup.  Sourced
-# locally because the action catalog tracks balance/basis/cash_flow but
-# not the income sub-category (which is a derived UI grouping, not a
-# pipeline-wide invariant).
-_INCOME_ACTIONS       = {"Dividend", "Interest", "Reward", "Lending"}
+# Income actions used by compute_cash_summary's "income" rollup.
+# Derived from the action catalog's `income` field (single source of
+# truth) — see src/actions.py.
+_INCOME_ACTIONS       = INCOME_ACTIONS
 
 # Account groups whose Distribution rows are typically custodial
 # rollovers (paired with a Transfer In on the destination side) rather

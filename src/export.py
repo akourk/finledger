@@ -98,6 +98,7 @@ def export_json(txns: list[dict], output_path: Path, *,
     txns_ordered = [_ordered(t) for t in txns_sorted]
 
     from .actions import to_json_dict as _action_catalog
+    from .analytics.tax import tax_tables_to_json as _tax_tables
 
     data = {
         "generated": datetime.now().isoformat(timespec="seconds"),
@@ -112,6 +113,11 @@ def export_json(txns: list[dict], output_path: Path, *,
         "sector_of": sector_of or {},
         "display_of": display_of or {},
         "action_catalog": _action_catalog(),
+        # Canonical federal tax tables (brackets / LTCG / std deduction /
+        # 401k limit / Roth-MAGI / §1256) — single source of truth read by
+        # the dashboard JS instead of hardcoded copies.  See
+        # analytics.tax.tax_tables_to_json.
+        "tax_tables": _tax_tables(),
         "transactions": txns_ordered,
     }
 

@@ -42,6 +42,7 @@ from .monthly_pnl import compute_monthly_pnl
 from .monte_carlo import compute_monte_carlo
 from .options import compute_options_analytics
 from .positions import compute_position_returns
+from .rebalancing import compute_rebalancing
 from .tax import compute_tax_analytics
 from .trading_heatmap import compute_trading_heatmap
 from ._shared import _account_filter_sets
@@ -256,6 +257,8 @@ def build_analytics(txns: list[dict], history: list[dict],
         "header_summary": compute_header_summary(txns, history, bridges),
         # New (this pass)
         "concentration":   concentration,
+        "rebalancing":     compute_rebalancing(
+            holdings_by_account, (retirement_meta or {}).get("target_allocation")),
         "drawdown":        compute_drawdown(history),
         "daily_pnl":       compute_daily_pnl(history, txns),
         "trading_heatmap": compute_trading_heatmap(txns),
