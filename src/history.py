@@ -225,7 +225,7 @@ def compute_history(txns: list[dict],
     # eliminates the spurious "drop to zero" mid-period when the user
     # sells crypto and the next Buy / Withdrawal is on a different
     # snapshot.  See ``coinbase.usd_series`` for the full rationale.
-    from .coinbase import usd_series as _cb_usd_series
+    from .coinbase_reconcile import usd_series as _cb_usd_series
     _cb_usd_eod = _cb_usd_series(txns)
     _cb_usd_dates = [d for d, _ in _cb_usd_eod]
     _cb_usd_balances = [b for _, b in _cb_usd_eod]

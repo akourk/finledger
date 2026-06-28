@@ -51,10 +51,10 @@ def _usaa_position_before_date(txns: list[dict], symbol: str, asof_date: str) ->
     return bal
 
 
-# Coinbase reconciliation is in src/coinbase.py.  Backwards-
-# compatible aliases below preserve the existing call sites in
-# main()/history.py until they're updated to use the new module.
-from . import coinbase as _coinbase
+# Coinbase reconciliation lives in src/coinbase_reconcile.py (named to
+# disambiguate from src/parsers/coinbase.py, which only parses the CSV).
+# The aliases below preserve the historical main.* call sites.
+from . import coinbase_reconcile as _coinbase
 
 coinbase_usd_effect = _coinbase.usd_effect
 coinbase_usd_series = _coinbase.usd_series
