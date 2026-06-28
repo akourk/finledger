@@ -832,6 +832,15 @@ checked in EXCEPT `cache/last_run.json` (which carries portfolio
 totals).  Treat CSV contents as private financial data — don't paste
 them into external services, issue bodies, or anywhere public.
 
+**This repo is public.**  NEVER put the user's actual portfolio figures
+— dollar amounts, realized gains, balances, dividend/interest totals,
+account values — into **commit messages, PR descriptions, or any
+git-tracked/public file**.  Commit messages are an easy gap to forget
+(the gitignore only covers `data/` + `exports/`).  Describe changes
+qualitatively: the mechanism, the files, the bug class.  "Coinbase
+reconciles closer under HIFO" — not the specific figure.  When in doubt,
+strip every `$amount` / `N.NN` from the message before committing.
+
 ## Adding sample data
 
 `tools/build_sample_snapshot.py` builds `samples/portfolio.snapshot.json`
