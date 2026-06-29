@@ -576,7 +576,16 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             proceeds = _basis_dollars(t)
             basis_removed, carried = _consume_from_key(state, _method_for(acct), key, qty)
             cost_basis_value = basis_removed
-            realized = proceeds - basis_removed
+            # A fee paid by redeeming shares (e.g. a fund maintenance fee)
+            # removes the shares + their basis from the lot queue — so
+            # balance↔basis parity holds — but it's an EXPENSE, not a
+            # trade, so we don't book the (immaterial, noise) realized
+            # gain/loss it would otherwise produce.  basis_effect stays
+            # "remove" so derive_basis_by_key_from_txns still drops the
+            # basis correctly.
+            is_fee = (t.get("action") == "Fee")
+            if not is_fee:
+                realized = proceeds - basis_removed
             # Per-lot breakdown of the consumed lots.  Each lot keeps its
             # own acquired date, basis, and proceeds (apportioned by
             # share) and days-held, so the Tax tab can classify realized
@@ -585,8 +594,9 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             # weighted-average holding period mis-buckets the whole gain
             # (and fabricates an acquired date that matches no real lot).
             # ``holding_days`` (the weighted average) is still emitted for
-            # the transaction-detail display.  FIFO/annotate only.
-            if annotate:
+            # the transaction-detail display.  FIFO/annotate only; skipped
+            # for fees (no realized gain to classify).
+            if annotate and not is_fee:
                 close_d = _safe_date(t.get("date", ""))
                 consumed_q = sum(lot["qty"] for lot in carried)
                 breakdown: list[dict] = []

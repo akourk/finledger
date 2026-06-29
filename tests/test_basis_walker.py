@@ -63,6 +63,27 @@ class TestPerAccountLotMethod:
         assert res_avg["realized_total"] == pytest.approx(600.0)  # both FIFO
 
 
+class TestFeeNoRealizedGain:
+    def test_fee_removes_shares_without_realizing_gain(self, isolated_workdir):
+        """A fee paid by redeeming shares (e.g. a fund maintenance fee) is
+        an expense, not a trade: the shares + basis leave the lot queue
+        (parity), but no realized capital gain is booked."""
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Roth IRA", "FOO", "Buy", 10, 10.0, 100.0),
+            # Redeem 0.1 sh (basis $1.00) to pay a $2.50 fee — would
+            # otherwise book +$1.50 realized.
+            ("2024-06-01", "Roth IRA", "FOO", "Fee", 0.1, 25.0, 2.50),
+        )
+        res = compute_basis_default(txns)
+        assert res["realized_total"] == pytest.approx(0.0)
+        fee = next(t for t in txns if t["action"] == "Fee")
+        assert not fee.get("realized_gain")
+        # Parity: the 0.1 share + its basis still left the lot queue.
+        lots = res["lots"][("Roth IRA", "FOO")]
+        assert sum(l["qty"] for l in lots) == pytest.approx(9.9)
+
+
 class TestWrapBasisCarry:
     def test_wrap_defers_gain_and_carries_basis(self, isolated_workdir):
         """Wrapping (ETH→CBETH) is basis-CARRYING, not a taxable disposal:
