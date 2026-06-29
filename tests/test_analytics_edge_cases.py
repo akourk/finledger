@@ -14,6 +14,32 @@ import math
 import pytest
 
 
+def test_chain_link_uses_trailing_not_alltime_peak():
+    """The small-base skip must use the TRAILING peak, not the window's
+    all-time peak.  Otherwise a full-history chain skips every early month
+    (when the portfolio was small but was the user's entire capital),
+    silently dropping the early-years return and making the lifetime TWR
+    disagree with the per-year table.
+
+    Scenario: +20% early (on a $100 base), then a $50k contribution, then
+    +10%.  With an all-time-peak threshold the early +20% (base $100 < 1%
+    of $55k) is wrongly skipped → ~+10%.  With a trailing peak it's
+    captured → (1.2)(1.1) - 1 = +32%.
+    """
+    from src.analytics._shared import _chain_link_return
+    snaps = [
+        {"date": "2020-06-30", "v": 100.0},
+        {"date": "2020-12-31", "v": 120.0},     # +20% (base $100)
+        {"date": "2021-06-30", "v": 50120.0},   # +$50k contribution
+        {"date": "2021-12-31", "v": 55132.0},   # +10%
+    ]
+    txns = [{"date": "2021-03-15", "account_group": "X",
+             "account_type": "Retirement", "action": "Contribution",
+             "symbol": "FOO", "quantity": 1, "price": 50000.0, "amount": 50000.0}]
+    r = _chain_link_return(snaps, lambda h: h["v"], txns, None)
+    assert r == pytest.approx(0.32, abs=0.01)
+
+
 def _assert_finite(obj, path="root"):
     """Recursively assert no float in `obj` is NaN or Infinity."""
     if isinstance(obj, float):

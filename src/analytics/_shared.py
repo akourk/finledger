@@ -398,27 +398,32 @@ def _chain_link_return(snaps: list[dict], val_fn, txns: list[dict],
     """Chain-link per-sub-period returns into a cumulative return for
     the span covered by `snaps`.  Returns None if no valid period.
 
-    **Small-base filter** (matches Sharpe/Sortino in monthly_pnl.py
-    and the drawdown filter in drawdown.py): periods where the
-    starting value is below 1% of all-time peak get skipped.  Without
-    this, a small-base portfolio with high volatility produces
-    asymmetric chain-linked returns (-56% then +65% = ×0.72, NOT ×1)
-    that drag cumulative TWR negative even though the actual
-    portfolio gained value.  The filter caps that distortion to
-    only periods that meaningfully represent the user's invested
-    capital.
+    **Small-base filter**: skip periods whose starting value is below 1%
+    of the **trailing** peak (the highest value seen *so far*, not the
+    whole window's all-time peak).  Without any filter, a small-base
+    portfolio with high volatility produces asymmetric chain-linked
+    returns (-56% then +65% = ×0.72, NOT ×1) that drag cumulative TWR
+    negative even though the portfolio gained value.  Using the *trailing*
+    peak — rather than the window's global max — is critical: an all-time
+    peak makes a full-history chain skip every early month (when the
+    portfolio was small but represented the user's *entire* capital at the
+    time), which silently drops the early-years returns and makes the
+    lifetime TWR disagree with the per-year table.  The trailing peak only
+    skips a period once the portfolio has genuinely crashed to <1% of a
+    level it actually reached.
     """
     if len(snaps) < 2:
         return None
-    # Compute ATL peak for the small-base threshold
-    peak = max(val_fn(s) for s in snaps) or 1.0
-    threshold = peak * 0.01
     cumulative = 1.0
     any_valid = False
+    peak_so_far = 0.0
     for i in range(1, len(snaps)):
         prev = snaps[i - 1]
-        if val_fn(prev) < threshold:
-            continue   # small-base period — skip from chain
+        sv = val_fn(prev)
+        if sv > peak_so_far:
+            peak_so_far = sv
+        if sv < peak_so_far * 0.01:
+            continue   # crashed to <1% of a prior high — skip from chain
         r = _period_return(prev, snaps[i], val_fn, txns, filter_groups)
         if r is None:
             continue
