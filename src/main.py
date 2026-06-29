@@ -266,6 +266,8 @@ def _refresh_prices_only(args) -> None:
     # long-term" horizon can enumerate open lots.  Idempotent — the
     # walker re-writes identical annotations onto txns it's already
     # seen, and we only need state["lots"] downstream.
+    from .cost_basis_overrides import match_and_stamp as _stamp_cb
+    _stamp_cb(txns, retirement_meta.get("cost_basis_overrides"))
     refresh_fifo_state = compute_basis_default(
         txns, account_methods=retirement_meta.get("lot_methods"))
     analytics = build_analytics(txns, history, holdings, holdings_by_account,
@@ -526,6 +528,16 @@ def main():
     # Annotates each txn with cost_basis, realized_gain (sells only), and
     # basis_effect.  Returns the final lot state keyed on
     # (account_group, symbol) for merging into the holdings table below.
+    # Stamp user-supplied off-platform cost basis onto matching lots
+    # (metadata `Cost Basis` rows) before the walk consumes them.
+    from .cost_basis_overrides import match_and_stamp as _stamp_cb
+    _cb_applied, _cb_warn = _stamp_cb(txns, retirement_meta.get("cost_basis_overrides"))
+    if retirement_meta.get("cost_basis_overrides"):
+        print(f"  Cost-basis overrides: {_cb_applied} applied"
+              + (f", {len(_cb_warn)} warning(s)" if _cb_warn else ""))
+        for _w in _cb_warn:
+            print(f"    ! {_w}")
+
     fifo_state = compute_basis_default(
         txns, account_methods=retirement_meta.get("lot_methods"))
     fifo_basis_by_key: dict[tuple[str, str], float] = {}

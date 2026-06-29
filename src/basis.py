@@ -512,6 +512,16 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
         m = account_methods.get(acct, method)
         return m if m in ("fifo", "lifo", "hifo") else method
 
+    def _ov(t: dict, default: float) -> float:
+        """Use the user-supplied cost-basis override on this txn (set by
+        cost_basis_overrides.match_and_stamp from a metadata `Cost Basis`
+        row) when present, else the computed default.  Only consulted on
+        lot-CREATING branches (add / unpaired transfer-in / unpaired
+        wrap-in) — the off-platform acquisitions fin can't see the basis
+        for."""
+        bo = t.get("basis_override")
+        return float(bo) if bo is not None else default
+
     # Pre-pair transfers across accounts.  Each Transfer In either has a
     # matching Transfer Out (cross-group — basis carries), belongs to an
     # intra-group pair (no-op in the lot queue since both legs share the
@@ -558,7 +568,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             continue
 
         if effect == "add":
-            basis = _basis_dollars(t)
+            basis = _ov(t, _basis_dollars(t))
             _push_lot(state, method, key, qty, basis, t.get("date", ""))
             if qty > 0:
                 cost_basis_value = basis
@@ -645,9 +655,11 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 # the correct basis for assets acquired at market, and a
                 # far better estimate than $0 (which would book the entire
                 # proceeds as gain on a later sale).  Falls back to $0 only
-                # when no price is available.
+                # when no price is available.  A user-supplied basis
+                # override (off-platform "customer-provided" cost) wins
+                # over the FMV guess.
                 price = float(t.get("price", 0) or 0)
-                basis = qty * price if price > 0 else 0.0
+                basis = _ov(t, qty * price if price > 0 else 0.0)
                 _push_lot(state, method, key, qty, basis, t.get("date", ""))
                 cost_basis_value = basis
             elif id(paired) in stashed_tout_lots:
@@ -706,7 +718,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                     for il in g["in"]:
                         iq = float(il.get("quantity", 0) or 0)
                         px = float(il.get("price", 0) or 0)
-                        b = iq * px if px > 0 else 0.0
+                        b = _ov(il, iq * px if px > 0 else 0.0)
                         _push_lot(state, method, (acct, il.get("symbol", "")),
                                   iq, b, il.get("date", ""))
                         wrap_leg_ann[id(il)] = ("wrap_in_unpaired", b, None)

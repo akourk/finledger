@@ -100,6 +100,7 @@ def _empty() -> dict:
         "targets": [],
         "target_allocation": [],
         "reconcile": [],
+        "cost_basis_overrides": [],
         "lot_methods": {},
         "account_groups": {},
         "account_types": {},
@@ -211,6 +212,33 @@ def parse_metadata(data_dir: Path) -> dict:
                 age = int(round(amt))
                 if 30 <= age <= 100:
                     out["retirement_age"] = age
+            elif typ == "Cost Basis":
+                # User-supplied true cost basis for an off-platform crypto
+                # receive fin can't see (e.g. Coinbase "customer provided"
+                # basis).  Symbol = account_group; Date = acquired date;
+                # Amount = total cost basis; Note = "<qty> <asset>"
+                # (optionally trailing "#N" to target the Nth lot when
+                # several share the same date+qty).  Matched onto the
+                # transfer-in/deposit lot by cost_basis_overrides.py.
+                parts = note.split()
+                ov_index = None
+                if parts and parts[-1].startswith("#"):
+                    try:
+                        ov_index = int(parts[-1][1:])
+                    except ValueError:
+                        ov_index = None
+                    parts = parts[:-1]
+                if symbol and date and len(parts) >= 2:
+                    try:
+                        ov_qty = float(parts[0])
+                    except ValueError:
+                        ov_qty = None
+                    if ov_qty is not None:
+                        out["cost_basis_overrides"].append({
+                            "account_group": symbol, "date": date,
+                            "amount": amt, "qty": ov_qty,
+                            "asset": parts[1].upper(), "index": ov_index,
+                        })
             elif typ == "Lot Method":
                 # Symbol = account_group; Note = lot-relief method the
                 # broker actually uses (FIFO / LIFO / HIFO).  Overrides

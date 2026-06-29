@@ -455,6 +455,23 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     into `retirement_meta["lot_methods"]` and passed to
     `compute_basis_default(txns, account_methods=...)`.  Affects realized
     gains / holding period / MAGI / Roth eligibility, never balances.
+  - `Cost Basis` — user-supplied true cost basis for an off-platform
+    crypto receive fin can't reconstruct (e.g. Coinbase "customer
+    provided" basis).  Symbol = `account_group`; Date = acquired date;
+    Amount = total cost basis; Note = `"<qty> <asset>"` (optional
+    trailing `#N` to disambiguate same-date+qty lots).  Parsed into
+    `retirement_meta["cost_basis_overrides"]`; `cost_basis_overrides.py`
+    `match_and_stamp` matches each row to one lot-creating txn by
+    (account, symbol, date±2d, qty) and stamps `t["basis_override"]`,
+    which the basis walker honours on its add / unpaired-transfer-in /
+    unpaired-wrap-in branches.  Safeguards: consume 1:1, prefer
+    non-intra-group lots (an intra-group leg carries basis upstream and
+    is *flagged*, not silently mis-applied), per-unit sanity vs market
+    price, and the `#N` index.  KNOWN LIMIT: lots fin recorded as
+    internal Coinbase Pro↔regular moves (`intra_group_noop`) can't be
+    overridden directly — those need the deeper intra-transfer-pairing
+    fix; the `Reconcile Realized` override already covers their tax
+    impact.
   - `Reconcile Balance` / `Reconcile Realized` / `Reconcile Income`
     / `Reconcile Section 1256` / `Reconcile Other Income` —
     broker-reported ground truth to check fin against (statement
@@ -625,6 +642,12 @@ threads through every consumer.
   dashboard JS consumes to derive its own membership sets (including
   `INCOME_ACTIONS` from the `income` field) — same source-of-truth on
   both sides.
+- **`src/cost_basis_overrides.py`** — applies user-supplied `Cost Basis`
+  metadata rows onto fin's lots (off-platform crypto basis fin can't
+  reconstruct).  `match_and_stamp(txns, overrides)` matches each row to one
+  lot-creating txn and stamps `t["basis_override"]` (honoured by the basis
+  walker's `_ov` helper).  See the `Cost Basis` metadata type above for the
+  safeguards and the intra-group known-limit.
 - **`src/schema.py`** — `TypedDict` definitions for the core data
   structures (`Transaction`, `Holding`, `Snapshot`).  Used for IDE
   autocomplete and type-check catches of field-name drift.  Runtime

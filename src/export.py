@@ -89,7 +89,7 @@ def export_json(txns: list[dict], output_path: Path, *,
     # but should not bloat the exported JSON.  ``lot_breakdown`` is the
     # per-lot FIFO detail consumed by analytics/tax.py (form_8949, ST/LT
     # split); the dashboard reads the precomputed results, not the raw lots.
-    _INTERNAL_FIELDS = {"lot_breakdown"}
+    _INTERNAL_FIELDS = {"lot_breakdown", "basis_override"}
 
     def _ordered(txn: dict) -> dict:
         ordered = {}
