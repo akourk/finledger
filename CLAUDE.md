@@ -684,15 +684,23 @@ threads through every consumer.
   also wires the dual Monte Carlo (retirement vs all-accounts) +
   FIRE threshold from `retirement_meta.annual_expenses`.
 - **`src/dashboard/`** — package directory.  Layout:
-  - `__init__.py` — bundler.  Reads the three asset files, splices
+  - `__init__.py` — bundler.  Reads template + CSS + the `app/*.js`
+    modules (concatenated in filename order by `_read_app_js`), splices
     them together, and writes a single self-contained HTML output
     (same external behaviour as the old monolith).
   - `template.html` — page structure with `/* @@STYLES@@ */` and
     `// @@APP_JS@@` placeholder markers.
   - `styles.css` — all styling.
-  - `app.js` — all JavaScript.  Edit this for any dashboard behaviour
-    change; it gets full editor support (syntax highlighting, lint)
-    instead of being trapped in a Python triple-quoted string.
+  - `app/*.js` — all JavaScript, split into one module per tab/concern
+    (`00-core.js`, `10-holdings.js`, `20-history.js`, `30-overview.js`,
+    `40-options.js`, `50-retirement.js`, `60-planning.js`, `70-income.js`,
+    `80-tax.js`, `85-crypto.js`, `90-performance.js`,
+    `95-transactions.js`).  They are concatenated **in filename order**
+    into one script — each file is a contiguous slice of what used to be
+    a single 7.5k-line `app.js`, so **order matters** (a top-level
+    definition must precede its use).  Number prefixes leave gaps so a
+    new module can slot between existing ones.  `__JSON_DATA__` lives in
+    `00-core.js`.  Edit the relevant module for a behaviour change.
 - **`src/config.py`** — paths resolve from env vars
   `FIN_PROJECT_ROOT` / `FIN_DATA_DIR` / `FIN_CACHE_DIR` /
   `FIN_EXPORT_DIR` (falling back to repo-relative defaults).  Tests

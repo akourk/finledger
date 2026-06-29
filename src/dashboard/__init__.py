@@ -6,15 +6,21 @@ The dashboard is split across three asset files for editor ergonomics:
   Contains two placeholder markers that this module substitutes:
   ``/* @@STYLES@@ */`` and ``// @@APP_JS@@``.
 - ``styles.css`` — all dashboard styling.
-- ``app.js`` — all dashboard behaviour (tab routing, chart rendering,
-  filter state, etc.).
+- ``app/*.js`` — all dashboard behaviour, split into one module per
+  tab/concern (``00-core.js``, ``10-holdings.js``, …, ``90-performance.js``,
+  ``95-transactions.js``).  They are concatenated **in filename order**
+  into a single script — each file is a contiguous slice of what used to
+  be one ``app.js``, so order matters (top-level definitions must precede
+  their use).  Prefix numbers leave gaps (10, 20, …) so a new module can
+  slot between two existing ones.
 
 The output is still a single self-contained HTML file with the JSON
 data, CSS, and JS inlined — no network calls at view time, same
 single-file portability as before.
 
-Adding a new tab or feature: edit ``app.js`` (and ``template.html`` if
-the new tab needs new DOM nodes); never touch this Python module.
+Adding a new tab or feature: edit the relevant ``app/*.js`` module (or add
+a new one — mind the filename-order prefix) and ``template.html`` if the
+new tab needs new DOM nodes; never touch this Python module.
 """
 
 from __future__ import annotations
@@ -35,6 +41,23 @@ def _read_asset(filename: str) -> str:
     return (_PKG_DIR / filename).read_text(encoding="utf-8")
 
 
+def _read_app_js() -> str:
+    """Concatenate the split ``app/*.js`` modules in filename order.
+
+    Each module is a contiguous slice of the original single-file script,
+    so joining them in sorted order reproduces the full program (with all
+    top-level definitions in their original order).
+    """
+    app_dir = _PKG_DIR / "app"
+    parts = sorted(app_dir.glob("*.js"))
+    if not parts:
+        raise RuntimeError(
+            "no dashboard JS modules found in src/dashboard/app/ — "
+            "the asset files are out of sync with __init__.py"
+        )
+    return "".join(p.read_text(encoding="utf-8") for p in parts)
+
+
 def generate_dashboard(json_path: Path, output_path: Path) -> None:
     """Read the transactions JSON and produce a single self-contained
     HTML dashboard at ``output_path``.
@@ -48,7 +71,7 @@ def generate_dashboard(json_path: Path, output_path: Path) -> None:
 
     template = _read_asset("template.html")
     styles   = _read_asset("styles.css")
-    app_js   = _read_asset("app.js")
+    app_js   = _read_app_js()
 
     # Inject the JSON payload into app.js's __JSON_DATA__ placeholder
     # before splicing app.js into the template — this keeps the JSON

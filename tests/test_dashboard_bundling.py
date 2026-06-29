@@ -15,22 +15,39 @@ import pytest
 def test_required_asset_files_exist():
     from src import dashboard
     pkg = Path(dashboard.__file__).parent
-    for asset in ("template.html", "styles.css", "app.js"):
+    for asset in ("template.html", "styles.css"):
         assert (pkg / asset).exists(), f"missing asset: {asset}"
+    # The JS now lives as ordered modules under app/, concatenated by
+    # _read_app_js().  At least the core module must be present.
+    js_modules = sorted((pkg / "app").glob("*.js"))
+    assert js_modules, "no app/*.js modules found"
+    assert (pkg / "app" / "00-core.js").exists()
 
 
 def test_template_has_required_markers():
     """Three placeholders must remain in the HTML template:
-    @@STYLES@@, @@APP_JS@@, and __JSON_DATA__ (the last one lives in
-    app.js, but template can't accidentally claim it).
+    @@STYLES@@, @@APP_JS@@, and __JSON_DATA__ (the last one lives in the
+    concatenated app/ JS, but template can't accidentally claim it).
     """
     from src import dashboard
     pkg = Path(dashboard.__file__).parent
     template = (pkg / "template.html").read_text(encoding="utf-8")
-    app_js   = (pkg / "app.js").read_text(encoding="utf-8")
+    app_js   = dashboard._read_app_js()
     assert "/* @@STYLES@@ */" in template
     assert "// @@APP_JS@@" in template
     assert "__JSON_DATA__" in app_js
+
+
+def test_app_modules_concatenate_in_order():
+    """The split app/ modules must join into one complete program — spot
+    check that key definitions from across the modules are all present and
+    the JSON placeholder appears exactly once."""
+    from src import dashboard
+    app_js = dashboard._read_app_js()
+    for needed in ("registerTabRenderer", "renderHoldings", "renderHistory",
+                   "renderOverviewStatus", "renderPerformance", "renderTable"):
+        assert needed in app_js, f"missing {needed} — a module dropped out"
+    assert app_js.count("__JSON_DATA__") == 1
 
 
 def test_generate_dashboard_produces_runnable_html(tmp_path):
