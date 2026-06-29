@@ -376,6 +376,17 @@ def _build(tmp: Path) -> None:
         ["Target Allocation", "", "10", "Cryptocurrency", "Speculative sleeve"],
         ["Target Allocation", "", "10", "Cash",           "Dry powder"],
         ["Target Allocation", "",  "5", "Technology",     "Single-stock tilt"],
+        # Reconcile — broker-reported ground truth to check fin against.
+        # Drives the Overview's Reconciliation panel (analytics/reconcile.py).
+        # The realized / income figures are exact (txn-derived, stable); the
+        # balances are the 2025-12-31 snapshot values (the 1.5% band absorbs
+        # small price-data drift).  The 401K balance is intentionally ~1.6%
+        # high to demonstrate the panel catching statement-vs-snapshot drift.
+        ["Reconcile Balance",  "2025-12-31", "17585",  "Roth IRA",      "Schwab year-end statement"],
+        ["Reconcile Balance",  "2025-12-31", "9983",   "Coinbase",      "Coinbase year-end value"],
+        ["Reconcile Balance",  "2025-12-31", "19900",  "401K",          "Vanguard statement"],
+        ["Reconcile Realized", "2024",       "-280",   "Robinhood",     "1099-B realized gains"],
+        ["Reconcile Income",   "2023",       "37.57",  "Apple Savings", "1099-INT interest"],
         # Account Group / Account Type mappings.  These are no longer
         # baked into src/config.py — every install configures them
         # here, in the user's own metadata.csv, so they stay

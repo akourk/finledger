@@ -6,6 +6,18 @@ holdings and every transaction ever — across every account, in one view.
 
 No server, no database, no cloud. One Python script, one HTML file out.
 
+## Screenshots
+
+All screenshots are rendered from the bundled **fictional** sample portfolio
+(`samples/portfolio.snapshot.json`) — no real financial data.
+
+| Overview | Performance | Tax |
+|:---:|:---:|:---:|
+| [![Overview — stat cards, history chart, reconciliation panel](docs/img/overview.png)](docs/img/overview.png) | [![Performance — returns vs benchmarks, drawdown](docs/img/performance.png)](docs/img/performance.png) | [![Tax — bracket fill, realized gains, harvest candidates](docs/img/tax.png)](docs/img/tax.png) |
+
+> Regenerate the sample dashboard yourself (in a scratch dir, per the
+> dev-loop): import the snapshot, then run the pipeline → `exports/dashboard.html`.
+
 ## What it does
 
 1. **Scans** `data/` for broker CSV exports and auto-detects each one

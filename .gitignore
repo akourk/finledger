@@ -6,6 +6,8 @@ data/*.json
 # Generated artifacts
 exports/
 snap.json
+# Locally-rendered sample dashboard (regenerate from samples/ — see README).
+sample-dashboard.html
 
 # Cache: every file in cache/ is checked in EXCEPT the run-state
 # snapshot used for "What's Changed" diffs.  last_run.json captures
