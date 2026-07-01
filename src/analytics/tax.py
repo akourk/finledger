@@ -80,6 +80,23 @@ def _realized_override_delta(txns, retirement_meta, year_str):
     return st_delta, lt_delta, sorted(overrides)
 
 
+def _is_long_term(acquired_iso, sold_iso, days_fallback) -> bool:
+    """Held MORE than one year (IRS Topic 409)?
+
+    Calendar-correct when both dates are known: long-term iff the sale
+    falls on/after the LT-eligible date (anniversary + 1 day, see
+    ``_lt_eligible_date``).  A sale exactly on the one-year anniversary
+    is short-term — the naive ``days > 365`` test misclassifies that
+    case whenever the holding window spans a Feb 29.  Falls back to the
+    day-count test when either date is missing/unparseable (e.g. a
+    ``VARIOUS`` acquired date)."""
+    a = _parse_iso(acquired_iso) if acquired_iso else None
+    s = _parse_iso(sold_iso) if sold_iso else None
+    if a and s:
+        return s >= _lt_eligible_date(a)
+    return isinstance(days_fallback, (int, float)) and days_fallback > 365
+
+
 def _classify_realized(txn: dict) -> dict:
     """Split a realized-gain txn into ST / LT / §1256 components.
 
@@ -99,14 +116,14 @@ def _classify_realized(txn: dict) -> dict:
         for lot in breakdown:
             lot_gain = (float(lot.get("proceeds", 0) or 0)
                         - float(lot.get("cost_basis", 0) or 0))
-            days = lot.get("days")
-            if isinstance(days, (int, float)) and days > 365:
+            if _is_long_term(lot.get("date_acquired"), txn.get("date"),
+                             lot.get("days")):
                 lt += lot_gain
             else:
                 st += lot_gain
         return {"st": st, "lt": lt, "s1256": 0.0, "kind": "normal"}
     days = txn.get("holding_days")
-    is_lt = days is not None and days > 365
+    is_lt = _is_long_term(None, None, days)
     return {
         "st": 0.0 if is_lt else gain,
         "lt": gain if is_lt else 0.0,
@@ -149,6 +166,20 @@ _BRACKETS_BY_YEAR_STATUS: dict[tuple[int, str], list[tuple[float, float]]] = {
     (2025, "Head of Household"): [
         (17000, 0.10), (64850, 0.12), (103350, 0.22),
         (197300, 0.24), (250500, 0.32), (626350, 0.35), (math.inf, 0.37)],
+    # ---- 2026 (Rev. Proc. 2025-32, reflects OBBBA's extra bump to the
+    # 10%/12% brackets) ----
+    (2026, "Single"): [
+        (12400, 0.10), (50400, 0.12), (105700, 0.22),
+        (201775, 0.24), (256225, 0.32), (640600, 0.35), (math.inf, 0.37)],
+    (2026, "Married Filing Jointly"): [
+        (24800, 0.10), (100800, 0.12), (211400, 0.22),
+        (403550, 0.24), (512450, 0.32), (768700, 0.35), (math.inf, 0.37)],
+    (2026, "Married Filing Separately"): [
+        (12400, 0.10), (50400, 0.12), (105700, 0.22),
+        (201775, 0.24), (256225, 0.32), (384350, 0.35), (math.inf, 0.37)],
+    (2026, "Head of Household"): [
+        (17700, 0.10), (67450, 0.12), (105700, 0.22),
+        (201775, 0.24), (256200, 0.32), (640600, 0.35), (math.inf, 0.37)],
 }
 
 _LTCG_BY_YEAR_STATUS: dict[tuple[int, str], list[tuple[float, float]]] = {
@@ -162,6 +193,11 @@ _LTCG_BY_YEAR_STATUS: dict[tuple[int, str], list[tuple[float, float]]] = {
     (2025, "Married Filing Jointly"):    [(96700, 0.00), (600050, 0.15), (math.inf, 0.20)],
     (2025, "Married Filing Separately"): [(48350, 0.00), (300000, 0.15), (math.inf, 0.20)],
     (2025, "Head of Household"):         [(64750, 0.00), (566700, 0.15), (math.inf, 0.20)],
+    # 2026 (Rev. Proc. 2025-32)
+    (2026, "Single"):                    [(49450, 0.00), (545500, 0.15), (math.inf, 0.20)],
+    (2026, "Married Filing Jointly"):    [(98900, 0.00), (613700, 0.15), (math.inf, 0.20)],
+    (2026, "Married Filing Separately"): [(49450, 0.00), (306850, 0.15), (math.inf, 0.20)],
+    (2026, "Head of Household"):         [(66200, 0.00), (579600, 0.15), (math.inf, 0.20)],
 }
 
 _STD_DED_BY_YEAR_STATUS: dict[tuple[int, str], float] = {
@@ -169,10 +205,18 @@ _STD_DED_BY_YEAR_STATUS: dict[tuple[int, str], float] = {
     (2024, "Married Filing Jointly"):    29200,
     (2024, "Married Filing Separately"): 14600,
     (2024, "Head of Household"):         21900,
-    (2025, "Single"):                    15000,
-    (2025, "Married Filing Jointly"):    30000,
-    (2025, "Married Filing Separately"): 15000,
-    (2025, "Head of Household"):         22500,
+    # 2025 figures are the OBBBA (July 2025) amounts, which retroactively
+    # replaced the originally-announced inflation adjustments
+    # (15000 / 30000 / 22500).
+    (2025, "Single"):                    15750,
+    (2025, "Married Filing Jointly"):    31500,
+    (2025, "Married Filing Separately"): 15750,
+    (2025, "Head of Household"):         23625,
+    # 2026 (Rev. Proc. 2025-32)
+    (2026, "Single"):                    16100,
+    (2026, "Married Filing Jointly"):    32200,
+    (2026, "Married Filing Separately"): 16100,
+    (2026, "Head of Household"):         24150,
 }
 
 # Backwards-compat aliases — old code (and tests) read these by name.
@@ -216,7 +260,7 @@ _ROTH_MAGI_PHASEOUT_BY_STATUS: dict[str, dict] = {
     "Married Filing Jointly": {
         "start": {2018: 189000, 2019: 193000, 2020: 196000, 2021: 198000,
                   2022: 204000, 2023: 218000, 2024: 230000, 2025: 236000,
-                  2026: 240000},
+                  2026: 242000},   # Notice 2025-67: $242k–$252k
         "width": 10000,
     },
     "Married Filing Separately": {
@@ -349,11 +393,24 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
     for t in txns:
         if _year(t.get("date", "")) != year_str:
             continue
-        if t.get("action") in INCOME_ACTION_KINDS:
+        # Portfolio income for AGI: dividends / interest / rewards earned
+        # OUTSIDE retirement wrappers only.  Dividends inside a 401K / IRA
+        # are tax-deferred (or tax-free) and never hit AGI — counting them
+        # overstated MAGI right at the Roth phase-out edge.  Savings-account
+        # interest IS taxable (1099-INT) and stays in.
+        if (t.get("action") in INCOME_ACTION_KINDS
+                and t.get("account_type") != "Retirement"):
             portfolio_income_ytd += float(t.get("amount", 0) or 0)
         info = classify_retirement_contribution(t)
         if info["is_contrib"] and t.get("account_group") in ("401K", "Rollover IRA"):
-            k401_ytd += float(t.get("amount", 0) or 0)
+            # Only the employee's elective deferral reduces W-2 wages.
+            # Employer match / safe-harbor money (Voya tags the Money
+            # Source in the description) is not an AGI deduction — skip it.
+            desc = (t.get("description") or "").lower()
+            if "employer" not in desc and "match" not in desc:
+                # info["amount"] carries the sign: negative for
+                # Contribution Reversal rows, which must net out.
+                k401_ytd += float(info.get("amount", 0) or 0)
         if (t.get("realized_gain") not in (None, 0)
                 and t.get("account_type") == "Taxable"):
             c = _classify_realized(t)
@@ -626,6 +683,13 @@ def compute_tax_analytics(txns: list[dict], holdings: list[dict],
             continue
         if t.get("action") != "Sell":
             continue
+        # Wash-sale deferral only matters for taxable-account losses —
+        # a loss inside an IRA/401K is never deductible in the first
+        # place, so flagging it is pure noise.  (Buys in ANY account,
+        # including IRAs, still count as offending repurchases below —
+        # the IRS applies the rule across accounts.)
+        if t.get("account_type") not in (None, "Taxable"):
+            continue
         sym = t.get("symbol", "")
         close_d = _parse_iso(t.get("date", ""))
         if not close_d:
@@ -696,8 +760,9 @@ def _build_form_8949(realized: list[dict]) -> list[dict]:
             for lot in breakdown:
                 proceeds = round(float(lot.get("proceeds", 0) or 0), 2)
                 basis = round(float(lot.get("cost_basis", 0) or 0), 2)
-                days = lot.get("days")
-                term = "long" if (isinstance(days, (int, float)) and days > 365) else "short"
+                term = ("long" if _is_long_term(lot.get("date_acquired"),
+                                                sold, lot.get("days"))
+                        else "short")
                 rows.append({
                     "description": f"{float(lot.get('qty', 0) or 0):g} {sym}".strip(),
                     "date_acquired": lot.get("date_acquired") or "VARIOUS",
@@ -720,7 +785,7 @@ def _build_form_8949(realized: list[dict]) -> list[dict]:
         if c["kind"] == "1256":
             term = "1256"
         else:
-            term = "long" if (isinstance(days, (int, float)) and days > 365) else "short"
+            term = "long" if _is_long_term(None, None, days) else "short"
         qty = float(t.get("quantity", 0) or 0)
         rows.append({
             "description": f"{qty:g} {sym}".strip(),

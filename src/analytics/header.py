@@ -70,7 +70,12 @@ def compute_header_summary(txns: list[dict], history: list[dict],
             continue
         px = get_price(sym, yest)
         if px is not None:
-            yest_total += qty * split_factor_since(sym, yest) * px
+            # No split_factor_since here: `qty` comes from TODAY's
+            # snapshot positions (already today-basis) and cached prices
+            # are today-basis too, so qty × px is already correct.
+            # Applying the factor (as history.py does for *as-of-date*
+            # balances) would double-adjust across a fresh split.
+            yest_total += qty * px
         else:
             fb = last_txn_price.get(sym)
             if fb is not None:

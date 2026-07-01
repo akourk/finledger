@@ -255,8 +255,16 @@ def _refresh_prices_only(args) -> None:
 
     cash = data.get("cash_summary", {}) or {}
 
+    # Stamp user-supplied cost-basis overrides BEFORE the history walk —
+    # history.compute_history honours basis_override on lot-creating
+    # branches (the exported JSON strips the stamp, so it must be
+    # re-applied on load).
+    from .cost_basis_overrides import match_and_stamp as _stamp_cb
+    _stamp_cb(txns, retirement_meta.get("cost_basis_overrides"))
+
     print("Computing portfolio history with refreshed prices...")
-    history = compute_history(txns, sector_of)
+    history = compute_history(txns, sector_of,
+                              account_methods=retirement_meta.get("lot_methods"))
     save_price_cache()
     print(f"  {len(history)} snapshot(s) from {history[0]['date'] if history else '—'} "
           f"to {history[-1]['date'] if history else '—'}")
@@ -266,8 +274,6 @@ def _refresh_prices_only(args) -> None:
     # long-term" horizon can enumerate open lots.  Idempotent — the
     # walker re-writes identical annotations onto txns it's already
     # seen, and we only need state["lots"] downstream.
-    from .cost_basis_overrides import match_and_stamp as _stamp_cb
-    _stamp_cb(txns, retirement_meta.get("cost_basis_overrides"))
     refresh_fifo_state = compute_basis_default(
         txns, account_methods=retirement_meta.get("lot_methods"))
     analytics = build_analytics(txns, history, holdings, holdings_by_account,
@@ -729,8 +735,12 @@ def main():
     save_sector_cache()
 
     # --- Step 4h: Portfolio value time series ---
+    # account_methods: the snapshot lot walker must consume lots in the
+    # same per-account order (FIFO/LIFO/HIFO) as the annotated basis walk,
+    # or the latest snapshot's cost basis drifts from the holdings table.
     print("\nComputing portfolio history...")
-    history = compute_history(txns, sector_of)
+    history = compute_history(txns, sector_of,
+                              account_methods=retirement_meta.get("lot_methods"))
     save_price_cache()
     print(f"  {len(history)} snapshot(s) from {history[0]['date'] if history else '—'} "
           f"to {history[-1]['date'] if history else '—'}")

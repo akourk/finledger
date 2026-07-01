@@ -811,6 +811,44 @@ def _missing_ranges(symbol: str, start: date, end: date) -> list[tuple[date, dat
     return gaps
 
 
+def _invalidate_prices_for_split_change(symbol: str, old_splits, new_splits,
+                                        *, verbose: bool = True) -> bool:
+    """Drop a symbol's cached prices + coverage meta when its split
+    history CHANGES (a new split appeared, or a recorded one was revised).
+
+    yfinance rescales the ENTIRE historical Close series when a split
+    happens, so every previously-cached value for the symbol is still in
+    the old (pre-split) basis.  Mixing those with post-split fetches —
+    while ``split_factor_since`` assumes a uniform today-basis series —
+    silently mis-values every pre-split snapshot by the split ratio.
+    Wiping the cache forces a clean refetch in the new adjusted basis
+    (this run if the caller fetches afterwards, else the next run; the
+    ``priced_pct`` canary reflects the gap honestly in the meantime).
+
+    Only fires on a *change* from a previously-recorded history
+    (``old_splits is not None`` and differs).  First-time backfills don't
+    invalidate — the cached prices were fetched with those historical
+    splits already baked in.
+    """
+    if old_splits is None or old_splits == new_splits:
+        return False
+    global _prices_dirty, _meta_dirty
+    prices = _load_prices()
+    meta = _load_meta()
+    if prices.pop(symbol, None) is not None:
+        _prices_dirty = True
+    entry = meta.get("symbols", {}).get(symbol)
+    if entry:
+        entry.pop("covered_start", None)
+        entry.pop("covered_end", None)
+        entry.pop("last_full_refresh", None)
+        _meta_dirty = True
+    if verbose:
+        print(f"    {symbol}: split history changed — cached prices "
+              f"invalidated; will refetch in the new adjusted basis")
+    return True
+
+
 def revalidate_stale_caches(symbols: list[str], *,
                              verbose: bool = True,
                              force: bool = False) -> None:
@@ -866,10 +904,16 @@ def revalidate_stale_caches(symbols: list[str], *,
             new_splits = _fetch_splits(target)
         except Exception:
             continue   # network blip; next run will retry
-        if splits_cache.get(target) != new_splits:
+        old_splits = splits_cache.get(target)
+        if old_splits != new_splits:
             splits_cache[target] = new_splits
             _splits_dirty = True
             splits_changes += 1
+            # A changed split history means every cached price for the
+            # symbol is in the old basis — wipe so ensure_coverage
+            # (which main.py calls right after this) refetches cleanly.
+            _invalidate_prices_for_split_change(target, old_splits,
+                                                new_splits, verbose=verbose)
 
     # 2. Clear tombstones so previously-given-up symbols get another
     #    chance on the next ensure_coverage call.  We don't fetch
@@ -1086,9 +1130,19 @@ def ensure_coverage(symbols: list[str], start, end, *,
             try:
                 new_splits = _fetch_splits(sym)
                 splits_cache = _load_splits()
-                if splits_cache.get(sym) != new_splits:
+                old_splits = splits_cache.get(sym)
+                if old_splits != new_splits:
                     splits_cache[sym] = new_splits
                     _splits_dirty = True
+                    # Split history changed under an existing cache: the
+                    # previously-cached ranges are in the pre-split basis
+                    # (only the gap we just fetched is post-split).  Wipe
+                    # the symbol so the next run refetches the whole range
+                    # in one consistent basis; until then get_price
+                    # returns None and consumers fall back / report via
+                    # priced_pct rather than being wrong by the ratio.
+                    _invalidate_prices_for_split_change(
+                        sym, old_splits, new_splits, verbose=verbose)
             except Exception:
                 # Splits fetch failures are non-fatal — keep prior cached
                 # splits (if any) and carry on.

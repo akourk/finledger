@@ -13,7 +13,10 @@ stays small either way.
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
-from .basis import BASIS_EFFECTS, _basis_dollars, _pair_transfers, _sort_key as _basis_sort_key
+from .basis import (
+    BASIS_EFFECTS, _basis_dollars, _consume_lots, _pair_transfers,
+    _pair_wraps, _rescale_lots, _sort_key as _basis_sort_key,
+)
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS
 from .prices import get_price, split_factor_since
 
@@ -155,7 +158,8 @@ def _compute_benchmark_series(txns: list[dict], samples: list[str],
 def compute_history(txns: list[dict],
                     sector_of: dict[str, str],
                     *,
-                    cadence: str = "month") -> list[dict]:
+                    cadence: str = "month",
+                    account_methods: dict[str, str] | None = None) -> list[dict]:
     """Build the portfolio value time series.
 
     Each snapshot is::
@@ -187,6 +191,19 @@ def compute_history(txns: list[dict],
     FIFO state at every snapshot is captured, so no JS replay is
     needed).  Dust filter mirrors main.py so position counts match the
     holdings table exactly.
+
+    ``account_methods`` optionally overrides the lot-relief method per
+    account_group (same contract as ``basis.compute_basis_default``) so
+    the snapshot lot walker consumes lots in the same order the
+    annotated basis walk does — required for the latest snapshot's
+    per-position cost basis to match the holdings table when any
+    account uses a non-FIFO method (e.g. Coinbase on HIFO).
+
+    INVARIANT: the lot rules here must mirror ``basis._walk`` —
+    wrap/unwrap carries basis, unpaired transfer-ins get FMV basis,
+    ``basis_override`` wins on lot-creating branches.  The
+    ``history_holdings_basis_parity`` data-health check pins the two
+    walkers together; if you change a rule in basis.py, change it here.
     """
     if not txns:
         return []
@@ -266,6 +283,17 @@ def compute_history(txns: list[dict],
     stashed_tout_lots: dict[int, list[dict]] = {}
     tout_handled: set[int] = set()
 
+    # Wrap/unwrap groups — basis-carrying conversions processed
+    # atomically the first time any leg is met, exactly like basis.py.
+    wrap_groups = _pair_wraps(txns)
+    wrap_done: set[tuple] = set()
+
+    def _method_for(acct: str) -> str:
+        if not account_methods:
+            return "fifo"
+        m = account_methods.get(acct, "fifo")
+        return m if m in ("fifo", "lifo", "hifo") else "fifo"
+
     # Same sort as basis.py: within (date, account, symbol), adds before
     # subtracts.  Required for correct same-day FIFO matching.
     txns_sorted = sorted(txns, key=_basis_sort_key)
@@ -279,21 +307,20 @@ def compute_history(txns: list[dict],
     last_txn_price: dict[str, float] = {}
     idx = 0
 
-    def _fifo_consume(key, qty_to_remove):
-        """Remove qty_to_remove from lots[key]; return (basis_removed, carried)."""
-        remaining = qty_to_remove
-        basis_removed = 0.0
-        carried: list[dict] = []
-        lq = lots[key]
-        while remaining > 1e-12 and lq:
-            take = min(lq[0]["qty"], remaining)
-            basis_removed += take * lq[0]["basis_per_share"]
-            carried.append({"qty": take, "basis_per_share": lq[0]["basis_per_share"]})
-            lq[0]["qty"] -= take
-            remaining -= take
-            if lq[0]["qty"] <= 1e-12:
-                lq.pop(0)
-        return basis_removed, carried
+    def _consume(key, qty_to_remove):
+        """Remove qty_to_remove from lots[key] using the owning account's
+        lot-relief method; return (basis_removed, carried).  Delegates to
+        basis._consume_lots so consume order (FIFO/LIFO/HIFO) matches
+        the annotated basis walk exactly."""
+        return _consume_lots(lots[key], qty_to_remove, _method_for(key[0]))
+
+    def _push(key, qty_add, basis_dollars, date):
+        if qty_add > 0:
+            lots[key].append({
+                "date": date,
+                "qty": qty_add,
+                "basis_per_share": basis_dollars / qty_add,
+            })
 
     history: list[dict] = []
     for sample_date in samples:
@@ -321,24 +348,26 @@ def compute_history(txns: list[dict],
             if id(t) in intra_group:
                 continue
 
-            # Cost-basis walk
+            # Cost-basis walk — rules mirror basis._walk (see docstring
+            # invariant).  A user-supplied basis_override (metadata `Cost
+            # Basis` row, stamped by cost_basis_overrides.match_and_stamp)
+            # wins on the lot-creating branches, same as basis.py's _ov.
             effect = _basis_effect_for_sym(sym, action)
             key = (acct, sym)
             if effect == "add":
-                dollars = _basis_dollars(t)
-                if qty > 0:
-                    lots[key].append({"qty": qty, "basis_per_share": dollars / qty})
+                bo = t.get("basis_override")
+                dollars = float(bo) if bo is not None else _basis_dollars(t)
+                _push(key, qty, dollars, t.get("date", ""))
             elif effect == "zero_basis":
-                if qty > 0:
-                    bps = (p if p > 0 else 0.0)
-                    lots[key].append({"qty": qty, "basis_per_share": bps})
+                # FMV-at-receipt when the broker recorded a price, else $0.
+                _push(key, qty, qty * p if p > 0 else 0.0, t.get("date", ""))
             elif effect == "remove":
-                _fifo_consume(key, qty)
+                _consume(key, qty)
             elif effect == "transfer_out":
                 if id(t) in tout_handled:
                     pass  # already moved eagerly by same-day paired TIN
                 else:
-                    _basis, carried = _fifo_consume(key, qty)
+                    _basis, carried = _consume(key, qty)
                     if id(t) in paired_touts:
                         stashed_tout_lots[id(t)] = carried
                     # Unpaired TOUT (transferred out to somewhere not in the
@@ -346,17 +375,50 @@ def compute_history(txns: list[dict],
             elif effect == "transfer_in":
                 paired = tin_to_tout.get(id(t))
                 if paired is None:
-                    if qty > 0:
-                        lots[key].append({"qty": qty, "basis_per_share": 0.0})
+                    # External arrival with no visible origin leg — FMV at
+                    # the transfer date (matches basis.py), override wins.
+                    bo = t.get("basis_override")
+                    basis = (float(bo) if bo is not None
+                             else (qty * p if p > 0 else 0.0))
+                    _push(key, qty, basis, t.get("date", ""))
                 elif id(paired) in stashed_tout_lots:
                     for lot in stashed_tout_lots.pop(id(paired)):
                         lots[key].append(dict(lot))
                 else:
                     src_key = (paired.get("account_group", ""), paired.get("symbol", ""))
-                    _basis, carried = _fifo_consume(src_key, float(paired.get("quantity", 0) or 0))
+                    _basis, carried = _consume(src_key, float(paired.get("quantity", 0) or 0))
                     for lot in carried:
                         lots[key].append(dict(lot))
                     tout_handled.add(id(paired))
+            elif effect in ("wrap_out", "wrap_in"):
+                # Basis-carrying conversion (ETH↔CBETH).  Process the whole
+                # (account, date, kind) group atomically the first time any
+                # leg walks — consume source lots (no gain), carry total
+                # basis rescaled to the destination qty.  Mirrors basis.py.
+                kind = "unwrap" if "Unwrap" in (action or "") else "wrap"
+                gkey = (acct, t.get("date", "") or "", kind)
+                if gkey not in wrap_done:
+                    wrap_done.add(gkey)
+                    g = wrap_groups.get(gkey)
+                    if g and g["out"] and g["in"] and g["q_out"] > 0 and g["q_in"] > 0:
+                        _b, carried = _consume((acct, g["src"]), g["q_out"])
+                        for lot in _rescale_lots(carried, g["q_in"]):
+                            lots[(acct, g["dst"])].append(lot)
+                    elif g:
+                        # Lone / malformed group — per-leg fallback so basis
+                        # isn't silently lost (bare out = sale, bare in =
+                        # FMV buy), same as basis.py.
+                        for ol in g["out"]:
+                            oq = float(ol.get("quantity", 0) or 0)
+                            _consume((acct, ol.get("symbol", "")), oq)
+                        for il in g["in"]:
+                            iq = float(il.get("quantity", 0) or 0)
+                            px = float(il.get("price", 0) or 0)
+                            bo = il.get("basis_override")
+                            b = (float(bo) if bo is not None
+                                 else (iq * px if px > 0 else 0.0))
+                            _push((acct, il.get("symbol", "")), iq, b,
+                                  il.get("date", ""))
             elif effect == "split":
                 lq = lots[key]
                 old_total = sum(lot["qty"] for lot in lq)

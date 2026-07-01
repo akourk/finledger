@@ -105,6 +105,30 @@ def test_monte_carlo_with_cash_and_fi_threshold():
     _assert_json_safe(out)
 
 
+def test_monte_carlo_cash_bucket_not_double_counted():
+    """The all-accounts scenario's cash bucket must count Apple Savings
+    once — its balance appears in BOTH by_account_group['Apple Savings']
+    and by_sector['Cash'], and summing both inverted the cash/equity
+    split ($50k cash + $100k equity became $100k cash + $50k equity)."""
+    from src.analytics import build_analytics
+    history = [{
+        "date": "2026-06-30", "total": 150000.0,
+        "by_account_group": {"Apple Savings": 50000.0, "Robinhood": 100000.0},
+        "by_account_type": {"Savings": 50000.0, "Taxable": 100000.0},
+        "by_sector": {"Cash": 50000.0, "Technology": 100000.0},
+        "net_contributed": 120000.0, "priced_pct": 1.0, "positions": [],
+        "total_cost_basis": 120000.0,
+    }]
+    meta = {"birthday": "1990-06-15", "retirement_age": 67,
+            "annual_expenses": [{"date": "2026-01-01", "amount": 40000}]}
+    out = build_analytics([], history, [], [], retirement_meta=meta)
+    mc = out["monte_carlo"]
+    assert mc is not None
+    s = mc["all_accounts"]["summary"]
+    assert s["starting_cash"] == pytest.approx(50000.0)
+    assert s["starting_equity"] == pytest.approx(100000.0)
+
+
 # --- concentration --------------------------------------------------------
 
 @pytest.mark.parametrize("holdings", [
@@ -144,3 +168,28 @@ def test_rebalancing_zero_value_holdings():
         [{"symbol": "X", "sector": "Tech", "value": 0}],
         [{"bucket": "Tech", "pct": 100}])
     assert out is None
+
+
+# --- pipeline_stages: trivial-symbol filter ---------------------------------
+
+def test_trivial_filter_keeps_fractional_but_material_positions():
+    """A closed 0.8 BTC position is < 1 'share' but was worth thousands —
+    it must NOT be classed trivial (its price fetch is needed to value
+    past snapshots).  A 0.7-share $3 warrant stub stays trivial."""
+    from src.pipeline_stages import compute_position_endings
+    txns = [
+        # 0.8 BTC bought at $30k and fully sold — fractional but material.
+        {"date": "2023-01-05", "symbol": "BTC-USD", "action": "Buy",
+         "quantity": 0.8, "price": 30000.0, "amount": 24000.0},
+        {"date": "2023-06-05", "symbol": "BTC-USD", "action": "Sell",
+         "quantity": 0.8, "price": 35000.0, "amount": 28000.0},
+        # Spinoff warrant stub: 0.7 shares at ~$4, sold — trivial.
+        {"date": "2023-02-01", "symbol": "ENVXW", "action": "Buy",
+         "quantity": 0.5000, "price": 4.0, "amount": 2.86},
+        {"date": "2023-02-10", "symbol": "ENVXW", "action": "Sell",
+         "quantity": 0.5000, "price": 4.2, "amount": 3.0},
+    ]
+    ends, trivial = compute_position_endings(txns)
+    assert "BTC-USD" not in trivial
+    assert "ENVXW" in trivial
+    assert ends["BTC-USD"] == "2023-06-05"

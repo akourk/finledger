@@ -25,7 +25,7 @@ def compute_daily_pnl(history: list[dict],
         return []
 
     from ..config import CASH_SYMBOLS
-    from ..prices import get_price, split_factor_since
+    from ..prices import get_price
 
     # Use today's positions as the constant share count, reprice at
     # recent dates.  Same trick as compute_header_summary; means we
@@ -71,7 +71,12 @@ def compute_daily_pnl(history: list[dict],
                     continue
                 total += qty * fb
             else:
-                total += qty * split_factor_since(sym, d_iso) * px
+                # No split_factor_since: `qty` is TODAY's position (already
+                # today-basis) and cached prices are today-basis, so qty × px
+                # is correct as-is.  The factor is only for as-of-date
+                # balances (see history.py) — applying it here would
+                # double-adjust every date before a recent split.
+                total += qty * px
             had_any_price = True
         if not had_any_price:
             continue

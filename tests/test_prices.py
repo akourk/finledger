@@ -196,6 +196,74 @@ class TestDeepCacheRefresh:
         assert "retry_after" not in entry
 
 
+class TestSplitChangeInvalidation:
+    """A CHANGED split history must wipe the symbol's cached prices —
+    yfinance rescales the whole historical series on a split, so
+    previously-cached values are stranded in the pre-split basis while
+    ``split_factor_since`` assumes a uniform today-basis series."""
+
+    def test_new_split_invalidates_cached_prices(self, isolated_workdir, monkeypatch):
+        from src.prices import (
+            revalidate_stale_caches, _load_meta, _load_prices, _load_splits,
+        )
+
+        # Seed: AAPL cached with a known (empty) split history.
+        prices = _load_prices()
+        prices["AAPL"] = {"2024-01-02": 400.0, "2024-01-03": 402.0}
+        meta = _load_meta()
+        meta["symbols"]["AAPL"] = {"covered_start": "2024-01-02",
+                                   "covered_end": "2024-01-03"}
+        _load_splits()["AAPL"] = []
+
+        # Deep refresh discovers a new 4:1 split.
+        monkeypatch.setattr("src.prices._fetch_splits",
+                            lambda s: [["2024-06-10", 4.0]])
+        revalidate_stale_caches(["AAPL"], verbose=False, force=True)
+
+        assert "AAPL" not in _load_prices(), "pre-split prices must be wiped"
+        entry = _load_meta()["symbols"]["AAPL"]
+        assert "covered_start" not in entry and "covered_end" not in entry, (
+            "coverage meta must be cleared so ensure_coverage refetches")
+        assert _load_splits()["AAPL"] == [["2024-06-10", 4.0]]
+
+    def test_first_time_splits_backfill_does_not_invalidate(self, isolated_workdir, monkeypatch):
+        """No previously-recorded split history → cached prices already
+        reflect those old splits; backfill must NOT wipe them."""
+        from src.prices import (
+            revalidate_stale_caches, _load_meta, _load_prices, _load_splits,
+        )
+
+        prices = _load_prices()
+        prices["AAPL"] = {"2024-01-02": 180.0}
+        meta = _load_meta()
+        meta["symbols"]["AAPL"] = {"covered_start": "2024-01-02",
+                                   "covered_end": "2024-01-02"}
+        # No splits cache entry for AAPL (pre-splits-feature cache).
+
+        monkeypatch.setattr("src.prices._fetch_splits",
+                            lambda s: [["2020-08-31", 4.0]])
+        revalidate_stale_caches(["AAPL"], verbose=False, force=True)
+
+        assert "AAPL" in _load_prices(), (
+            "first-time backfill must keep cached prices")
+        assert _load_meta()["symbols"]["AAPL"]["covered_end"] == "2024-01-02"
+
+    def test_unchanged_splits_do_not_invalidate(self, isolated_workdir, monkeypatch):
+        from src.prices import (
+            revalidate_stale_caches, _load_meta, _load_prices, _load_splits,
+        )
+        prices = _load_prices()
+        prices["AAPL"] = {"2024-01-02": 180.0}
+        _load_meta()["symbols"]["AAPL"] = {"covered_start": "2024-01-02",
+                                           "covered_end": "2024-01-02"}
+        _load_splits()["AAPL"] = [["2020-08-31", 4.0]]
+
+        monkeypatch.setattr("src.prices._fetch_splits",
+                            lambda s: [["2020-08-31", 4.0]])
+        revalidate_stale_caches(["AAPL"], verbose=False, force=True)
+        assert "AAPL" in _load_prices()
+
+
 class TestNaNHandling:
     """yfinance returns NaN for a close that hasn't posted yet (the
     most-recent day during/just after market hours, holiday rows).  A

@@ -87,15 +87,24 @@ def parse_coinbase(filepath: Path) -> list[Transaction]:
                     # Different assets — synthesize a Convert In (Buy) for the
                     # acquired asset.  Symbol normalization in main.py will
                     # expand the raw ticker to e.g. ETH-USD.
+                    #
+                    # The acquired asset's cost basis is its FMV at the
+                    # conversion — the same USD value the Convert Out leg
+                    # realizes gain against.  Carrying that value onto the
+                    # synth leg (amount + implied per-unit price) matters:
+                    # a $0-amount leg would give the new asset $0 basis and
+                    # the entire converted value would be realized AGAIN at
+                    # the eventual sale (double-counted gain, disagreeing
+                    # with the broker's 1099-DA which reports FMV basis).
                     synth = _txn(
                         date=date,
                         account="Coinbase",
                         symbol=to_tok,
                         action="Convert In",
                         quantity=to_qty,
-                        price=0.0,
+                        price=round(amount / to_qty, 8) if to_qty else 0.0,
                         fees=0.0,
-                        amount=0.0,
+                        amount=amount,
                         description=notes,
                         source=filepath.name,
                     )

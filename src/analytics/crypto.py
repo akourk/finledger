@@ -50,7 +50,11 @@ def compute_crypto_analytics(txns: list[dict], holdings: list[dict]) -> dict:
                 c["last_date"] = d
         if isinstance(t.get("realized_gain"), (int, float)):
             c["realized"] += t["realized_gain"]
-        if t.get("action") in ("Reward", "Interest"):
+        # Lending included: crypto lending income lands on the 1099-MISC
+        # "Other Income" alongside rewards (see reconcile's other_income
+        # kind) — omitting it made the per-coin income column disagree
+        # with what the reconciliation panel checks against.
+        if t.get("action") in ("Reward", "Interest", "Lending"):
             amt = float(t.get("amount", 0) or 0)
             if amt > 0:
                 c["income"] += amt
@@ -96,7 +100,7 @@ def compute_crypto_analytics(txns: list[dict], holdings: list[dict]) -> dict:
     total_realized = sum((t.get("realized_gain") or 0) for t in crypto_txns)
     total_income = sum(float(t.get("amount", 0) or 0)
                        for t in crypto_txns
-                       if t.get("action") in ("Reward", "Interest"))
+                       if t.get("action") in ("Reward", "Interest", "Lending"))
     return {
         "per_coin": per_coin_list,
         "recent_activity": recent,

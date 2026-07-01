@@ -137,17 +137,16 @@ def build_analytics(txns: list[dict], history: list[dict],
 
                 # All-accounts metrics
                 total_value = float(last.get("total") or 0)
-                # Cash bucket = Savings groups + cash sector (USD).  Models
-                # high-yield-savings-style accounts that shouldn't get
-                # equity volatility in the simulation.
-                cash_value = sum(
-                    (last.get("by_account_group") or {}).get(g, 0)
-                    for g in SAVINGS_GROUPS
-                )
-                cash_value += float((last.get("by_sector") or {}).get("Cash", 0))
-                # Subtract any double-count: USD positions in Savings
-                # groups would otherwise be counted twice.  Capping at
-                # total_value is a defensive belt-and-suspenders.
+                # Cash bucket = the Cash sector, which already covers every
+                # USD position portfolio-wide: Savings-account balances
+                # (sector_of["USD"] = "Cash" hard rule), the Coinbase USD
+                # bridge, and any other cash-like holding.  Do NOT also add
+                # the Savings account groups — their value IS their USD
+                # position, so summing both double-counted the HYSA and
+                # inverted the cash/equity split in the simulation.
+                cash_value = float((last.get("by_sector") or {}).get("Cash", 0))
+                # Defensive cap so a rounding artifact can't push equity
+                # negative.
                 cash_value = min(cash_value, total_value)
                 equity_value = max(0.0, total_value - cash_value)
 

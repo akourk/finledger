@@ -591,9 +591,18 @@ def _value_at_date(txns_sorted: list[dict], target: str,
 def _cash_flow_events(txns: list[dict], start_excl: str, end_incl: str,
                      filter_groups: frozenset | None) -> list[tuple[str, float]]:
     """List ``(date, net_flow)`` pairs (one entry per date with activity) in
-    ``(start_excl, end_incl]`` using the same classification as
-    ``net_cash_flow``.  Flows on the same date are aggregated.
+    ``(start_excl, end_incl]``.  Flows on the same date are aggregated.
+
+    Delegates per-txn classification to ``basis.txn_external_cash_flow``
+    — the single source of truth ``net_cash_flow`` above also uses — so
+    the daily-TWR boundaries see the exact same carve-outs
+    (Contribution Reversal, Roth/Rollover Distribution skip, USAA
+    marker Buys, Coinbase bank-funded-Buy detection).  A previous
+    hand-rolled copy of the rule here silently missed the Coinbase
+    carve-outs; harmless while daily TWR is retirement-only, but a
+    drift trap the moment the filter set widens.
     """
+    from ..basis import txn_external_cash_flow
     by_date: dict[str, float] = defaultdict(float)
     for t in txns:
         d = t.get("date", "")
@@ -601,22 +610,9 @@ def _cash_flow_events(txns: list[dict], start_excl: str, end_incl: str,
             continue
         if filter_groups is not None and t.get("account_group") not in filter_groups:
             continue
-        amt = float(t.get("amount", 0) or 0)
-        if amt <= 0:
-            continue
-        action = t.get("action", "")
-        if action in CASH_ADD_ACTIONS:
-            by_date[d] += amt
-            continue
-        if action in CASH_SUB_ACTIONS:
-            if (action == "Distribution"
-                    and t.get("account_group") in ("Roth IRA", "Rollover IRA")):
-                continue
-            by_date[d] -= amt
-            continue
-        info = classify_retirement_contribution(t)
-        if info["is_contrib"]:
-            by_date[d] += amt
+        flow = txn_external_cash_flow(t)
+        if flow:
+            by_date[d] += flow
     return sorted(by_date.items())
 
 

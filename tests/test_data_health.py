@@ -342,3 +342,50 @@ def test_severity_ordering(cache_dir):
     severities = [i["severity"] for i in issues]
     rank = {"high": 0, "warn": 1, "info": 2}
     assert severities == sorted(severities, key=lambda s: rank[s])
+
+
+def test_history_holdings_basis_parity_flagged_high(cache_dir):
+    """Latest snapshot cost basis disagreeing with the holdings table
+    (per account/symbol) is a high-severity walker-drift signal."""
+    from src.analytics.data_health import compute_data_health
+    issues = compute_data_health(
+        txns=[],
+        holdings_by_account=[
+            {"symbol": "CBETH-USD", "account_group": "Coinbase",
+             "quantity": 1.9, "cost_basis": 5000.0, "price": 3100.0,
+             "value": 5890.0},
+        ],
+        history=[
+            {"date": "2024-01-31", "total": 5890.0,
+             "by_account_group": {"Coinbase": 5890.0}, "priced_pct": 1.0,
+             "positions": [
+                 {"account_group": "Coinbase", "symbol": "CBETH-USD",
+                  "quantity": 1.9, "cost_basis": 0.0, "value": 5890.0},
+             ]},
+        ],
+        analytics={}, cache_dir=cache_dir,
+    )
+    assert any(i["kind"] == "history_holdings_basis_parity"
+               and i["severity"] == "high" for i in issues)
+
+
+def test_history_holdings_basis_parity_clean_when_matching(cache_dir):
+    from src.analytics.data_health import compute_data_health
+    issues = compute_data_health(
+        txns=[],
+        holdings_by_account=[
+            {"symbol": "CBETH-USD", "account_group": "Coinbase",
+             "quantity": 1.9, "cost_basis": 5000.0, "price": 3100.0,
+             "value": 5890.0},
+        ],
+        history=[
+            {"date": "2024-01-31", "total": 5890.0,
+             "by_account_group": {"Coinbase": 5890.0}, "priced_pct": 1.0,
+             "positions": [
+                 {"account_group": "Coinbase", "symbol": "CBETH-USD",
+                  "quantity": 1.9, "cost_basis": 5000.0, "value": 5890.0},
+             ]},
+        ],
+        analytics={}, cache_dir=cache_dir,
+    )
+    assert not any(i["kind"] == "history_holdings_basis_parity" for i in issues)

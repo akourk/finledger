@@ -436,6 +436,62 @@ def _check_lot_queue_parity(txns: list[dict],
     }]
 
 
+def _check_history_holdings_basis_parity(history: list[dict],
+                                         holdings_by_account: list[dict]) -> list[dict]:
+    """The latest history snapshot's per-position cost basis must match
+    the holdings table's cost basis for every non-cash (account, symbol)
+    present in both.
+
+    history.compute_history has its own inline lot walker (it needs lot
+    state at every sample date), and basis-rule changes in basis.py have
+    twice landed without the matching history.py change (wrap
+    basis-carrying, FMV transfer-ins) — silently desyncing the Overview
+    chart's Cost Basis line and the as-of-date holdings view from the
+    Holdings table.  This check pins the two walkers together."""
+    if not history:
+        return []
+    latest = history[-1]
+    snap_basis: dict[tuple[str, str], float] = {}
+    for p in latest.get("positions", []) or []:
+        sym = p.get("symbol", "")
+        if not sym or sym == "USD":
+            continue
+        key = (p.get("account_group", ""), sym)
+        snap_basis[key] = snap_basis.get(key, 0.0) + float(p.get("cost_basis") or 0)
+
+    drift = []
+    for h in holdings_by_account:
+        sym = h.get("symbol", "")
+        if not sym or sym == "USD":
+            continue
+        cb = h.get("cost_basis")
+        if cb is None:
+            continue
+        key = (h.get("account_group", ""), sym)
+        if key not in snap_basis:
+            continue   # dust/pricing edge — covered by other checks
+        if abs(cb - snap_basis[key]) > 0.05:
+            drift.append((key, cb, snap_basis[key], cb - snap_basis[key]))
+
+    if not drift:
+        return []
+    drift.sort(key=lambda r: -abs(r[3]))
+    samples = [f"{a}/{s}: holdings cb=${hcb:,.2f} but latest snapshot "
+               f"cb=${scb:,.2f} (drift ${d:,.2f})"
+               for (a, s), hcb, scb, d in drift[:5]]
+    return [{
+        "kind": "history_holdings_basis_parity",
+        "severity": "high",
+        "category": "Integrity",
+        "message": (f"{len(drift)} (account, symbol) where the latest "
+                    "history snapshot's cost basis disagrees with the "
+                    "holdings table — history.py's lot walker has drifted "
+                    "from basis.py (check wrap/transfer/override rules)."),
+        "details": samples,
+        "count": len(drift),
+    }]
+
+
 def _check_net_contributed_monotonicity(history: list[dict]) -> list[dict]:
     """Per-snapshot ``net_contributed`` should change in plausible
     increments month-over-month — large unexpected jumps signal a
@@ -799,6 +855,7 @@ def compute_data_health(txns: list[dict],
     issues.extend(_check_priced_coverage(history))
     issues.extend(_check_per_account_negative_contributions(txns, holdings_by_account))
     issues.extend(_check_lot_queue_parity(txns, holdings_by_account))
+    issues.extend(_check_history_holdings_basis_parity(history, holdings_by_account))
     issues.extend(_check_net_contributed_monotonicity(history))
     issues.extend(_check_twr_sanity_bounds(analytics))
     issues.extend(_check_coinbase_bridge_endpoint(history))

@@ -143,11 +143,18 @@ def compute_position_endings(txns: list[dict]) -> tuple[dict[str, str], set[str]
       yfinance for today's price on a position the user no longer holds.
 
     - ``trivial_symbols``: symbols whose max historical qty was < 1 share
-      AND final balance is dust-filtered.  These are corp-action
-      artifacts (ENVXW spinoff warrants, fractional CIL bits) that
-      never produce material snapshot value — skip the fetch entirely.
+      AND whose max historical *dollar* value was immaterial AND final
+      balance is dust-filtered.  These are corp-action artifacts (ENVXW
+      spinoff warrants, fractional CIL bits) that never produce material
+      snapshot value — skip the fetch entirely.  The dollar guard matters
+      for high-priced assets: a closed 0.8 BTC position is well under
+      1 "share" but was worth thousands while held, and skipping its
+      price fetch would leave those snapshots valued at stale txn prices.
     """
+    _TRIVIAL_MAX_VALUE = 100.0   # any position ever worth ≥ this fetches
+
     max_abs_bal: dict[str, float] = defaultdict(float)
+    max_pos_value: dict[str, float] = defaultdict(float)
     final_bal:   dict[str, float] = defaultdict(float)
     last_nonzero_date: dict[str, str] = {}
     for t in sorted(txns, key=lambda x: x.get("date", "")):
@@ -158,10 +165,23 @@ def compute_position_endings(txns: list[dict]) -> tuple[dict[str, str], set[str]
         if a in NEUTRAL_ACTIONS:
             continue
         q = float(t.get("quantity", 0) or 0)
+        prev_bal = final_bal[sym]
         final_bal[sym] += (-q if a in SUBTRACT_ACTIONS else q)
         if abs(final_bal[sym]) > max_abs_bal[sym]:
             max_abs_bal[sym] = abs(final_bal[sym])
-        if abs(final_bal[sym]) > 1e-6 and t.get("date"):
+        px = float(t.get("price", 0) or 0)
+        if px > 0:
+            # Position value at this txn's observed price — cheap
+            # materiality proxy without a price-cache lookup.
+            val = max(abs(final_bal[sym]), abs(prev_bal)) * px
+            if val > max_pos_value[sym]:
+                max_pos_value[sym] = val
+        # A txn "touches" a live position if the balance was nonzero on
+        # EITHER side of it — including the closing sell that takes it
+        # to zero.  Checking only the post-txn balance clamped the fetch
+        # range at the txn *before* the disposal, leaving the final
+        # holding stretch (last add → close) without price coverage.
+        if (abs(final_bal[sym]) > 1e-6 or abs(prev_bal) > 1e-6) and t.get("date"):
             last_nonzero_date[sym] = t["date"]
 
     closed_position_ends: dict[str, str] = {}
@@ -175,6 +195,7 @@ def compute_position_endings(txns: list[dict]) -> tuple[dict[str, str], set[str]
     trivial = {sym for sym in final_bal
                if sym and sym != "USD"
                and max_abs_bal.get(sym, 0) < 1.0
+               and max_pos_value.get(sym, 0) < _TRIVIAL_MAX_VALUE
                and abs(final_bal.get(sym, 0)) < max(1e-4,
                                                     max_abs_bal.get(sym, 0) * 0.01)}
     return closed_position_ends, trivial
