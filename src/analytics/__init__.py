@@ -261,11 +261,14 @@ def build_analytics(txns: list[dict], history: list[dict],
             holdings_by_account, (retirement_meta or {}).get("target_allocation")),
         "reconciliation":  compute_reconciliation(
             txns, history, (retirement_meta or {}).get("reconcile")),
-        "drawdown":        compute_drawdown(history),
+        # drawdown + monthly_pnl take the rollover bridges so an
+        # in-flight custodial transfer (e.g. Voya→Schwab, weeks of $0
+        # account value) doesn't read as a real crash / red month.
+        "drawdown":        compute_drawdown(history, bridges),
         "daily_pnl":       compute_daily_pnl(history, txns),
         "trading_heatmap": compute_trading_heatmap(txns),
         "income_calendar": compute_income_calendar(txns, holdings_by_account),
-        "monthly_pnl":     compute_monthly_pnl(history, txns),
+        "monthly_pnl":     compute_monthly_pnl(history, txns, bridges),
         "monte_carlo":     monte_carlo,
         "changes":         changes,
         "alerts":          alerts,

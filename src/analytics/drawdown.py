@@ -35,7 +35,7 @@ _WINDOW_MONTHS = {
 }
 
 
-def _max_dd_in_window(snapshots: list[dict]) -> dict:
+def _max_dd_in_window(snapshots: list[dict], val_fn) -> dict:
     """Compute the deepest peak-to-trough decline that runs entirely
     within ``snapshots`` (a slice of the history).  Resets the
     running peak at the start of the slice so a high pre-window peak
@@ -51,7 +51,7 @@ def _max_dd_in_window(snapshots: list[dict]) -> dict:
     worst_peak_date = None
     worst_trough_date = None
     for h in snapshots:
-        v = float(h.get("total") or 0)
+        v = val_fn(h)
         d = h.get("date") or ""
         if v >= running_peak:
             running_peak = v
@@ -71,9 +71,15 @@ def _max_dd_in_window(snapshots: list[dict]) -> dict:
     return out
 
 
-def compute_drawdown(history: list[dict]) -> dict:
+def compute_drawdown(history: list[dict],
+                     bridges: list[dict] | None = None) -> dict:
     """Compute drawdown series and headline stats from the history
     snapshots.  Returns an empty result if history has < 2 points.
+
+    ``bridges`` (rollover bridges from ``detect_rollover_bridges``) are
+    added to each snapshot's total so a custodial rollover's in-flight
+    window doesn't fabricate a portfolio-scale "drawdown" — the money
+    never left, it was in transit between custodians.
 
     Max-drawdown computation filters out periods where the running
     peak is below 5% of all-time peak — drawdowns that ran on a
@@ -91,9 +97,15 @@ def compute_drawdown(history: list[dict]) -> dict:
                 "max_drawdown_window": None,
                 "current_drawdown_pct": 0.0}
 
+    from ._shared import bridge_adjustment
+
+    def _val(h: dict) -> float:
+        return (float(h.get("total") or 0)
+                + bridge_adjustment(h.get("date", ""), None, bridges or []))
+
     # All-time peak — 5% denominator filter excludes pre-growth
     # volatility from the headline max-drawdown figure.
-    atl_peak = max(float(h.get("total") or 0) for h in history) or 1.0
+    atl_peak = max(_val(h) for h in history) or 1.0
     significant_threshold = atl_peak * 0.05
 
     series = []
@@ -114,7 +126,7 @@ def compute_drawdown(history: list[dict]) -> dict:
     current_dd_trough_date = peak_date
 
     for h in history:
-        v = float(h.get("total") or 0)
+        v = _val(h)
         d = h.get("date", "")
         if v >= running_peak:
             running_peak = v
@@ -200,7 +212,7 @@ def compute_drawdown(history: list[dict]) -> dict:
         else:
             cutoff = (today - timedelta(days=int(int(spec) * 30.5))).isoformat()
         slice_ = [h for h in history if (h.get("date") or "") >= cutoff]
-        windowed[label] = _max_dd_in_window(slice_)
+        windowed[label] = _max_dd_in_window(slice_, _val)
 
     return {
         "series":               series,

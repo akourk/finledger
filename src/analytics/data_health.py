@@ -678,6 +678,62 @@ def _check_holding_days_non_negative(txns: list[dict]) -> list[dict]:
     }]
 
 
+def _check_unbridged_retirement_distribution(txns: list[dict],
+                                             analytics: dict) -> list[dict]:
+    """A Roth/Rollover IRA ``Distribution`` with no covering rollover
+    bridge means the in-flight window renders as a phantom dip-to-zero
+    on the history chart and pollutes TWR / drawdown / monthly P&L.
+
+    The bridge matcher (``detect_rollover_bridges``) pairs Distribution
+    events with Transfer In(s) within 90 days at ±5%; when it can't
+    find a match (amount drift beyond tolerance, arrival > 90 days out,
+    a Transfer In row the parser didn't produce), the failure is
+    silent — this check makes it loud, with the event details so the
+    user can see exactly which rollover needs attention."""
+    bridges = analytics.get("rollover_bridges") or []
+
+    # Rebuild the distribution events the matcher looks at.
+    dist_by_key: dict[tuple[str, str], float] = defaultdict(float)
+    for t in txns:
+        if t.get("action") != "Distribution":
+            continue
+        g = t.get("account_group", "")
+        if g not in ("Rollover IRA", "Roth IRA"):
+            continue
+        d = t.get("date", "")
+        if d:
+            dist_by_key[(g, d)] += float(t.get("amount", 0) or 0)
+
+    unbridged = []
+    for (g, d), amt in dist_by_key.items():
+        if amt < 1000:
+            continue   # small distributions don't move the charts
+        covered = any(b.get("group") == g
+                      and b.get("start_date", "") <= d < b.get("end_date", "")
+                      for b in bridges)
+        if not covered:
+            unbridged.append((g, d, amt))
+
+    if not unbridged:
+        return []
+    unbridged.sort(key=lambda x: -x[2])
+    samples = [f"{g}: ${a:,.0f} distributed {d} — no matching Transfer In "
+               f"within 90 days / ±5%" for g, d, a in unbridged[:5]]
+    return [{
+        "kind": "unbridged_retirement_distribution",
+        "severity": "warn",
+        "category": "Reconciliation",
+        "message": (f"{len(unbridged)} retirement Distribution event(s) "
+                    "with no rollover bridge — the in-flight window shows "
+                    "as a phantom dip on the history chart and distorts "
+                    "drawdown / monthly P&L until the matching Transfer "
+                    "In is found (check the destination account's CSV "
+                    "covers the arrival, and that amounts agree within 5%)."),
+        "details": samples,
+        "count": len(unbridged),
+    }]
+
+
 def _check_coinbase_bridge_endpoint(history: list[dict]) -> list[dict]:
     """The Coinbase USD bridge should end at ~$0 in the latest
     snapshot — the user has $0 USD wallet by construction (validated
@@ -858,6 +914,7 @@ def compute_data_health(txns: list[dict],
     issues.extend(_check_history_holdings_basis_parity(history, holdings_by_account))
     issues.extend(_check_net_contributed_monotonicity(history))
     issues.extend(_check_twr_sanity_bounds(analytics))
+    issues.extend(_check_unbridged_retirement_distribution(txns, analytics))
     issues.extend(_check_coinbase_bridge_endpoint(history))
     issues.extend(_check_held_symbol_sector_coverage(holdings_by_account))
     issues.sort(key=lambda r: (_SEVERITY_RANK.get(r["severity"], 9),

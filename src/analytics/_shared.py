@@ -128,8 +128,8 @@ def classify_retirement_contribution(txn: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def detect_rollover_bridges(txns: list[dict]) -> list[dict]:
-    """Find custodian rollovers where one brokerage ``Distribution``
-    event is matched by a ``Transfer In`` on the same account_group
+    """Find custodian rollovers where a brokerage ``Distribution``
+    event is matched by ``Transfer In`` row(s) on the same account_group
     within 90 days.  During this window, the "in-flight" cash is
     invisible to our balance tracking (main.py skips USD balance for
     non-Savings accounts), so snapshots look like a fake drop followed
@@ -137,9 +137,39 @@ def detect_rollover_bridges(txns: list[dict]) -> list[dict]:
 
     Returns ``[{group, start_date, end_date, amount}, ...]``.  Bridge
     consumers add ``amount`` to a snapshot's effective balance while
-    ``start_date <= snap.date < end_date``.
+    ``start_date <= snap.date < end_date``.  A single rollover may emit
+    several bridge rows (see below) — consumers just sum whichever rows
+    are active on a date, so the shape is unchanged.
+
+    Real-world robustness (each was a observed failure mode that left a
+    rollover unbridged and a phantom dip-to-$0 on the charts):
+
+    - **Multi-day distribution legs**: custodians often liquidate a
+      401K's funds across a few days.  Same-group Distribution events
+      within 7 days merge into one rollover event; each leg becomes its
+      own bridge row starting on its own date (its cash goes in-flight
+      when it actually left).
+    - **Multiple arriving wires**: pre-tax and after-tax sub-balances
+      commonly arrive as separate Transfer Ins.  If no single Transfer
+      In matches the event total (±5%), the SUM of all unused in-window
+      Transfer Ins is tried; on a match, one bridge row per wire is
+      emitted ending at that wire's date, so the adjustment steps down
+      as each wire lands.
+    - **Transfer In rows without an ``amount``**: some exports carry
+      the dollar value in ``quantity`` (USD rows) or as qty × price —
+      both are used as fallbacks.
     """
-    # Sum Distribution amounts by (group, date)
+    def _tin_amount(t: dict) -> float:
+        amt = float(t.get("amount", 0) or 0)
+        if amt > 0:
+            return amt
+        q = float(t.get("quantity", 0) or 0)
+        if (t.get("symbol") or "USD") in ("USD", ""):
+            return q          # USD rows: qty IS the dollar amount
+        p = float(t.get("price", 0) or 0)
+        return q * p if (q > 0 and p > 0) else 0.0
+
+    # 1. Sum Distribution amounts by (group, date) …
     dist_by_key: dict[tuple[str, str], dict] = {}
     for t in txns:
         if t.get("action") != "Distribution":
@@ -155,21 +185,44 @@ def detect_rollover_bridges(txns: list[dict]) -> list[dict]:
             dist_by_key[key] = {"group": g, "date": date, "amount": 0.0}
         dist_by_key[key]["amount"] += float(t.get("amount", 0) or 0)
 
+    # … then merge same-group events within 7 days into one rollover
+    # event with per-date components.
+    events: list[dict] = []
+    by_group: dict[str, list[dict]] = defaultdict(list)
+    for d in dist_by_key.values():
+        if d["amount"] > 0 and _parse_iso(d["date"]) is not None:
+            by_group[d["group"]].append(d)
+    for g, comps in by_group.items():
+        comps.sort(key=lambda c: c["date"])
+        cur: list[dict] = []
+        for c in comps:
+            if cur:
+                gap = (_parse_iso(c["date"]) - _parse_iso(cur[-1]["date"])).days
+                if gap > 7:
+                    events.append({"group": g, "components": cur,
+                                   "total": sum(x["amount"] for x in cur)})
+                    cur = []
+            cur.append(c)
+        if cur:
+            events.append({"group": g, "components": cur,
+                           "total": sum(x["amount"] for x in cur)})
+    events.sort(key=lambda e: e["components"][0]["date"])
+
     bridges: list[dict] = []
     used_tin: set[int] = set()
-    for _, d in dist_by_key.items():
-        if d["amount"] <= 0:
-            continue
-        d_date = _parse_iso(d["date"])
-        if d_date is None:
-            continue
-        best = None   # (idx, rel_diff, days_diff, txn)
+    for ev in events:
+        start_date = ev["components"][0]["date"]
+        d_date = _parse_iso(start_date)
+        total = ev["total"]
+
+        # Candidate Transfer Ins: same group, unused, 0<delta≤90 days.
+        cands: list[tuple[int, float, int, dict]] = []   # (idx, amt, days, txn)
         for i, t in enumerate(txns):
             if i in used_tin:
                 continue
             if t.get("action") != "Transfer In":
                 continue
-            if t.get("account_group") != d["group"]:
+            if t.get("account_group") != ev["group"]:
                 continue
             t_date = _parse_iso(t.get("date", ""))
             if t_date is None or t_date <= d_date:
@@ -177,11 +230,15 @@ def detect_rollover_bridges(txns: list[dict]) -> list[dict]:
             delta_days = (t_date - d_date).days
             if delta_days > 90:
                 continue
-            amt = float(t.get("amount", 0) or 0)
+            amt = _tin_amount(t)
             if amt <= 0:
                 continue
-            denom = max(amt, d["amount"])
-            rel = abs(amt - d["amount"]) / denom
+            cands.append((i, amt, delta_days, t))
+
+        # (a) best single Transfer In within 5% of the event total.
+        best = None   # (idx, rel, days, txn)
+        for i, amt, delta_days, t in cands:
+            rel = abs(amt - total) / max(amt, total)
             if rel > 0.05:   # 5% tolerance for dividends/fees between sell and wire
                 continue
             cand = (i, rel, delta_days, t)
@@ -191,12 +248,28 @@ def detect_rollover_bridges(txns: list[dict]) -> list[dict]:
                 best = cand
         if best is not None:
             used_tin.add(best[0])
-            bridges.append({
-                "group": d["group"],
-                "start_date": d["date"],
-                "end_date": best[3]["date"],
-                "amount": round(d["amount"], 2),
-            })
+            end_date = best[3]["date"]
+            for c in ev["components"]:
+                bridges.append({
+                    "group": ev["group"],
+                    "start_date": c["date"],
+                    "end_date": end_date,
+                    "amount": round(c["amount"], 2),
+                })
+            continue
+
+        # (b) no single match — try the SUM of all in-window wires.
+        if cands:
+            s = sum(amt for _, amt, _, _ in cands)
+            if s > 0 and abs(s - total) / max(s, total) <= 0.05:
+                for i, amt, _delta, t in cands:
+                    used_tin.add(i)
+                    bridges.append({
+                        "group": ev["group"],
+                        "start_date": start_date,
+                        "end_date": t.get("date", ""),
+                        "amount": round(amt, 2),
+                    })
     return bridges
 
 

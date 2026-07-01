@@ -111,10 +111,23 @@ def _ratios_from_returns(all_monthly_returns: list[float],
     return out
 
 
-def compute_monthly_pnl(history: list[dict], txns: list[dict]) -> dict:
+def compute_monthly_pnl(history: list[dict], txns: list[dict],
+                        bridges: list[dict] | None = None) -> dict:
     if len(history) < 2:
         return {"rows": [], "min_return": 0.0, "max_return": 0.0,
                 "best_month": None, "worst_month": None}
+
+    # Rollover bridges: add in-flight custodial-transfer cash back to
+    # each snapshot's total.  Without this, the transfer-out month reads
+    # as a huge phantom loss and the arrival month as a huge phantom
+    # gain (net_contributed excludes rollovers by design, so the flow
+    # term doesn't absorb it) — corrupting the heatmap, best/worst
+    # month, and (when under the magnitude cap) Sharpe/Sortino.
+    from ._shared import bridge_adjustment
+
+    def _val(h: dict) -> float:
+        return (float(h.get("total") or 0)
+                + bridge_adjustment(h.get("date", ""), None, bridges or []))
 
     # Index history by (year, month) — pick the latest snapshot per month.
     by_ym: dict[tuple[int, int], dict] = {}
@@ -138,7 +151,7 @@ def compute_monthly_pnl(history: list[dict], txns: list[dict]) -> dict:
     # "is this month's start_value too small to be meaningful?" filter
     # below.  Self-scaling: works the same for a $10k portfolio and a
     # $10M portfolio.
-    peak_value = max(float(h.get("total") or 0) for h in history) or 1.0
+    peak_value = max(_val(h) for h in history) or 1.0
     # Months where start_value < this threshold are kept in the heatmap
     # (the math is correct, just on a tiny base) but excluded from the
     # Sharpe/Sortino calculation, where extreme percentage swings on a
@@ -169,8 +182,8 @@ def compute_monthly_pnl(history: list[dict], txns: list[dict]) -> dict:
         prev_key = sorted_keys[i - 1]
         prev = by_ym[prev_key]
         curr = by_ym[key]
-        start_value = float(prev.get("total") or 0)
-        end_value   = float(curr.get("total") or 0)
+        start_value = _val(prev)
+        end_value   = _val(curr)
         if start_value <= 0:
             continue
         # Net external cash flow for the month = change in cumulative
@@ -254,7 +267,7 @@ def compute_monthly_pnl(history: list[dict], txns: list[dict]) -> dict:
             continue
         all_keyed.append((key, r))
         prev = by_ym[sorted_keys[i - 1]]
-        start_value = float(prev.get("total") or 0)
+        start_value = _val(prev)
         if start_value >= SIGNIFICANT_THRESHOLD and abs(r) <= MAGNITUDE_CAP:
             sig_keyed.append((key, r))
 
