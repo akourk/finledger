@@ -27,12 +27,18 @@ function _buildCashFlowForecast(passiveProjected) {
     .filter(b => yearOf(b.date) === String(lastFullYear))
     .reduce((s, b) => s + (b.amount || 0), 0);
 
-  // Trailing-12-months retirement contribution rate (used as projection)
+  // Trailing-12-months retirement contribution rate (used as projection).
+  // Employer match / safe-harbor money is excluded — it never left the
+  // user's paycheck, so counting it would overstate out-of-pocket
+  // outflows (same description rule as analytics/tax.py's 401k
+  // deduction).
   const yrAgo = new Date(today); yrAgo.setFullYear(yrAgo.getFullYear() - 1);
   let last12Contribs = 0;
   for (const t of txns) {
     const info = retirementContribInfo(t);
     if (!info.isContrib || !t.date) continue;
+    const desc = (t.description || '').toLowerCase();
+    if (desc.includes('employer') || desc.includes('match')) continue;
     if (new Date(t.date) >= yrAgo) last12Contribs += (t.amount || 0);
   }
   const projContribs = Math.round(last12Contribs);
@@ -43,15 +49,45 @@ function _buildCashFlowForecast(passiveProjected) {
 
   if (currentSalary === 0 && passive === 0 && projContribs === 0) return '';
 
-  const rows = [
+  // Budget outflow (when `Budget` metadata rows exist) — turns the
+  // forecast from "cash hitting accounts" into projected savings
+  // capacity.  Figure comes precomputed from analytics.budget.
+  const _budget = ANALYTICS.budget || null;
+  const budgetAnnual = _budget ? Math.round(_budget.annual_total || 0) : 0;
+
+  // Paycheck taxes + benefit deductions (when `Paycheck Deduction`
+  // metadata rows exist) — payroll taxes, est. federal income tax on
+  // wages, and pre/post-tax benefits.  401(k) is NOT in this figure
+  // (it's the Retirement contributions line above).
+  const _pc = ANALYTICS.paycheck || null;
+  const paycheckOutflows = _pc
+    ? Math.round((_pc.taxes_annual || 0) + (_pc.pretax_annual || 0)
+      + (_pc.posttax_annual || 0) + (_pc.est_federal_tax_annual || 0))
+    : 0;
+
+  const rowDefs = [
     ['Salary (current rate × 12mo)', currentSalary, 'positive'],
     ['Bonuses (last full-year actual)', lastYearBonuses, 'positive'],
     ['Passive investment income (proj.)', passive, 'positive'],
     ['Retirement contributions (proj.)', -projContribs, 'negative'],
-  ].map(([label, amt, cls]) => `<tr>
+  ];
+  if (paycheckOutflows > 0) {
+    rowDefs.push(['Paycheck taxes & deductions (est.)', -paycheckOutflows, 'negative']);
+  }
+  if (budgetAnnual > 0) {
+    rowDefs.push(['Living expenses (budget)', -budgetAnnual, 'negative']);
+  }
+  const rows = rowDefs.map(([label, amt, cls]) => `<tr>
     <td>${label}</td>
     <td class="num"><span class="${cls}">${fmtSigned(amt)}</span></td>
   </tr>`).join('');
+  const savingsNet = totalNet - budgetAnnual - paycheckOutflows;
+  const savingsLabel = paycheckOutflows > 0
+    ? 'Projected savings (net of taxes + budget)'
+    : 'Projected savings (net of budget)';
+  const savingsItem = (budgetAnnual > 0 || paycheckOutflows > 0)
+    ? `<div class="item"><span class="label">${savingsLabel}</span><span class="value">${fmtMoney(savingsNet)}</span></div>`
+    : '';
 
   return `
     <div class="section-header" style="margin-top:24px;">
@@ -62,15 +98,164 @@ function _buildCashFlowForecast(passiveProjected) {
       <div class="if-totals">
         <div class="item"><span class="label">Gross inflows (proj.)</span><span class="value">${fmtMoney(grossIn)}</span></div>
         <div class="item"><span class="label">Net of retirement (proj.)</span><span class="value">${fmtMoney(totalNet)}</span></div>
+        ${savingsItem}
       </div>
       <table class="mini-table">
         <thead><tr><th>Source</th><th class="num">Projected (next 12mo)</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
-        Salary: most recent rate × 12.  Bonuses: last full year's total (current-year bonuses are lumpy, so the prior year is a better planning estimate).  Retirement contributions: trailing-12-months pace.  This is pre-tax — federal/state income tax + FICA reduce the net further.
+        Salary: most recent rate × 12.  Bonuses: last full year's total (current-year bonuses are lumpy, so the prior year is a better planning estimate).  Retirement contributions: trailing-12-months pace, employee money only (employer match excluded — it never left your paycheck).${paycheckOutflows > 0 ? '  Paycheck taxes &amp; deductions come from your <b>Paycheck Deduction</b> metadata rows + estimated federal income tax on wages (see the Paycheck panel below); bonuses are shown pre-tax.' : '  This is pre-tax — federal/state income tax + FICA reduce the net further.'}${budgetAnnual > 0 ? '  Living expenses come from your <b>Budget</b> metadata rows (see the Budget section below).' : ''}
       </div>
     </div>`;
+}
+
+// Paycheck panel — gross → deductions → estimated take-home, from
+// `Paycheck Deduction` metadata rows (analytics/paycheck.py).  Hidden
+// when no rows exist.
+function _buildPaycheckSection() {
+  const p = ANALYTICS.paycheck || null;
+  if (!p) return '';
+
+  const cards = [
+    { label: 'Take-Home / Paycheck', value: fmtMoney(p.take_home_per_paycheck),
+      cls: 'positive',
+      title: `Estimated net pay per ${p.frequency_label} paycheck: gross − pre-tax benefits − 401(k) − est. federal income tax − payroll taxes − post-tax deductions.` },
+    { label: 'Take-Home / Year (est.)', value: fmtMoney(p.take_home_annual),
+      title: p.take_home_pct != null ? `${p.take_home_pct.toFixed(1)}% of gross salary.` : '' },
+    { label: 'Payroll Taxes / Year', value: fmtMoney(p.taxes_annual),
+      title: 'Sum of the tax lines on your pay stub (OASDI, Medicare, state programs…) × pay periods.' },
+    { label: 'Est. Federal Income Tax', value: fmtMoney(p.est_federal_tax_annual),
+      title: `Estimated LIABILITY on wages only (salary − pre-tax benefits − 401(k) − standard deduction through the ${p.year} ordinary brackets)${p.est_federal_effective_pct != null ? ` — ${p.est_federal_effective_pct.toFixed(1)}% effective on gross` : ''}.  Not your W-4 withholding; bonuses and investment income are covered on the Tax tab.` },
+  ];
+
+  const line = (label, pp, ann, cls) => `<tr>
+    <td>${label}</td>
+    <td class="num"><span class="${cls || ''}">${fmtSigned(pp)}</span></td>
+    <td class="num"><span class="${cls || ''}">${fmtSigned(ann)}</span></td>
+  </tr>`;
+
+  const rows = [];
+  rows.push(line('<b>Gross pay</b>', p.gross_per_paycheck, p.salary_annual, 'positive'));
+  for (const d of (p.pretax || [])) {
+    rows.push(line(_htmlEsc(d.label) + ' <span class="sub">pre-tax</span>',
+      -d.per_paycheck, -d.annual, d.per_paycheck > 0 ? 'negative' : 'positive'));
+  }
+  if (p.k401_annual > 0) {
+    rows.push(line('401(k) elective deferral <span class="sub">pre-tax · from transactions</span>',
+      -p.k401_per_paycheck, -p.k401_annual, 'negative'));
+  }
+  rows.push(line('Est. federal income tax <span class="sub">liability, not withholding</span>',
+    -p.est_federal_tax_per_paycheck, -p.est_federal_tax_annual, 'negative'));
+  for (const d of (p.taxes || [])) {
+    rows.push(line(_htmlEsc(d.label) + ' <span class="sub">tax</span>',
+      -d.per_paycheck, -d.annual, 'negative'));
+  }
+  for (const d of (p.posttax || [])) {
+    rows.push(line(_htmlEsc(d.label) + ' <span class="sub">post-tax</span>',
+      -d.per_paycheck, -d.annual, 'negative'));
+  }
+  rows.push(`<tr style="border-top:1px solid var(--border);">
+    <td><b>Take-home (est.)</b></td>
+    <td class="num"><b class="positive">${fmtMoney(p.take_home_per_paycheck)}</b></td>
+    <td class="num"><b class="positive">${fmtMoney(p.take_home_annual)}</b></td>
+  </tr>`);
+
+  return `
+    <div class="section-header" style="margin-top:24px;">
+      <h2><span style="color:var(--accent);">Paycheck</span></h2>
+      <span class="as-of-hint" style="margin-left:auto;">Gross → deductions → take-home, ${p.frequency_label} — from the <b>Paycheck Deduction</b> rows in data/metadata.csv.</span>
+    </div>
+    ${_renderStatCards(cards)}
+    <div class="panel">
+      <table class="mini-table">
+        <thead><tr><th>Line</th><th class="num">Per Paycheck</th><th class="num">Annual</th></tr></thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>
+      <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
+        Wage-only view: bonuses, dividends, and realized gains are excluded here (the Tax tab covers the full picture).
+        Federal tax is the estimated <b>liability</b> on wages${p.is_projection ? ' (current-year projection)' : ''}, not your actual withholding — compare it against your W-4 withholding to spot over/under-withholding.
+        The 401(k) line is your employee deferral derived from actual contribution transactions (projected at YTD pace, capped at the IRS limit).
+        Payroll-tax lines are your pay-stub amounts × ${p.frequency} pay periods.
+        Pre-tax benefit lines also reduce the AGI / MAGI used for Roth eligibility on the Tax tab.
+      </div>
+    </div>`;
+}
+
+// Budget section — recurring living expenses from `Budget` metadata
+// rows, rolled up in analytics/budget.py.  Hidden when no rows exist.
+function _buildBudgetSection() {
+  const b = ANALYTICS.budget || null;
+  if (!b || !b.rows || !b.rows.length) return '';
+
+  const cards = [
+    { label: 'Monthly Budget', value: fmtMoney(b.monthly_total),
+      title: 'Sum of all active budget rows, normalized to per-month (yearly ÷ 12, quarterly ÷ 3, weekly × 52/12).' },
+    { label: 'Annualized', value: fmtMoney(b.annual_total) },
+  ];
+  if (b.income_coverage_pct != null) {
+    cards.push({
+      label: 'Covered by Passive Income',
+      value: b.income_coverage_pct.toFixed(1) + '%',
+      cls: b.income_coverage_pct >= 100 ? 'positive' : '',
+      title: `Trailing-12-month portfolio income (${fmtMoney(b.ttm_income || 0)}) ÷ annualized budget (${fmtMoney(b.annual_total)}).  At 100%, dividends and interest pay every bill on this list.`,
+    });
+  }
+  if (b.vs_annual_expenses) {
+    const v = b.vs_annual_expenses;
+    cards.push({
+      label: 'vs Annual Expenses',
+      value: fmtSigned(v.delta),
+      cls: v.delta <= 0 ? 'positive' : 'negative',
+      title: `Bottom-up budget (${fmtMoney(b.annual_total)}) minus the declared Annual Expenses metadata figure (${fmtMoney(v.annual_expenses)}).  A large positive gap means the Annual Expenses row (which drives the FIRE math) understates actual spending — or the budget includes items the lump excludes.`,
+    });
+  }
+
+  // Category rollup with inline share bars.
+  const maxPct = Math.max(...b.by_category.map(c => c.pct || 0), 1);
+  const catRows = b.by_category.map(c => `<tr>
+    <td><b>${_htmlEsc(c.category)}</b></td>
+    <td class="num">${fmtMoney(c.monthly)}</td>
+    <td class="num">${fmtMoney(c.annual)}</td>
+    <td style="width:40%;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="flex:1;height:8px;background:var(--bg-card);border-radius:4px;overflow:hidden;">
+          <div style="width:${((c.pct || 0) / maxPct * 100).toFixed(1)}%;height:100%;background:var(--accent);opacity:0.75;"></div>
+        </div>
+        <span style="color:var(--text-dim);font-size:0.75rem;min-width:44px;text-align:right;">${c.pct != null ? c.pct.toFixed(1) + '%' : '—'}</span>
+      </div>
+    </td>
+  </tr>`).join('');
+
+  const itemRows = b.rows.map(r => `<tr>
+    <td><b>${_htmlEsc(r.label)}</b></td>
+    <td>${_htmlEsc(r.category)}</td>
+    <td>${_htmlEsc(r.cadence)}</td>
+    <td class="num">${fmtMoney(r.amount)}</td>
+    <td class="num"><b>${fmtMoney(r.monthly)}</b></td>
+  </tr>`).join('');
+
+  return `
+    <div class="section-header" style="margin-top:24px;">
+      <h2><span style="color:var(--accent);">Budget</span></h2>
+      <span class="as-of-hint" style="margin-left:auto;">Recurring living expenses — from the <b>Budget</b> rows in data/metadata.csv.</span>
+    </div>
+    ${_renderStatCards(cards)}
+    <div class="panel">
+      <table class="mini-table">
+        <thead><tr><th>Category</th><th class="num">Monthly</th><th class="num">Annual</th><th>Share</th></tr></thead>
+        <tbody>${catRows}</tbody>
+      </table>
+    </div>
+    <details style="margin-top:10px;">
+      <summary style="cursor:pointer;color:var(--text-dim);font-size:0.85rem;">All items (${b.count})</summary>
+      <div class="panel" style="margin-top:8px;">
+        <table class="mini-table">
+          <thead><tr><th>Item</th><th>Category</th><th>Cadence</th><th class="num">Cost / period</th><th class="num">Monthly</th></tr></thead>
+          <tbody>${itemRows}</tbody>
+        </table>
+      </div>
+    </details>`;
 }
 
 function renderIncome() {
@@ -207,9 +392,15 @@ function renderIncome() {
   // accounts in the next year" view that complements FIRE planning.
   const flowHtml = _buildCashFlowForecast(fcTotal);
 
+  // Paycheck + Budget — money out (hidden without their metadata rows).
+  const paycheckHtml = _buildPaycheckSection();
+  const budgetHtml = _buildBudgetSection();
+
   root.innerHTML = `
     ${statsHtml}
     ${flowHtml}
+    ${paycheckHtml}
+    ${budgetHtml}
     ${forecastHtml ? `<div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Dividend / Interest Forecast (12mo)</span></h2></div>${forecastHtml}` : ''}
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Annual Summary</span></h2></div>

@@ -176,7 +176,10 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       income counts NON-retirement accounts only (IRA/401K dividends
       never hit AGI; Savings interest does); the 401K deduction skips
       employer match / "match" descriptions and nets Contribution
-      Reversals.  Also emits `ltcg_headroom` / `ltcg_next_rate` ($ of
+      Reversals; Pre-Tax `Paycheck Deduction` rows (Section 125
+      medical premiums etc.) reduce W-2 wages before AGI — emitted as
+      `pretax_deductions`, shown in the Tax tab's income build-up.
+      Also emits `ltcg_headroom` / `ltcg_next_rate` ($ of
       additional LT gain realizable before the LTCG rate steps up) and
       `niit_headroom` / `niit_threshold` — shown in the Tax tab's
       bracket panel.  ST/LT classification is calendar-correct via
@@ -212,6 +215,11 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     - `positions` — per-symbol realized+unrealized rollup with
       pct_return, plus top-10 winners/losers.
     - `header_summary` — persistent top-bar (1-day change, etc.).
+      Also carries `net_contributed` / `total_return` /
+      `total_return_pct` — the SINGLE source for the Total Return
+      figure; the top bar and the Performance tab's all-time anchor
+      card both read these fields (they used to derive it
+      independently and disagreed by rounding cents).
     - `concentration` — positions / sectors / account_groups /
       account_types each as a sorted-by-pct list, plus Herfindahl
       index, top-5 share, and risk flags.
@@ -231,6 +239,24 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       plus `expense_coverage_pct` (TTM income ÷ latest `Annual
       Expenses` metadata row — the "Covers Expenses" FIRE card on
       Income; `None` without the metadata row).
+    - `budget` — recurring-living-expense rollup from `Budget`
+      metadata rows (`analytics/budget.py`): active rows (latest per
+      label; `Amount = 0` cancels), cadence-normalized
+      `monthly_total` / `annual_total`, `by_category`,
+      `income_coverage_pct` (TTM passive income ÷ annualized budget),
+      and `vs_annual_expenses` (bottom-up budget vs the declared
+      `Annual Expenses` lump).  `None` when no Budget rows exist →
+      the Income tab section hides.
+    - `paycheck` — gross → deductions → estimated take-home from
+      `Paycheck Deduction` metadata rows (`analytics/paycheck.py`).
+      Wage-only view: per-paycheck + annualized pre-tax / payroll-tax
+      / post-tax lines, employee 401(k) from the current-year tax
+      estimate (real txns, YTD pace, IRS-capped), estimated federal
+      income tax on wages (salary − pre-tax − 401k − std deduction
+      through the ordinary brackets — LIABILITY, not withholding),
+      and take-home totals.  Feeds the Income tab's Paycheck panel +
+      the "Paycheck taxes & deductions" line in the cash-flow
+      forecast.  `None` without the metadata rows.
     - `monthly_pnl` — year × month grid of investment returns
       (start/end snapshot delta minus net_contributed delta) plus
       Sharpe / Sortino ratios.  Takes `bridges` (see rollover_bridges).  Ratios filter on (start_value ≥ 1%
@@ -251,7 +277,13 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       × 25` (4% rule).
     - `changes` — run-over-run diff vs `cache/last_run.json`.  Saves
       a fresh snapshot at the end of each run.  First run returns
-      `{first_run: True}`.
+      `{first_run: True}`.  An EMPTY run (no txns and no value) never
+      overwrites the previous snapshot (`skipped_empty_run`) — a
+      zeroed snapshot made the next real run report the entire
+      portfolio value as "new".  (That zeroing was historically
+      caused by tests leaking writes to the real cache; the test
+      suite now pins every `FIN_*_DIR` at a session tmp dir in
+      conftest.py, so no test can touch real dirs.)
     - `alerts` — aggregated severity-tagged signals (concentration
       flags, harvest candidates, stale data, coverage gaps, failing
       tickers, CUSIP rename suggestions, long-term-soon thresholds).
@@ -348,8 +380,16 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     - **Income** — stat cards (incl. "Covers Expenses" — TTM passive
       income ÷ annual expenses), 12-month total cash-flow forecast
       (salary + bonuses + projected dividends − projected retirement
-      contributions), 12-month dividend / interest forecast per held
-      position, annual summary, monthly chart, by-source table.
+      contributions [employee money only — match excluded] − paycheck
+      taxes & deductions − budget living expenses, with a
+      projected-savings line), **Paycheck** panel (gross → pre-tax /
+      401k / est. federal tax / payroll taxes / post-tax → take-home,
+      per-paycheck + annual; hides without `Paycheck Deduction`
+      metadata rows), **Budget** section (monthly / annual burn,
+      category share bars, passive-income coverage, drift vs `Annual
+      Expenses`; hides without `Budget` metadata rows), 12-month
+      dividend / interest forecast per held position, annual summary,
+      monthly chart, by-source table.
     - **Tax** — grouped into "Forward planning — actionable today"
       (Tax Rates & Income panel with override inputs, Tax Bracket
       Fill bar with ordinary Room-in-Bracket + LTCG Headroom + NIIT
@@ -580,6 +620,32 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     horizon (`analytics/__init__.py` `years_to_60` is now
     `target_age - age`) and the default value of the Planning
     tab's projection-age input.
+  - `Budget` — a recurring living expense (rent, subscription,
+    insurance…).  Symbol = category (`Housing` / `Subscriptions` /
+    …), Amount = cost per period, Note = label with optional cadence
+    suffix `@monthly` (default) / `@yearly` / `@quarterly` / `@6mo`
+    (aliases `semiannual` / `6months` — car-insurance-style billing) /
+    `@weekly`.  Date = effective-from; rows sharing a label supersede
+    each other by date (a rent increase is a new row; `Amount = 0`
+    cancels a subscription).  Parsed into `retirement_meta["budget"]`,
+    rolled up by `analytics/budget.py`, rendered as the Income tab's
+    Budget section and a "Living expenses" line (+ projected-savings
+    total) in the 12-month cash-flow forecast.
+  - `Paycheck Deduction` — a recurring per-paycheck payroll line.
+    Symbol = kind (`Pre-Tax` / `Tax` / `Post-Tax`), Amount = $ per
+    paycheck (negative = a credit, e.g. a wellness-incentive refund),
+    Note = label, Date = effective-from.  Same label-supersession rule
+    as Budget; **undated rows apply from the CURRENT year onward** so
+    historical AGI / MAGI / Roth-eligibility figures aren't silently
+    rewritten (`_shared.active_paycheck_deductions`).  401(k) elective
+    deferrals do NOT belong here — they're derived from the actual
+    contribution transactions.  Consumers: `analytics/paycheck.py`
+    (Income tab's Paycheck panel: gross → deductions → estimated
+    take-home) and `analytics/tax.py` (Pre-Tax rows reduce W-2 wages
+    for AGI / MAGI — Section 125 premiums never reach box 1).
+  - `Pay Frequency` — Amount = pay periods per year, snapped to
+    12 / 24 / 26 / 52 (default 26 = biweekly).  Annualizes the
+    paycheck rows.
     `ACCOUNT_TYPES` also starts empty in config.py; fallback when
     missing is `Taxable`.
 

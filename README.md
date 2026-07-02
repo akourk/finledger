@@ -162,6 +162,9 @@ is one of:
 | `State Tax Rate`  | Amount = marginal state income-tax rate as a decimal (`0.093`).  Added to the federal marginal for the Tax tab's combined rate + estimated capital-gains tax. |
 | `Target Allocation` | Symbol = sector bucket (`ETFs`, `Cash`, …), Amount = target %.  Drives the Holdings tab's Target vs Actual rebalancing-drift view. |
 | `Retirement Age`  | Amount = integer age (default `67`).  Drives Monte Carlo horizon + Planning tab projection-age default. |
+| `Budget`          | A recurring living expense (rent, subscription, insurance…).  Symbol = category (`Housing`, `Subscriptions`, …), Amount = cost per period, Note = label with optional cadence suffix `@monthly` (default) / `@yearly` / `@quarterly` / `@6mo` / `@weekly`.  Date = effective-from; rows sharing a label supersede each other by date (rent increase = new row; `Amount = 0` cancels).  Drives the Income tab's Budget section + the cash-flow forecast's projected-savings line. |
+| `Paycheck Deduction` | A recurring per-paycheck payroll line.  Symbol = kind (`Pre-Tax` / `Tax` / `Post-Tax`), Amount = $ per paycheck (negative = a credit, e.g. a wellness refund), Note = label.  Pre-Tax rows reduce W-2 wages for AGI / MAGI / Roth eligibility; all rows feed the Income tab's Paycheck panel (gross → deductions → estimated take-home).  401(k) deferrals don't belong here — they're derived from the contribution transactions. |
+| `Pay Frequency`   | Amount = pay periods per year (`12` / `24` / `26` / `52`, default `26` = biweekly).  Annualizes the paycheck rows. |
 | `Lot Method`      | Symbol = account group, Note = `FIFO` / `LIFO` / `HIFO` — the lot-relief method that account's broker actually uses (e.g. Coinbase defaults to HIFO).  Affects realized gains / holding period, never balances. |
 | `Cost Basis`      | True cost basis for an off-platform crypto receive fin can't reconstruct.  Symbol = account group, Date = acquired date, Amount = total basis, Note = `"<qty> <asset>"` (optional `#N` to disambiguate). |
 | `Reconcile Balance` / `Reconcile Realized` / `Reconcile Income` / `Reconcile Section 1256` / `Reconcile Other Income` | Broker-reported ground truth (statement balance, 1099-B, 1099-DIV/INT, 1099-MISC) to check fin against — drives the Overview's Reconciliation panel.  Symbol = account group, Date = as-of date (balance) or year, Amount = the broker figure.  `Reconcile Realized` also overrides fin's realized figure in AGI / MAGI / Roth-eligibility math. |
@@ -208,9 +211,16 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   plus the **Year-by-Year** table (year-end balances per account with
   Δ% / Δ$, contribution columns, targets, and a savings-rate column).
 - **Income** — stat cards, 12-month total cash-flow forecast (salary +
-  bonuses + projected dividends − projected retirement contributions),
-  12-month dividend / interest forecast per held position, annual
-  summary, monthly chart, by-source table.
+  bonuses + projected dividends − projected retirement contributions −
+  paycheck taxes & deductions − budget living expenses, with a
+  projected-savings line), a **Paycheck** panel (gross → pre-tax
+  benefits / 401(k) / estimated federal tax / payroll taxes / post-tax
+  → take-home, per-paycheck and annualized — from `Paycheck Deduction`
+  metadata rows), a **Budget** section (monthly/annual burn, category
+  breakdown, passive-income coverage, and drift vs the `Annual
+  Expenses` figure — from `Budget` metadata rows), 12-month dividend /
+  interest forecast per held position, annual summary, monthly chart,
+  by-source table.
 - **Tax** — grouped into "Forward planning — actionable today" (income
   build-up, marginal rate estimates with override inputs, Tax Bracket
   Fill bar, Tax-Loss Harvest Candidates, Potential Wash Sales) and

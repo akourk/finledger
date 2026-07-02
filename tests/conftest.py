@@ -29,6 +29,35 @@ sys.path.insert(0, str(ROOT))
 
 
 # ---------------------------------------------------------------------------
+# Session-wide isolation guard — must run BEFORE any src module is imported.
+#
+# fin's config.py resolves DATA_DIR / CACHE_DIR / EXPORT_DIR from FIN_*_DIR
+# env vars AT IMPORT TIME.  Most tests opt into `isolated_workdir`, which
+# redirects those per-test — but a test that imports a src module without
+# the fixture (module-level imports at collection time count too) resolves
+# the REAL repo dirs and can silently write there.  That actually happened:
+# tests calling build_analytics() with bare inputs clobbered the real
+# cache/last_run.json with an empty snapshot, so the dashboard's "What's
+# Changed" panel reported the entire portfolio value as new on every real
+# run after a pytest run.
+#
+# conftest.py is imported before collection, so pointing the env vars at a
+# session tmp dir here guarantees no test touches the real dirs even when
+# it skips the fixture.  `isolated_workdir` still narrows to a per-test
+# dir on top of this.  Assignment is unconditional: ambient FIN_*_DIR vars
+# from the developer's shell must never leak into a test run either.
+import tempfile
+
+_GUARD_ROOT = Path(tempfile.mkdtemp(prefix="fin-test-guard-"))
+for _sub in ("data", "cache", "exports"):
+    (_GUARD_ROOT / _sub).mkdir()
+os.environ["FIN_PROJECT_ROOT"] = str(_GUARD_ROOT)
+os.environ["FIN_DATA_DIR"]     = str(_GUARD_ROOT / "data")
+os.environ["FIN_CACHE_DIR"]    = str(_GUARD_ROOT / "cache")
+os.environ["FIN_EXPORT_DIR"]   = str(_GUARD_ROOT / "exports")
+
+
+# ---------------------------------------------------------------------------
 # Filesystem isolation
 # ---------------------------------------------------------------------------
 

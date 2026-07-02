@@ -46,6 +46,25 @@ Type is one of:
 - ``Retirement Age``   — Amount is the integer target age (default
   67).  Drives the Monte Carlo simulation horizon and the
   scenario-projection age input on the Planning tab.
+- ``Budget``           — a recurring living expense (rent,
+  subscription, insurance, …).  Symbol = category (``Housing``,
+  ``Subscriptions``, ``Utilities``, …), Amount = cost per period,
+  Note = label with an optional cadence suffix ``@monthly`` (default)
+  / ``@yearly`` / ``@quarterly`` / ``@6mo`` (aliases ``semiannual`` /
+  ``6months``) / ``@weekly``.  Date = effective-from (optional); rows
+  sharing a label supersede each other by date, so a rent increase is
+  a new row and ``Amount = 0`` cancels a subscription.  Drives the
+  Income tab's Budget section (analytics/budget.py).
+- ``Paycheck Deduction`` — a recurring per-paycheck payroll line.
+  Symbol = kind (``Pre-Tax`` / ``Tax`` / ``Post-Tax``), Amount = $ per
+  paycheck (negative = a credit, e.g. a wellness-incentive refund),
+  Note = label, Date = effective-from (undated rows apply from the
+  current year onward so history isn't rewritten).  Pre-Tax rows
+  reduce W-2 wages → AGI / MAGI (analytics/tax.py); all rows feed the
+  Income tab's Paycheck panel (analytics/paycheck.py).  401(k)
+  deferrals do NOT belong here — derived from actual contribution txns.
+- ``Pay Frequency``    — Amount = pay periods per year (12 / 24 / 26
+  / 52; default 26 = biweekly).  Annualizes the paycheck rows.
 
 Account Group and Account Type rows let users add new brokers /
 account names without editing ``src/config.py``.  When the metadata
@@ -113,6 +132,12 @@ def _empty() -> dict:
         "state": None,
         "state_tax_rate": 0.0,
         "retirement_age": 67,
+        "budget": [],
+        # Paycheck lines (Medical pre-tax, OASDI, Medicare, state payroll
+        # taxes, post-tax insurance…).  Biweekly pay is the default; a
+        # `Pay Frequency` row overrides (12 / 24 / 26 / 52).
+        "paycheck_deductions": [],
+        "pay_frequency": 26,
     }
 
 
@@ -248,6 +273,65 @@ def parse_metadata(data_dir: Path) -> dict:
                 m = note.strip().lower()
                 if symbol and m in ("fifo", "lifo", "hifo"):
                     out["lot_methods"][symbol] = m
+            elif typ == "Budget":
+                # Recurring living expense.  Symbol = category, Amount =
+                # cost per period, Note = "<label> [@cadence]" where
+                # cadence ∈ monthly (default) / yearly / quarterly /
+                # weekly.  Date = effective-from; analytics/budget.py
+                # keeps the latest row per label so increases /
+                # cancellations (Amount = 0) supersede older rows.
+                label, cadence = note, "monthly"
+                if "@" in note:
+                    label, _, cad = note.rpartition("@")
+                    cad = cad.strip().lower()
+                    _CADENCE_ALIASES = {
+                        "monthly": "monthly",
+                        "yearly": "yearly", "annual": "yearly",
+                        "annually": "yearly",
+                        "quarterly": "quarterly",
+                        "weekly": "weekly",
+                        # every-6-months billing (car insurance, etc.)
+                        "6mo": "6mo", "6months": "6mo", "6month": "6mo",
+                        "semiannual": "6mo", "semi-annual": "6mo",
+                        "semiannually": "6mo",
+                    }
+                    if cad in _CADENCE_ALIASES:
+                        cadence = _CADENCE_ALIASES[cad]
+                        label = label.strip()
+                    else:
+                        label = note   # '@' was part of the label itself
+                if label.strip():
+                    out["budget"].append({
+                        "label": label.strip(),
+                        "category": symbol or "Other",
+                        "amount": amt,
+                        "cadence": cadence,
+                        "date": date,
+                    })
+            elif typ == "Paycheck Deduction":
+                # A recurring per-paycheck payroll line.  Symbol = kind
+                # (`Pre-Tax` / `Tax` / `Post-Tax`), Amount = $ per
+                # paycheck (negative = a credit, e.g. a wellness
+                # incentive refund), Note = label, Date = effective-from
+                # (rows sharing a label supersede by date; undated rows
+                # apply from the current year onward).  401(k) elective
+                # deferrals do NOT belong here — they're derived from
+                # the actual contribution transactions.
+                kind_raw = symbol.strip().lower().replace("-", "").replace(" ", "")
+                kind = {"pretax": "pretax", "tax": "tax",
+                        "posttax": "posttax", "aftertax": "posttax"}.get(kind_raw)
+                if kind and note:
+                    out["paycheck_deductions"].append({
+                        "label": note, "kind": kind,
+                        "amount": amt, "date": date,
+                    })
+            elif typ == "Pay Frequency":
+                # Amount = pay periods per year.  Snapped to the
+                # standard payroll set so a typo can't skew every
+                # annualized figure.  Default (absent) is biweekly, 26.
+                n = int(round(amt))
+                if n in (12, 24, 26, 52):
+                    out["pay_frequency"] = n
             elif typ.startswith("Reconcile "):
                 # User-supplied ground truth from broker statements /
                 # 1099s, compared against fin's computed figures by

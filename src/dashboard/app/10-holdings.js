@@ -138,15 +138,19 @@ function renderTopBarSummary() {
   const el = document.getElementById('topBarSummary');
   if (!el) return;
   const hs = (ANALYTICS.header_summary) || {};
-  const fifo = (basisMethods.fifo && basisMethods.fifo.totals) || {};
-  const netC = cashSummary.net_contributed || 0;
 
   const value = hs.value != null ? hs.value
     : (holdingsByAsset.reduce((s, r) => s + (typeof r.value === 'number' ? r.value : 0), 0));
-  // Total return = what you have minus what you put in (net of withdrawals).
-  // Realized/dividends already reflected in current value, so don't double-count.
-  const totalReturn = value - netC;
-  const totalReturnPct = netC > 0 ? (totalReturn / netC) * 100 : null;
+  // Total return (value − net contributed) is precomputed in
+  // analytics/header.py — the Performance tab's all-time anchor card
+  // reads the same field, so the two always agree to the cent.
+  // Fallback (header_summary absent, e.g. empty history): derive it
+  // locally from the same formula.
+  const netC = hs.net_contributed != null ? hs.net_contributed
+    : (cashSummary.net_contributed || 0);
+  const totalReturn = hs.total_return != null ? hs.total_return : (value - netC);
+  const totalReturnPct = hs.total_return_pct != null ? hs.total_return_pct * 100
+    : (netC > 0 ? (totalReturn / netC) * 100 : null);
   const ch = hs.change_1d;
   const chPct = hs.change_1d_pct != null ? hs.change_1d_pct * 100 : null;
 

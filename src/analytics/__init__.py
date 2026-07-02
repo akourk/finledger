@@ -35,8 +35,10 @@ from .concentration import compute_concentration
 from .crypto import compute_crypto_analytics
 from .data_health import compute_data_health
 from .daily_pnl import compute_daily_pnl
+from .budget import compute_budget
 from .drawdown import compute_drawdown
 from .header import compute_header_summary
+from .paycheck import compute_paycheck
 from .income import compute_income_analytics
 from .income_calendar import compute_income_calendar
 from .monthly_pnl import compute_monthly_pnl
@@ -250,6 +252,12 @@ def build_analytics(txns: list[dict], history: list[dict],
         cusip_collisions=rename_for_alerts,
     )
 
+    # Current-year tax estimate — the paycheck panel reads its projected
+    # employee 401(k) deferral (and projection flag) from here.
+    from datetime import date as _date_today
+    _current_rate_est = (tax.get("rate_estimates_by_year") or {}).get(
+        str(_date_today.today().year))
+
     # Latest annual-expenses figure (drives FIRE + income expense
     # coverage).  Most-recent entry wins, matching the FI-threshold rule.
     _ann_exp_list = rm.get("annual_expenses") or []
@@ -287,7 +295,8 @@ def build_analytics(txns: list[dict], history: list[dict],
         "income": compute_income_analytics(txns),
         "tax": tax,
         "positions": compute_position_returns(txns, holdings),
-        "header_summary": compute_header_summary(txns, history, bridges),
+        "header_summary": compute_header_summary(txns, history, bridges,
+                                                 cash_summary=cash_summary),
         # New (this pass)
         "concentration":   concentration,
         "rebalancing":     compute_rebalancing(
@@ -300,9 +309,20 @@ def build_analytics(txns: list[dict], history: list[dict],
         "drawdown":        compute_drawdown(history, bridges),
         "daily_pnl":       compute_daily_pnl(history, txns),
         "trading_heatmap": compute_trading_heatmap(txns),
-        "income_calendar": compute_income_calendar(
+        "income_calendar": (_income_cal := compute_income_calendar(
             txns, holdings_by_account,
-            annual_expenses=latest_annual_expenses),
+            annual_expenses=latest_annual_expenses)),
+        # Budget — recurring living expenses from `Budget` metadata rows.
+        # Reuses the income calendar's trailing-12mo income for the
+        # "passive income covers X% of budget" figure (compute-once).
+        "budget": compute_budget(
+            rm.get("budget"),
+            annual_expenses=latest_annual_expenses,
+            ttm_income=(_income_cal or {}).get("ttm_actual")),
+        # Paycheck — gross → deductions → estimated take-home, from
+        # `Paycheck Deduction` metadata rows.  Reuses the current-year
+        # tax estimate for the projected employee 401(k) deferral.
+        "paycheck": compute_paycheck(retirement_meta, _current_rate_est),
         "monthly_pnl":     compute_monthly_pnl(history, txns, bridges),
         "monte_carlo":     monte_carlo,
         "changes":         changes,

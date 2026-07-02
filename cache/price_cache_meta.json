@@ -335,8 +335,10 @@
       "last_fetch": "2026-07-02T07:36:33"
     },
     "CRWD": {
+      "covered_end": "2026-07-02",
+      "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-07-02T07:36:33"
+      "last_fetch": "2026-07-02T08:14:28"
     },
     "CSCO": {
       "covered_end": "2026-07-02",

@@ -25,15 +25,22 @@ from ..prices import get_price, split_factor_since
 
 
 def compute_header_summary(txns: list[dict], history: list[dict],
-                          bridges: list[dict]) -> dict | None:
+                          bridges: list[dict],
+                          cash_summary: dict | None = None) -> dict | None:
     """Summary for the persistent header bar: current value, 1-day
-    change, and enough context to show a total-return number.
+    change, and the total-return figure.
 
     1-day change is computed by repricing today's balance at
     yesterday's close (keeps share count constant so same-day cash
     flows don't contaminate the "market moved X today" number).
     Yesterday = most recent trading day at or before today-1; the
     price cache's 7-day lookback handles weekends / holidays.
+
+    ``total_return`` (value − net contributed) is computed HERE, once —
+    the top bar and the Performance tab's all-time anchor card both
+    read it from this dict.  They used to derive it independently
+    (header value vs a JS sum over holdings rows), which produced
+    cent-level disagreements from rounding.
     """
     if not history:
         return None
@@ -90,6 +97,14 @@ def compute_header_summary(txns: list[dict], history: list[dict],
     change_1d = today_total - yest_total
     pct_1d = (change_1d / yest_total) if yest_total > 0 else None
 
+    # Total return = what you have minus what you put in (net of
+    # withdrawals).  Realized gains / dividends are already reflected
+    # in current value, so nothing is double-counted.
+    net_contributed = float((cash_summary or {}).get("net_contributed", 0) or 0)
+    total_return = today_total - net_contributed
+    total_return_pct = ((total_return / net_contributed)
+                        if net_contributed > 0 else None)
+
     return {
         "as_of": today,
         "prev_day": yest,
@@ -98,4 +113,8 @@ def compute_header_summary(txns: list[dict], history: list[dict],
         "change_1d": round(change_1d, 2),
         "change_1d_pct": round(pct_1d, 6) if pct_1d is not None else None,
         "unpriced_1d": round(unpriced, 2),   # coverage canary
+        "net_contributed": round(net_contributed, 2),
+        "total_return": round(total_return, 2),
+        "total_return_pct": (round(total_return_pct, 6)
+                             if total_return_pct is not None else None),
     }

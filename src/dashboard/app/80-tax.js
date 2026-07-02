@@ -96,6 +96,7 @@ function estimateTaxRates(year) {
       k401: py.k401,
       k401Ytd: py.k401_ytd,
       k401Limit: py.k401_limit,
+      pretaxDeductions: py.pretax_deductions || 0,
       grossIncome: py.gross_income,
       agi: py.agi,
       taxableIncome: py.taxable_income,
@@ -809,6 +810,7 @@ function renderTax() {
           <div>Realized ST gains${est.isProjection ? ' (YTD)' : ''}: <b class="${(est.realizedST || 0) >= 0 ? 'positive' : 'negative'}">${fmtSigned(est.realizedST || 0)}</b></div>
           <div>Realized LT gains${est.isProjection ? ' (YTD)' : ''}: <b class="${(est.realizedLT || 0) >= 0 ? 'positive' : 'negative'}">${fmtSigned(est.realizedLT || 0)}</b></div>
           <div>401K contribution${est.isProjection ? ' (projected)' : ''}: <b class="negative">${fmtMoney(-est.k401)}</b>${est.isProjection && est.k401Ytd != null ? ` <span style="color:var(--text-dim);font-size:0.75rem;">YTD ${fmtMoney(est.k401Ytd)}${est.k401Limit ? ` · cap ${fmtMoney(est.k401Limit, 0)}` : ''}</span>` : ''}</div>
+          ${est.pretaxDeductions ? `<div>Pre-tax paycheck deductions: <b class="negative">${fmtMoney(-est.pretaxDeductions)}</b> <span style="color:var(--text-dim);font-size:0.75rem;">medical etc. — reduce W-2 wages</span></div>` : ''}
           <div>Standard deduction: <b class="negative">${fmtMoney(-est.stdDed)}</b></div>
           <div style="margin-top:4px;border-top:1px solid var(--border);padding-top:4px;">
             Taxable ordinary income: <b>${fmtMoney(est.taxableOrdinary != null ? est.taxableOrdinary : est.taxableIncome)}</b>

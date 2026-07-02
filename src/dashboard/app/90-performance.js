@@ -1013,12 +1013,22 @@ function renderPerformance() {
   const _whole_realized = txns.reduce((s, t) => s + (t.realized_gain || 0), 0);
   const _whole_unrealized = holdingsByAccount.reduce(
     (s, h) => s + (h.unrealized_gain || 0), 0);
-  const _whole_value = holdingsByAccount.reduce(
-    (s, h) => s + (typeof h.value === 'number' ? h.value : 0), 0);
-  const _whole_netContrib = cashSummary.net_contributed || 0;
-  const _whole_totalReturn = _whole_value - _whole_netContrib;
-  const _whole_totalReturnPct = _whole_netContrib > 0
-    ? (_whole_totalReturn / _whole_netContrib) * 100 : null;
+  // Value / net contributed / total return come precomputed from
+  // analytics/header.py — the same fields the Top bar renders — so the
+  // anchor card can never disagree with the header by a rounding cent.
+  // Fallback: derive locally from holdings + cash summary.
+  const _hs = ANALYTICS.header_summary || {};
+  const _whole_value = _hs.value != null ? _hs.value
+    : holdingsByAccount.reduce(
+        (s, h) => s + (typeof h.value === 'number' ? h.value : 0), 0);
+  const _whole_netContrib = _hs.net_contributed != null
+    ? _hs.net_contributed : (cashSummary.net_contributed || 0);
+  const _whole_totalReturn = _hs.total_return != null
+    ? _hs.total_return : (_whole_value - _whole_netContrib);
+  const _whole_totalReturnPct = _hs.total_return_pct != null
+    ? _hs.total_return_pct * 100
+    : (_whole_netContrib > 0
+        ? (_whole_totalReturn / _whole_netContrib) * 100 : null);
 
   // Bottom-row aggregate stats: filtered by the active account AND
   // bounded by the active window.  Dollar P&L over the window, not

@@ -13,6 +13,7 @@ from ._shared import (
     CASH_ADD_ACTIONS, CASH_SUB_ACTIONS, INCOME_ACTION_KINDS,
     # Helpers
     _parse_iso, _year,
+    active_paycheck_deductions,
     classify_retirement_contribution,
     bridge_adjustment, net_cash_flow,
     _filter_value_fn, _account_filter_sets,
@@ -456,10 +457,26 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
     realized_st += _st_d
     realized_lt += _lt_d
 
-    # Ordinary income = salary + bonuses + dividends/interest + ST capital
-    # gains.  ST gains stack with the ordinary bracket schedule, so they
-    # belong in the bracket-fill display.  LT gains feed AGI separately.
-    ordinary_income = salary + bonuses + portfolio_income + realized_st
+    # Pre-tax paycheck deductions (Section 125 medical premiums etc.,
+    # from `Paycheck Deduction` metadata rows) reduce W-2 box 1 wages —
+    # they never reach AGI.  Undated rows apply from the current year
+    # onward (see active_paycheck_deductions) so historical MAGI / Roth
+    # eligibility isn't silently rewritten.  Credits (negative rows,
+    # e.g. a wellness incentive refund) net out.
+    pay_freq = float((retirement_meta or {}).get("pay_frequency") or 26)
+    pretax_deductions = sum(
+        d["amount"] * pay_freq
+        for d in active_paycheck_deductions(retirement_meta, yr)
+        if d["kind"] == "pretax"
+    )
+    pretax_deductions = min(max(0.0, pretax_deductions), salary)
+
+    # Ordinary income = wages (salary − pre-tax benefits) + bonuses +
+    # dividends/interest + ST capital gains.  ST gains stack with the
+    # ordinary bracket schedule, so they belong in the bracket-fill
+    # display.  LT gains feed AGI separately.
+    ordinary_income = ((salary - pretax_deductions) + bonuses
+                       + portfolio_income + realized_st)
     gross_income = ordinary_income + realized_lt
     agi = max(0.0, gross_income - k401)
     taxable_ordinary = max(0.0, ordinary_income - k401 - std)
@@ -564,6 +581,9 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
         "k401": round(k401, 2),
         "k401_ytd": round(k401_ytd, 2),
         "k401_limit": _K401_LIMIT_BY_YEAR.get(yr),
+        # Annualized pre-tax paycheck deductions subtracted from wages
+        # (0 when no `Paycheck Deduction` metadata rows are active).
+        "pretax_deductions": round(pretax_deductions, 2),
         "gross_income": round(gross_income, 2),
         "agi": round(agi, 2),
         "taxable_income": round(taxable_income, 2),

@@ -26,12 +26,40 @@ import csv
 import json
 import sys
 import tempfile
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.snapshot import export_snapshot  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Build-date-relative "recent activity" dates.
+#
+# Historical rows below are fixed dates (they're history), but the most
+# recent handful of transactions are dated relative to the BUILD date so a
+# freshly-rebuilt sample never trips the dashboard's stale-data alert
+# (fires at >30 days since the latest transaction).  Re-run this script
+# whenever the shipped snapshot has gone stale.
+#
+# Everything here stays AFTER 2025-12-31 — the seeded `Reconcile Balance`
+# rows pin 2025-12-31 snapshot values, which must not shift.
+# ---------------------------------------------------------------------------
+
+def _recent(days_ago: int) -> date:
+    d = date.today() - timedelta(days=days_ago)
+    floor = date(2026, 1, 15)
+    return d if d > floor else floor
+
+
+def _iso(d: date) -> str:
+    return d.isoformat()
+
+
+def _mdy(d: date) -> str:
+    return f"{d.month}/{d.day}/{d.year}"
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +230,13 @@ def _build(tmp: Path) -> None:
         {"Activity Date": "3/14/2025", "Trans Code": "Buy",
          "Instrument": "BND", "Description": "Vanguard Total Bond Market",
          "Quantity": "20", "Price": "$72.50", "Amount": "($1450.00)"},
+        # Recent activity (build-date-relative — keeps the sample fresh).
+        {"Activity Date": _mdy(_recent(40)), "Trans Code": "CDIV",
+         "Instrument": "VOO", "Description": "VOO Dividend",
+         "Amount": "$18.00"},
+        {"Activity Date": _mdy(_recent(12)), "Trans Code": "Buy",
+         "Instrument": "VOO", "Description": "Vanguard S&P 500 ETF",
+         "Quantity": "2", "Price": "$560.00", "Amount": "($1120.00)"},
     ])
 
     # Coinbase — BTC + ETH purchases, one dividend, one staking income.
@@ -290,6 +325,11 @@ def _build(tmp: Path) -> None:
          "Quantity": "8", "unitPrice": "260.00", "Fee": "0",
          "Subtotal": "2080.00", "Note": "EMPLOYEE PRE-TAX BASIC",
          "Account": "Vanguard 401K", "Currency": "USD"},
+        # Recent contribution (build-date-relative).
+        {"Date": _iso(_recent(14)), "Symbol": "VFIAX", "Action": "Buy",
+         "Quantity": "7", "unitPrice": "290.00", "Fee": "0",
+         "Subtotal": "2030.00", "Note": "EMPLOYEE PRE-TAX BASIC",
+         "Account": "Vanguard 401K", "Currency": "USD"},
     ])
 
     # Voya 401K — biweekly contributions to a target-date fund.
@@ -339,6 +379,11 @@ def _build(tmp: Path) -> None:
          "Symbol": "USD", "Action": "Buy",
          "Quantity": "2000.00", "unitPrice": "1.00", "Fee": "0.00",
          "Subtotal": "2000.00", "Note": "Transfer in"},
+        # Recent interest credit (build-date-relative).
+        {"Account": "Apple Savings", "Date": _iso(_recent(20)),
+         "Currency": "USD", "Symbol": "USD", "Action": "Dividend",
+         "Quantity": "19.10", "unitPrice": "1.00", "Fee": "0.00",
+         "Subtotal": "19.10", "Note": "Monthly interest"},
     ])
 
     # Manual adjustments — illustrative no-op (CSV with a sample
@@ -358,6 +403,33 @@ def _build(tmp: Path) -> None:
         ["Bonus History", "2024-12-15", "4000", "USD", "Year-end bonus"],
         ["Annual Expenses", "2025-01-01", "40000", "USD",
          "Estimated annual living expenses"],
+        # Budget — recurring living expenses.  Symbol = category,
+        # Amount = cost per period, Note = label with optional cadence
+        # suffix (@monthly default / @yearly / @quarterly / @weekly).
+        # Drives the Income tab's Budget section (analytics/budget.py).
+        ["Budget", "2024-01-01", "1800",  "Housing",       "Rent"],
+        ["Budget", "",           "500",   "Food",          "Groceries"],
+        ["Budget", "",           "90",    "Utilities",     "Electricity"],
+        ["Budget", "",           "60",    "Utilities",     "Internet"],
+        ["Budget", "",           "540",   "Insurance",     "Car insurance @6mo"],
+        ["Budget", "",           "15.99", "Subscriptions", "Netflix"],
+        ["Budget", "",           "11.99", "Subscriptions", "Spotify"],
+        ["Budget", "",           "2.99",  "Subscriptions", "iCloud"],
+        # Paycheck Deduction — per-paycheck payroll lines (Symbol = kind:
+        # Pre-Tax / Tax / Post-Tax; negative Amount = a credit).  Figures
+        # are Sam's fictional biweekly stub at the 80k salary (OASDI 6.2%
+        # of gross − medical, Medicare 1.45% of same, plus WA state
+        # programs).  401(k) deferrals are NOT listed — derived from the
+        # contribution transactions.  Drives the Income tab's Paycheck
+        # panel + the pre-tax AGI adjustment on the Tax tab.
+        ["Paycheck Deduction", "", "85.00",  "Pre-Tax",  "Medical/PPO Before-Tax"],
+        ["Paycheck Deduction", "", "-5.00",  "Pre-Tax",  "Wellness Incentive"],
+        ["Paycheck Deduction", "", "190.00", "Tax",      "OASDI (Social Security)"],
+        ["Paycheck Deduction", "", "43.46",  "Tax",      "Medicare"],
+        ["Paycheck Deduction", "", "17.85",  "Tax",      "WA Cares"],
+        ["Paycheck Deduction", "", "24.84",  "Tax",      "WA Paid Family Leave"],
+        ["Paycheck Deduction", "", "8.00",   "Post-Tax", "Long-Term Disability"],
+        ["Pay Frequency",      "", "26",     "",         "Biweekly"],
         # Tax / projection settings — drive federal bracket math,
         # Roth phaseout, and the Monte Carlo / scenario projection
         # horizon.  State is currently a display label only.

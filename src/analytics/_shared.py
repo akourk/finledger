@@ -939,3 +939,49 @@ def _account_filter_sets(holdings_by_account: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Options (tab-level aggregations)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Paycheck deductions (shared by tax.py and paycheck.py)
+# ---------------------------------------------------------------------------
+
+def active_paycheck_deductions(retirement_meta: dict | None,
+                               year: int) -> list[dict]:
+    """Resolve the `Paycheck Deduction` metadata rows active in ``year``.
+
+    Same supersession rule as Budget rows: the latest row per label
+    (case-insensitive) whose effective year is <= ``year`` wins; ties
+    broken by file order.  Rows WITHOUT an effective date are treated as
+    effective from the CURRENT year onward — they describe today's
+    paycheck, and applying them to historical years would silently
+    rewrite past AGI / MAGI / Roth-eligibility figures.
+
+    Returns dicts of ``{label, kind, amount}`` where kind is
+    ``pretax`` / ``tax`` / ``posttax`` and amount is per paycheck
+    (negative = a credit, e.g. a wellness-incentive refund).
+    """
+    from datetime import date as _date
+    rows = (retirement_meta or {}).get("paycheck_deductions") or []
+    current_year = _date.today().year
+    latest: dict[str, dict] = {}
+    for i, r in enumerate(rows):
+        key = (r.get("label") or "").strip().lower()
+        if not key:
+            continue
+        eff = r.get("date") or ""
+        try:
+            eff_year = int(eff[:4]) if eff else current_year
+        except ValueError:
+            eff_year = current_year
+        if eff_year > year:
+            continue
+        prev = latest.get(key)
+        if prev is None or eff_year >= prev["_eff_year"]:
+            latest[key] = {"label": r.get("label", ""),
+                           "kind": r.get("kind"),
+                           "amount": float(r.get("amount", 0) or 0),
+                           "_eff_year": eff_year, "_order": i}
+    out = sorted(latest.values(), key=lambda r: r["_order"])
+    for r in out:
+        r.pop("_eff_year", None)
+        r.pop("_order", None)
+    return out

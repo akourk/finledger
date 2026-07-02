@@ -90,6 +90,15 @@ def compute_changes(txns: list[dict],
         "txn_dates":       [t.get("date", "") for t in txns if t.get("date")],
     }
 
+    # An empty run — no transactions AND no value — means the caller had
+    # nothing (e.g. build_analytics invoked with bare inputs, or a
+    # misconfigured data dir).  Never let it overwrite a real snapshot:
+    # the next real run would diff against zeros and report the entire
+    # portfolio value as "new".  Return first_run so the panel stays
+    # hidden; there is nothing meaningful to diff.
+    if cur_txn_count == 0 and abs(cur_value) < 0.01:
+        return {"first_run": True, "skipped_empty_run": True}
+
     # Save current snapshot for next run BEFORE computing diff so even
     # a first run leaves something for the next one.
     _save_current(cache_dir, payload)
