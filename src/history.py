@@ -14,8 +14,9 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 from .basis import (
-    BASIS_EFFECTS, _basis_dollars, _consume_lots, _pair_transfers,
-    _pair_wraps, _rescale_lots, _sort_key as _basis_sort_key,
+    BASIS_EFFECTS, _basis_dollars, _basis_effect, _consume_lots,
+    _pair_transfers, _pair_wraps, _rescale_lots,
+    _sort_key as _basis_sort_key,
 )
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS
 from .prices import get_price, split_factor_since
@@ -283,6 +284,21 @@ def compute_history(txns: list[dict],
     stashed_tout_lots: dict[int, list[dict]] = {}
     tout_handled: set[int] = set()
 
+    # REBASE pairs — intra-group pairs whose Transfer In carries a user
+    # basis_override.  Mirrors basis._walk exactly: consume the old lots
+    # (no gain) THEN push one lot at the override basis, atomically on
+    # whichever leg walks first (consume-then-push so LIFO/HIFO can't
+    # eat the fresh override lot).  See the rebase block in basis.py.
+    rebase_pairs: dict[int, tuple[dict, dict]] = {}
+    for _t in txns:
+        if (id(_t) in intra_group and _basis_effect(_t) == "transfer_in"
+                and _t.get("basis_override") is not None):
+            _tout = tin_to_tout.get(id(_t))
+            if _tout is not None:
+                rebase_pairs[id(_t)] = (_t, _tout)
+                rebase_pairs[id(_tout)] = (_t, _tout)
+    rebase_done: set[int] = set()
+
     # Wrap/unwrap groups — basis-carrying conversions processed
     # atomically the first time any leg is met, exactly like basis.py.
     wrap_groups = _pair_wraps(txns)
@@ -344,8 +360,22 @@ def compute_history(txns: list[dict],
                     else:
                         balances[(acct, sym)] += qty
 
-            # Intra-group transfers net to zero in the same lot queue.
+            # Intra-group transfers net to zero in the same lot queue —
+            # except rebase pairs (Transfer In with a user basis
+            # override), which replace the carried basis.  Mirrors
+            # basis._walk.
             if id(t) in intra_group:
+                pair = rebase_pairs.get(id(t))
+                if pair is not None:
+                    tin, _tout = pair
+                    if id(tin) not in rebase_done:
+                        rebase_done.add(id(tin))
+                        r_qty = float(tin.get("quantity", 0) or 0)
+                        r_key = (tin.get("account_group", "") or "",
+                                 tin.get("symbol", "") or "")
+                        _consume(r_key, r_qty)
+                        _push(r_key, r_qty, float(tin["basis_override"]),
+                              tin.get("date", ""))
                 continue
 
             # Cost-basis walk — rules mirror basis._walk (see docstring

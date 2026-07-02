@@ -14,9 +14,11 @@ Returned shape::
       "pretax":  [{"label", "per_paycheck", "annual"}, ...],
       "taxes":   [...same...],     # user-listed payroll taxes (OASDI…)
       "posttax": [...same...],
+      "withholding": [...same...], # voluntary extra federal withholding
       "pretax_annual": float,      # net of credits (refund rows negative)
       "taxes_annual": float,
       "posttax_annual": float,
+      "withholding_annual": float, # prepays the EOY bill — not a tax cost
       "k401_annual": float,        # employee-only, from actual txns
       "k401_per_paycheck": float,  #   (current-year projection, capped)
       "est_federal_tax_annual": float,       # brackets on WAGE income only
@@ -49,21 +51,14 @@ from __future__ import annotations
 
 from datetime import date as _date
 
-from ._shared import active_paycheck_deductions
+from ._shared import active_paycheck_deductions, federal_tax_from_brackets
 
 _FREQUENCY_LABEL = {12: "monthly", 24: "semi-monthly",
                     26: "biweekly", 52: "weekly"}
 
-
-def _federal_tax_on(taxable: float, brackets: list[tuple[float, float]]) -> float:
-    """Dollar tax across progressive brackets (cap is cumulative)."""
-    tax, prev_cap = 0.0, 0.0
-    for cap, rate in brackets:
-        if taxable <= prev_cap:
-            break
-        tax += (min(taxable, cap) - prev_cap) * rate
-        prev_cap = cap
-    return tax
+# Backwards-compat alias (tests import it) — canonical implementation
+# lives in _shared so tax.py's safe-harbor math can't drift from it.
+_federal_tax_on = federal_tax_from_brackets
 
 
 def compute_paycheck(retirement_meta: dict | None,
@@ -98,9 +93,15 @@ def compute_paycheck(retirement_meta: dict | None,
                 for r in rows if r["kind"] == kind]
 
     pretax, taxes, posttax = _bucket("pretax"), _bucket("tax"), _bucket("posttax")
+    withholding = _bucket("withholding")
     pretax_annual = sum(r["annual"] for r in pretax)
     taxes_annual = sum(r["annual"] for r in taxes)
     posttax_annual = sum(r["annual"] for r in posttax)
+    # Voluntary extra federal withholding: cash out of the paycheck,
+    # but a PREPAYMENT of the year-end bill, not a tax cost — kept out
+    # of taxes_annual / total_tax_annual and shown as its own line.
+    # tax.py credits it against the estimated cap-gains tax.
+    withholding_annual = sum(r["annual"] for r in withholding)
 
     # Employee 401(k) deferral — from real txns via the tax estimate
     # (YTD pace projected, capped at the IRS limit).
@@ -118,7 +119,7 @@ def compute_paycheck(retirement_meta: dict | None,
     est_fed = _federal_tax_on(wage_taxable, brackets) if brackets else 0.0
 
     take_home_annual = (salary - pretax_annual - k401_annual - est_fed
-                        - taxes_annual - posttax_annual)
+                        - taxes_annual - posttax_annual - withholding_annual)
     total_tax_annual = taxes_annual + est_fed
 
     return {
@@ -130,9 +131,11 @@ def compute_paycheck(retirement_meta: dict | None,
         "pretax": pretax,
         "taxes": taxes,
         "posttax": posttax,
+        "withholding": withholding,
         "pretax_annual": round(pretax_annual, 2),
         "taxes_annual": round(taxes_annual, 2),
         "posttax_annual": round(posttax_annual, 2),
+        "withholding_annual": round(withholding_annual, 2),
         "k401_annual": round(k401_annual, 2),
         "k401_per_paycheck": round(k401_annual / freq, 2),
         "est_federal_tax_annual": round(est_fed, 2),

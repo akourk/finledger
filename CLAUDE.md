@@ -168,7 +168,9 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       `realized_lt` (taxable-account sells classified by
       `_classify_realized` — feed AGI), the estimated tax on YTD
       realized gains (`est_cap_gains_tax_federal` / `_state` /
-      `est_niit` / `_total` / `est_quarterly_payment`), and an
+      `est_niit` / `_total`; annualized `Withholding` paycheck rows
+      are credited as `extra_withholding` and `est_quarterly_payment`
+      is ÷4 of the `est_tax_after_withholding` remainder), and an
       `is_projection` flag with `year_fraction_observed` for the
       current year (salary, bonuses, dividends, and 401K extrapolated
       from YTD pace; 401K capped at IRS limit; realized gains kept
@@ -254,9 +256,11 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       estimate (real txns, YTD pace, IRS-capped), estimated federal
       income tax on wages (salary − pre-tax − 401k − std deduction
       through the ordinary brackets — LIABILITY, not withholding),
-      and take-home totals.  Feeds the Income tab's Paycheck panel +
-      the "Paycheck taxes & deductions" line in the cash-flow
-      forecast.  `None` without the metadata rows.
+      and take-home totals; `Withholding` rows are listed separately
+      (`withholding_annual`) — they reduce take-home but never count
+      as a tax cost.  Feeds the Income tab's Paycheck panel + the
+      "Paycheck taxes & deductions" line in the cash-flow forecast.
+      `None` without the metadata rows.
     - `monthly_pnl` — year × month grid of investment returns
       (start/end snapshot delta minus net_contributed delta) plus
       Sharpe / Sortino ratios.  Takes `bridges` (see rollover_bridges).  Ratios filter on (start_value ≥ 1%
@@ -584,14 +588,17 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     `match_and_stamp` matches each row to one lot-creating txn by
     (account, symbol, date±2d, qty) and stamps `t["basis_override"]`,
     which the basis walker honours on its add / unpaired-transfer-in /
-    unpaired-wrap-in branches.  Safeguards: consume 1:1, prefer
-    non-intra-group lots (an intra-group leg carries basis upstream and
-    is *flagged*, not silently mis-applied), per-unit sanity vs market
-    price, and the `#N` index.  KNOWN LIMIT: lots fin recorded as
-    internal Coinbase Pro↔regular moves (`intra_group_noop`) can't be
-    overridden directly — those need the deeper intra-transfer-pairing
-    fix; the `Reconcile Realized` override already covers their tax
-    impact.
+    unpaired-wrap-in branches — AND on intra-group transfer-in legs,
+    which it turns into a **rebase**: the pair stops being a no-op;
+    the walker consumes the carried lots with NO realized gain and
+    pushes one lot at the override basis (`rebase_in` / `rebase_out`
+    effects; consume-then-push so LIFO/HIFO can't eat the fresh
+    override lot).  This matches how Coinbase's tax engine treats
+    Pro→regular arrivals as receives with customer-provided basis —
+    it's what finally reconciled fin's Coinbase realized figures with
+    the 1099-DA.  Safeguards: consume 1:1, prefer non-intra-group
+    candidate lots, per-unit sanity vs market price, and the `#N`
+    index.
   - `Reconcile Balance` / `Reconcile Realized` / `Reconcile Income`
     / `Reconcile Section 1256` / `Reconcile Other Income` —
     broker-reported ground truth to check fin against (statement
@@ -632,20 +639,38 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     Budget section and a "Living expenses" line (+ projected-savings
     total) in the 12-month cash-flow forecast.
   - `Paycheck Deduction` — a recurring per-paycheck payroll line.
-    Symbol = kind (`Pre-Tax` / `Tax` / `Post-Tax`), Amount = $ per
-    paycheck (negative = a credit, e.g. a wellness-incentive refund),
-    Note = label, Date = effective-from.  Same label-supersession rule
-    as Budget; **undated rows apply from the CURRENT year onward** so
-    historical AGI / MAGI / Roth-eligibility figures aren't silently
-    rewritten (`_shared.active_paycheck_deductions`).  401(k) elective
+    Symbol = kind (`Pre-Tax` / `Tax` / `Post-Tax` / `Withholding`),
+    Amount = $ per paycheck (negative = a credit, e.g. a
+    wellness-incentive refund), Note = label, Date = effective-from.
+    Same label-supersession rule as Budget; **undated rows apply from
+    the CURRENT year onward** so historical AGI / MAGI /
+    Roth-eligibility figures aren't silently rewritten
+    (`_shared.active_paycheck_deductions`).  401(k) elective
     deferrals do NOT belong here — they're derived from the actual
     contribution transactions.  Consumers: `analytics/paycheck.py`
     (Income tab's Paycheck panel: gross → deductions → estimated
     take-home) and `analytics/tax.py` (Pre-Tax rows reduce W-2 wages
-    for AGI / MAGI — Section 125 premiums never reach box 1).
+    for AGI / MAGI — Section 125 premiums never reach box 1;
+    `Withholding` rows are voluntary extra federal withholding —
+    they reduce take-home but are a PREPAYMENT, credited against the
+    estimated tax on realized gains before the suggested quarterly
+    payment, never counted as a tax cost).
   - `Pay Frequency` — Amount = pay periods per year, snapped to
     12 / 24 / 26 / 52 (default 26 = biweekly).  Annualizes the
     paycheck rows.
+  - `Tax Return` — a figure from a FILED 1040.  Date = tax year,
+    Symbol = field (`Total Tax` = line 24, `AGI` = line 11,
+    `Withholding` = line 25d, `Wages` = 1z, `Capital Gains` = line 7),
+    Amount = $.  Parsed into `retirement_meta["tax_returns"]`.  The
+    prior year's `Total Tax` + `AGI` drive the Tax tab's
+    **safe-harbor check** (`rate_estimates_by_year[current].safe_harbor`):
+    IRS Form 2210 — no underpayment penalty when withholding reaches
+    the LESSER of 90% of this year's estimated federal tax or
+    100%/110% of last year's total tax (110% when prior AGI > $150k /
+    $75k MFS).  Projected withholding = fin's wage-tax estimate (a
+    W-4 proxy) + `Withholding` paycheck rows; when short, the panel
+    suggests the per-paycheck extra-withholding bump over the
+    remaining pay periods.  Unknown Symbol values are ignored.
     `ACCOUNT_TYPES` also starts empty in config.py; fallback when
     missing is `Taxable`.
 
@@ -792,8 +817,8 @@ threads through every consumer.
   metadata rows onto fin's lots (off-platform crypto basis fin can't
   reconstruct).  `match_and_stamp(txns, overrides)` matches each row to one
   lot-creating txn and stamps `t["basis_override"]` (honoured by the basis
-  walker's `_ov` helper).  See the `Cost Basis` metadata type above for the
-  safeguards and the intra-group known-limit.
+  walker's `_ov` helper; intra-group transfer-in legs rebase — see the
+  `Cost Basis` metadata type above for the safeguards).
 - **`src/schema.py`** — `TypedDict` definitions for the core data
   structures (`Transaction`, `Holding`, `Snapshot`).  Used for IDE
   autocomplete and type-check catches of field-name drift.  Runtime
@@ -924,7 +949,14 @@ process.
   order. Intra-group pairs (same `(account_group, symbol)` on both legs)
   are marked as `intra_group_noop` and skipped entirely — main.py adds
   then subtracts for a net-zero balance change, and we leave lots
-  undisturbed.
+  undisturbed.  EXCEPTION: a pair whose Transfer In carries a user
+  `basis_override` becomes a **rebase** — processed atomically on the
+  first leg met, consume-then-push (the order matters: under LIFO/HIFO
+  a push-first order would consume the fresh override lot itself),
+  booking NO realized gain and annotating `rebase_in` (+override
+  basis) / `rebase_out` (−consumed basis) so
+  `derive_basis_by_key_from_txns` and the history walker stay in
+  parity.  Balances are untouched either way.
 - **Same-day cross-group transfers** resolve via eager consumption: when
   a Transfer In walks before its paired Transfer Out (same date,
   alphabetically-later source account), the TIN eagerly consumes from

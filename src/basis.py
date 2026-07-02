@@ -546,6 +546,28 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
     # wrap group is processed atomically, applied as each leg is reached.
     wrap_leg_ann: dict[int, tuple] = {}
 
+    # REBASE pairs: an intra-group pair whose Transfer In carries a user
+    # `basis_override` (metadata Cost Basis row).  Coinbase's tax engine
+    # treats these Pro→regular arrivals as receives with
+    # customer-provided basis (GDAX-era lots migrated without basis), so
+    # instead of the usual no-op the pair REPLACES the carried basis:
+    # consume qty from the (same-key) queue with NO realized gain, then
+    # push one lot at the override basis.  Balance is untouched (same
+    # key: −qty then +qty); realized is untouched (no gain booked).
+    # Processed atomically on whichever leg walks first, and strictly
+    # consume-THEN-push — under LIFO/HIFO a push-first order would let
+    # the consume eat the fresh override lot itself.
+    rebase_pairs: dict[int, tuple[dict, dict]] = {}   # id(either leg) → (tin, tout)
+    for _t in txns:
+        if (id(_t) in intra_group and _basis_effect(_t) == "transfer_in"
+                and _t.get("basis_override") is not None):
+            _tout = tin_to_tout.get(id(_t))
+            if _tout is not None:
+                rebase_pairs[id(_t)] = (_t, _tout)
+                rebase_pairs[id(_tout)] = (_t, _tout)
+    rebase_done: set[int] = set()
+    rebase_ann: dict[int, tuple[str, float]] = {}     # id(leg) → (effect, cost_basis)
+
     txns_sorted = sorted(txns, key=_sort_key)
 
     for t in txns_sorted:
@@ -560,8 +582,30 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
 
         # Intra-group paired transfers net to zero in the same lot queue.
         # Main.py's balance: +qty then -qty → 0 change.  Basis: same lots
-        # stay in place.  Skip both legs.
+        # stay in place.  Skip both legs — UNLESS the pair is a rebase
+        # (Transfer In stamped with a user basis_override; see above).
         if id(t) in intra_group:
+            pair = rebase_pairs.get(id(t))
+            if pair is not None:
+                tin, tout = pair
+                if id(tin) not in rebase_done:
+                    rebase_done.add(id(tin))
+                    r_qty = float(tin.get("quantity", 0) or 0)
+                    r_key = (tin.get("account_group", "") or "",
+                             tin.get("symbol", "") or "")
+                    consumed, _carried = _consume_from_key(
+                        state, _method_for(r_key[0]), r_key, r_qty)
+                    new_basis = float(tin["basis_override"])
+                    _push_lot(state, method, r_key, r_qty, new_basis,
+                              tin.get("date", ""))
+                    rebase_ann[id(tin)]  = ("rebase_in",  new_basis)
+                    rebase_ann[id(tout)] = ("rebase_out", consumed)
+                final_effect, cb = rebase_ann[id(t)]
+                cost_basis_value = cb
+                if annotate:
+                    t["basis_effect"] = final_effect
+                    t["cost_basis"] = round(cb, 2)
+                continue
             final_effect = "intra_group_noop"
             if annotate:
                 t["basis_effect"] = final_effect
@@ -838,6 +882,9 @@ def derive_basis_by_key_from_txns(txns: list[dict]) -> dict[tuple[str, str], flo
     - ``transfer_in``          → +cost_basis  (paired cross-group, basis carries from source)
     - ``transfer_in_unpaired`` → +cost_basis  (cb is 0; arrival from external wallet)
     - ``transfer_out``         → -cost_basis  (paired cross-group OR unpaired send to external)
+    - ``rebase_in``            → +cost_basis  (intra-group pair with a user basis
+                                               override: the new customer-provided basis)
+    - ``rebase_out``           → -cost_basis  (its counter-leg: the carried basis consumed)
     - ``intra_group_noop``     → 0            (paired same-group transfer; both legs cancel)
     - ``split``                → 0            (qty rebalanced, total basis unchanged)
     - ``ignore``               → 0            (USD or empty symbol; not in lot queue)
@@ -859,9 +906,10 @@ def derive_basis_by_key_from_txns(txns: list[dict]) -> dict[tuple[str, str], flo
             continue
         key = (t.get("account_group", ""), sym)
         if be in ("add", "zero_basis", "transfer_in", "transfer_in_unpaired",
-                  "wrap_in", "wrap_in_unpaired"):
+                  "wrap_in", "wrap_in_unpaired", "rebase_in"):
             by_key[key] = by_key.get(key, 0.0) + float(cb)
-        elif be in ("remove", "transfer_out", "wrap_out", "wrap_out_unpaired"):
+        elif be in ("remove", "transfer_out", "wrap_out", "wrap_out_unpaired",
+                    "rebase_out"):
             by_key[key] = by_key.get(key, 0.0) - float(cb)
         # intra_group_noop / split / ignore / wrap_carry_noop: no contribution
     return by_key

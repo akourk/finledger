@@ -56,15 +56,25 @@ Type is one of:
   a new row and ``Amount = 0`` cancels a subscription.  Drives the
   Income tab's Budget section (analytics/budget.py).
 - ``Paycheck Deduction`` — a recurring per-paycheck payroll line.
-  Symbol = kind (``Pre-Tax`` / ``Tax`` / ``Post-Tax``), Amount = $ per
-  paycheck (negative = a credit, e.g. a wellness-incentive refund),
-  Note = label, Date = effective-from (undated rows apply from the
-  current year onward so history isn't rewritten).  Pre-Tax rows
-  reduce W-2 wages → AGI / MAGI (analytics/tax.py); all rows feed the
-  Income tab's Paycheck panel (analytics/paycheck.py).  401(k)
-  deferrals do NOT belong here — derived from actual contribution txns.
+  Symbol = kind (``Pre-Tax`` / ``Tax`` / ``Post-Tax`` /
+  ``Withholding``), Amount = $ per paycheck (negative = a credit,
+  e.g. a wellness-incentive refund), Note = label, Date =
+  effective-from (undated rows apply from the current year onward so
+  history isn't rewritten).  Pre-Tax rows reduce W-2 wages → AGI /
+  MAGI (analytics/tax.py); ``Withholding`` = voluntary extra federal
+  withholding (reduces take-home, credited against the estimated
+  year-end tax bill on the Tax tab); all rows feed the Income tab's
+  Paycheck panel (analytics/paycheck.py).  401(k) deferrals do NOT
+  belong here — derived from actual contribution txns.
 - ``Pay Frequency``    — Amount = pay periods per year (12 / 24 / 26
   / 52; default 26 = biweekly).  Annualizes the paycheck rows.
+- ``Tax Return``       — a figure from a FILED 1040.  Date = tax year,
+  Symbol = field (``Total Tax`` = line 24, ``AGI`` = line 11,
+  ``Withholding`` = line 25d, ``Wages`` = line 1z, ``Capital Gains``
+  = line 7), Amount = $.  The prior year's ``Total Tax`` + ``AGI``
+  drive the Tax tab's safe-harbor check (100% / 110% of prior-year
+  tax vs projected withholding); other fields are kept for reference
+  / future cross-checks.
 
 Account Group and Account Type rows let users add new brokers /
 account names without editing ``src/config.py``.  When the metadata
@@ -138,6 +148,9 @@ def _empty() -> dict:
         # `Pay Frequency` row overrides (12 / 24 / 26 / 52).
         "paycheck_deductions": [],
         "pay_frequency": 26,
+        # Filed-1040 figures by tax year: {"2025": {"total_tax": ..,
+        # "agi": .., "withholding": ..}, ...}
+        "tax_returns": {},
     }
 
 
@@ -319,12 +332,29 @@ def parse_metadata(data_dir: Path) -> dict:
                 # the actual contribution transactions.
                 kind_raw = symbol.strip().lower().replace("-", "").replace(" ", "")
                 kind = {"pretax": "pretax", "tax": "tax",
-                        "posttax": "posttax", "aftertax": "posttax"}.get(kind_raw)
+                        "posttax": "posttax", "aftertax": "posttax",
+                        # Voluntary extra federal withholding — reduces
+                        # take-home cash but PREPAYS the year-end tax
+                        # bill rather than being a tax cost itself.
+                        "withholding": "withholding",
+                        "extrawithholding": "withholding"}.get(kind_raw)
                 if kind and note:
                     out["paycheck_deductions"].append({
                         "label": note, "kind": kind,
                         "amount": amt, "date": date,
                     })
+            elif typ == "Tax Return":
+                # A figure from a filed 1040.  Date = tax year,
+                # Symbol = field name, Amount = $.  Unknown fields are
+                # ignored so users can annotate freely.
+                field = symbol.strip().lower().replace(" ", "_").replace("-", "_")
+                field = {"total_tax": "total_tax", "totaltax": "total_tax",
+                         "agi": "agi", "withholding": "withholding",
+                         "wages": "wages",
+                         "capital_gains": "capital_gains"}.get(field)
+                yr = (date or "")[:4]
+                if field and yr:
+                    out["tax_returns"].setdefault(yr, {})[field] = amt
             elif typ == "Pay Frequency":
                 # Amount = pay periods per year.  Snapped to the
                 # standard payroll set so a typo can't skew every

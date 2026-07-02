@@ -49,6 +49,122 @@ def test_paycheck_breakdown_math():
     assert out["is_projection"] is True
 
 
+def test_withholding_reduces_take_home_but_not_taxes():
+    """Extra federal withholding is cash out of the paycheck but a
+    PREPAYMENT — it must reduce take-home without inflating the tax
+    totals."""
+    from src.analytics.paycheck import compute_paycheck
+    base = compute_paycheck(_meta(), {"k401": 0.0})
+    meta = _meta()
+    meta["paycheck_deductions"].append(
+        {"label": "Extra Withholding", "kind": "withholding",
+         "amount": 200.0, "date": ""})
+    out = compute_paycheck(meta, {"k401": 0.0})
+    assert out["withholding_annual"] == pytest.approx(200.0 * 26)
+    assert out["taxes_annual"] == base["taxes_annual"]          # unchanged
+    assert out["total_tax_annual"] == base["total_tax_annual"]  # unchanged
+    assert out["take_home_annual"] == pytest.approx(
+        base["take_home_annual"] - 200.0 * 26)
+
+
+def test_withholding_credits_estimated_cap_gains_tax():
+    """tax.py nets extra withholding off the estimated tax on realized
+    gains before suggesting a quarterly payment."""
+    from datetime import date
+    from src.analytics.tax import _tax_rate_estimate
+    cur = date.today().year
+    meta = _meta(paycheck_deductions=[
+        {"label": "Extra Withholding", "kind": "withholding",
+         "amount": 200.0, "date": ""},
+    ])
+    # A short-term realized gain in a taxable account this year.
+    txns = [{"date": f"{cur}-02-01", "symbol": "XYZ", "action": "Sell",
+             "account_group": "Robinhood", "account_type": "Taxable",
+             "amount": 30000.0, "realized_gain": 20000.0,
+             "holding_days": 100}]
+    est = _tax_rate_estimate(str(cur), meta, txns)
+    assert est["extra_withholding"] == pytest.approx(200.0 * 26)
+    assert est["est_tax_after_withholding"] == pytest.approx(
+        max(0.0, est["est_cap_gains_tax_total"] - 5200.0), abs=0.02)
+    assert est["est_quarterly_payment"] == pytest.approx(
+        est["est_tax_after_withholding"] / 4, abs=0.02)
+
+
+def test_metadata_parses_withholding_kind(tmp_path):
+    from src.metadata import parse_metadata
+    (tmp_path / "metadata.csv").write_text(
+        "Type,Date,Amount,Symbol,Note\n"
+        "Paycheck Deduction,,200,Withholding,Extra Federal Withholding\n",
+        encoding="utf-8")
+    meta = parse_metadata(tmp_path)
+    assert meta["paycheck_deductions"][0]["kind"] == "withholding"
+
+
+def test_safe_harbor_covered_and_shortfall():
+    from datetime import date
+    from src.analytics.tax import _tax_rate_estimate
+    cur = date.today().year
+    # Prior-year AGI below $150k → 100% prong.
+    meta = _meta(tax_returns={str(cur - 1): {"total_tax": 10000.0,
+                                             "agi": 120000.0}})
+    est = _tax_rate_estimate(str(cur), meta, [])
+    sh = est["safe_harbor"]
+    assert sh is not None
+    assert sh["threshold_pct"] == 1.00
+    assert sh["prior_year_prong"] == pytest.approx(10000.0)
+    # W-4 proxy on a 104k salary comfortably exceeds min(10k, 90% prong).
+    assert sh["projected_withholding"] == pytest.approx(
+        sh["w4_withholding_est"])          # no extra withholding rows here?
+    # (this meta HAS no withholding rows → extra = 0)
+    assert sh["extra_withholding"] == 0.0
+    assert sh["effective_target"] == pytest.approx(
+        min(sh["prior_year_prong"], sh["ninety_pct_prong"]))
+    assert sh["covered"] == (sh["shortfall"] == 0.0)
+
+    # Prior-year AGI above $150k → 110% prong; huge prior tax → shortfall.
+    meta2 = _meta(tax_returns={str(cur - 1): {"total_tax": 60000.0,
+                                              "agi": 200000.0}})
+    est2 = _tax_rate_estimate(str(cur), meta2, [])
+    sh2 = est2["safe_harbor"]
+    assert sh2["threshold_pct"] == 1.10
+    assert sh2["prior_year_prong"] == pytest.approx(66000.0)
+    # Effective target = LESSER prong — a giant prior-year bill never
+    # forces overpaying past 90% of this year's tax.
+    assert sh2["effective_target"] == pytest.approx(
+        min(66000.0, sh2["ninety_pct_prong"]))
+
+
+def test_safe_harbor_absent_without_prior_return():
+    from datetime import date
+    from src.analytics.tax import _tax_rate_estimate
+    cur = date.today().year
+    est = _tax_rate_estimate(str(cur), _meta(), [])
+    assert est["safe_harbor"] is None
+    # Past years never carry a safe-harbor block.
+    meta = _meta(tax_returns={str(cur - 2): {"total_tax": 9000.0}})
+    est_prev = _tax_rate_estimate(str(cur - 1), meta, [])
+    assert est_prev.get("safe_harbor") is None
+
+
+def test_metadata_parses_tax_return_rows(tmp_path):
+    from src.metadata import parse_metadata
+    (tmp_path / "metadata.csv").write_text(
+        "Type,Date,Amount,Symbol,Note\n"
+        "Tax Return,2025,22000,Total Tax,1040 line 24\n"
+        "Tax Return,2025,150000,AGI,1040 line 11\n"
+        "Tax Return,2025,17479,Withholding,1040 line 25d\n"
+        "Tax Return,2024,20000,Total Tax,1040 line 24\n"
+        "Tax Return,2025,999,Nonsense Field,ignored\n",
+        encoding="utf-8")
+    meta = parse_metadata(tmp_path)
+    tr = meta["tax_returns"]
+    assert tr["2025"]["total_tax"] == 22000.0
+    assert tr["2025"]["agi"] == 150000.0
+    assert tr["2025"]["withholding"] == 17479.0
+    assert tr["2024"]["total_tax"] == 20000.0
+    assert "nonsense_field" not in tr["2025"]
+
+
 def test_paycheck_hidden_without_rows_or_salary():
     from src.analytics.paycheck import compute_paycheck
     assert compute_paycheck(_meta(paycheck_deductions=[]), None) is None

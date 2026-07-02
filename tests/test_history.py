@@ -375,3 +375,45 @@ def test_history_empty_input_returns_empty(stub_prices):
     assert compute_history([], {}) == []
     # Txns with no dates → no usable history.
     assert compute_history([{"date": "", "symbol": "AAPL"}], {}) == []
+
+
+def test_history_intra_group_rebase_matches_basis_walker(stub_prices):
+    """An intra-group transfer pair with a user basis_override rebases
+    the lot queue in the snapshot walker too — the latest snapshot's
+    cost basis must match the Holdings table exactly (the
+    history_holdings_basis_parity invariant)."""
+    from src.history import compute_history
+    from src.basis import compute_basis_default, state_to_holdings
+
+    stub_prices.set("ETH-USD", {"2021-09-30": 3400.0, "2024-01-31": 2400.0})
+    _populate_cache(stub_prices, {
+        "ETH-USD": ["2021-09-30", "2024-01-31"],
+    })
+    txns = [
+        _txn("2021-01-05", "Coinbase", "Taxable", "ETH-USD", "Buy", 10.0,
+             amount=1000.0, price=100.0),
+        _txn("2021-09-02", "Coinbase", "Taxable", "ETH-USD",
+             "Transfer In", 10.0),
+        _txn("2021-09-02", "Coinbase", "Taxable", "ETH-USD",
+             "Transfer Out", 10.0),
+        _txn("2024-01-15", "Coinbase", "Taxable", "ETH-USD", "Sell", 5.0,
+             amount=20000.0, price=4000.0),
+    ]
+    txns[1]["basis_override"] = 38000.0
+
+    history = compute_history(txns, {"ETH-USD": "Cryptocurrency"})
+    last = history[-1]
+    eth = [p for p in last["positions"] if p["symbol"] == "ETH-USD"]
+    assert len(eth) == 1
+    assert eth[0]["cost_basis"] == pytest.approx(19000.0)
+
+    # Snapshot non-cash basis == basis walker's view exactly.  (The
+    # snapshot total ALSO carries the Coinbase implicit-USD bridge —
+    # the sale proceeds as cash — which the lot walker rightly doesn't;
+    # compare positions excluding USD.)
+    snap_noncash = sum(p["cost_basis"] for p in last["positions"]
+                       if p["symbol"] != "USD")
+    fifo = compute_basis_default(txns)
+    holdings = state_to_holdings(fifo, "fifo")
+    assert sum(h["cost_basis"] for h in holdings) == pytest.approx(
+        snap_noncash, abs=0.02)

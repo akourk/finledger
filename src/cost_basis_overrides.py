@@ -16,9 +16,13 @@ unpaired-wrap-in branches.
 Safeguards against mis-application:
   1. **Consume 1:1** — a lot is claimed by at most one override (so N
      same-key rows map to N same-key lots, never silently overlap).
-  2. **Prefer non-intra-group lots** — an intra-group transfer leg carries
-     basis from an upstream lot and can't be overridden directly; if a row
-     only matches such a leg it's *flagged*, not silently mis-applied.
+  2. **Prefer non-intra-group lots** — when both an external deposit and an
+     internal-move leg match, the external deposit is the likelier target.
+     An intra-group Transfer In IS overridable though: the basis walker
+     turns the pair into a *rebase* (consume the carried lots with no gain,
+     push one lot at the override basis) — matching how Coinbase's tax
+     engine treats Pro→regular arrivals as receives with customer-provided
+     basis.
   3. **Per-unit sanity** — if a row's implied per-unit cost is wildly off
      the asset's market price on that date, warn (catches copy/paste typos).
   4. **`#N` index** — disambiguate same-(date, qty) lots when needed.
@@ -119,13 +123,9 @@ def match_and_stamp(txns: list, overrides: list | None) -> tuple[int, list]:
         claimed.add(id(pick))
         pick["basis_override"] = float(ov["amount"])
         _sanity(ov, sym, warnings)
-
-        if id(pick) in intra:
-            warnings.append(
-                f"Cost Basis: {ov['account_group']} {ov['asset']} {ov['date']} "
-                f"matched an internal-move lot (basis carries from upstream) — "
-                f"not applied; needs the Coinbase intra-transfer-pairing fix")
-        else:
-            applied += 1
+        # Both external-deposit lots AND intra-group transfer-in legs are
+        # overridable — the walker rebases the latter (consume carried
+        # lots, push the override basis; see basis._walk's rebase block).
+        applied += 1
 
     return applied, warnings

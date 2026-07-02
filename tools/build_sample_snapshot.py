@@ -429,7 +429,16 @@ def _build(tmp: Path) -> None:
         ["Paycheck Deduction", "", "17.85",  "Tax",      "WA Cares"],
         ["Paycheck Deduction", "", "24.84",  "Tax",      "WA Paid Family Leave"],
         ["Paycheck Deduction", "", "8.00",   "Post-Tax", "Long-Term Disability"],
+        # Voluntary extra federal withholding — reduces take-home but
+        # prepays the year-end bill; the Tax tab credits it against the
+        # estimated tax on realized gains.
+        ["Paycheck Deduction", "", "25.00",  "Withholding", "Extra Federal Withholding"],
         ["Pay Frequency",      "", "26",     "",         "Biweekly"],
+        # Tax Return — figures from the FILED prior-year 1040.  Total Tax
+        # (line 24) + AGI (line 11) drive the Tax tab's safe-harbor check.
+        ["Tax Return", "2025", "6800",  "Total Tax",   "1040 line 24"],
+        ["Tax Return", "2025", "82000", "AGI",         "1040 line 11"],
+        ["Tax Return", "2025", "7200",  "Withholding", "1040 line 25d"],
         # Tax / projection settings — drive federal bracket math,
         # Roth phaseout, and the Monte Carlo / scenario projection
         # horizon.  State is currently a display label only.

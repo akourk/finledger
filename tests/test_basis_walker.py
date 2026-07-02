@@ -205,3 +205,81 @@ class TestUSDIgnored:
         result = compute_basis_default(txns)
         # Realized = 600 - 500 = 100 (USD events ignored)
         assert result["realized_total"] == pytest.approx(100.0)
+
+
+class TestIntraGroupRebase:
+    """An intra-group transfer pair whose Transfer In carries a user
+    basis_override is a REBASE: consume the carried lots with no gain,
+    push one lot at the override basis.  Matches how Coinbase's tax
+    engine treats Pro→regular arrivals as receives with
+    customer-provided basis."""
+
+    def _rebase_txns(self):
+        txns = _txns(
+            # Cheap early buy (the low-basis lots fin reconstructs).
+            ("2021-01-01", "Coinbase", "ETH-USD", "Buy", 10, 100.0, 1000.0),
+            # Internal Pro→regular shuffle (same group, same day, same
+            # qty → intra-group pair).  Increases sort before decreases.
+            ("2021-09-02", "Coinbase", "ETH-USD", "Transfer In",  10, 0.0, 0.0),
+            ("2021-09-02", "Coinbase", "ETH-USD", "Transfer Out", 10, 0.0, 0.0),
+            # Later sale of half.
+            ("2024-01-15", "Coinbase", "ETH-USD", "Sell", 5, 4000.0, 20000.0),
+        )
+        # Customer-provided basis for the 10 ETH receive.
+        txns[1]["basis_override"] = 38000.0
+        return txns
+
+    def test_rebase_replaces_carried_basis(self, isolated_workdir):
+        from src.basis import compute_basis_default, state_to_holdings
+        txns = self._rebase_txns()
+        state = compute_basis_default(txns)
+        # Sale realizes against the override basis (38000/10 = 3800/unit),
+        # not the cheap carried basis (100/unit).
+        assert state["realized_total"] == pytest.approx(20000.0 - 19000.0)
+        holdings = state_to_holdings(state, "fifo")
+        eth = [h for h in holdings if h["symbol"] == "ETH-USD"]
+        assert len(eth) == 1
+        assert eth[0]["quantity"] == pytest.approx(5.0)
+        assert eth[0]["cost_basis"] == pytest.approx(19000.0)
+        # No gain booked at the rebase itself.
+        tin, tout = txns[1], txns[2]
+        assert tin["basis_effect"] == "rebase_in"
+        assert tin["cost_basis"] == pytest.approx(38000.0)
+        assert tin.get("realized_gain") in (None, 0)
+        assert tout["basis_effect"] == "rebase_out"
+        assert tout["cost_basis"] == pytest.approx(1000.0)
+
+    def test_rebase_survives_hifo_consume_order(self, isolated_workdir):
+        """Consume-then-push ordering: under HIFO a push-first rebase
+        would let the out leg consume the fresh (highest-basis) override
+        lot itself.  The Coinbase account IS HIFO in production."""
+        from src.basis import compute_basis_default, state_to_holdings
+        txns = self._rebase_txns()
+        state = compute_basis_default(txns,
+                                      account_methods={"Coinbase": "hifo"})
+        assert state["realized_total"] == pytest.approx(1000.0)
+        holdings = state_to_holdings(state, "hifo")
+        eth = [h for h in holdings if h["symbol"] == "ETH-USD"]
+        assert eth[0]["cost_basis"] == pytest.approx(19000.0)
+
+    def test_rebase_annotations_reconstruct(self, isolated_workdir):
+        """derive_basis_by_key_from_txns must net rebase_in − rebase_out
+        so the refresh path and lot-queue parity check stay in sync."""
+        from src.basis import compute_basis_default, derive_basis_by_key_from_txns
+        txns = self._rebase_txns()
+        compute_basis_default(txns)
+        by_key = derive_basis_by_key_from_txns(txns)
+        # +1000 (buy) +38000 (rebase_in) −1000 (rebase_out) −19000 (sell)
+        assert by_key[("Coinbase", "ETH-USD")] == pytest.approx(19000.0)
+
+    def test_intra_pair_without_override_stays_noop(self, isolated_workdir):
+        from src.basis import compute_basis_default, state_to_holdings
+        txns = self._rebase_txns()
+        del txns[1]["basis_override"]
+        state = compute_basis_default(txns)
+        # Carried basis intact: sale realizes against the cheap lots.
+        assert state["realized_total"] == pytest.approx(20000.0 - 500.0)
+        assert txns[1]["basis_effect"] == "intra_group_noop"
+        holdings = state_to_holdings(state, "fifo")
+        eth = [h for h in holdings if h["symbol"] == "ETH-USD"]
+        assert eth[0]["cost_basis"] == pytest.approx(500.0)

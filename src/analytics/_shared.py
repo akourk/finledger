@@ -985,3 +985,19 @@ def active_paycheck_deductions(retirement_meta: dict | None,
         r.pop("_eff_year", None)
         r.pop("_order", None)
     return out
+
+
+def federal_tax_from_brackets(taxable: float,
+                              brackets: list[tuple[float, float]]) -> float:
+    """Dollar tax across progressive brackets (cap is cumulative).
+
+    Shared by paycheck.py (wage-tax estimate) and tax.py (safe-harbor
+    projection) — one implementation so the two can't drift.
+    """
+    tax, prev_cap = 0.0, 0.0
+    for cap, rate in brackets or []:
+        if taxable <= prev_cap:
+            break
+        tax += (min(taxable, cap) - prev_cap) * rate
+        prev_cap = cap
+    return tax

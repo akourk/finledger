@@ -15,6 +15,7 @@ from ._shared import (
     _parse_iso, _year,
     active_paycheck_deductions,
     classify_retirement_contribution,
+    federal_tax_from_brackets,
     bridge_adjustment, net_cash_flow,
     _filter_value_fn, _account_filter_sets,
     _balance_sort_key, _value_at_date, _cash_flow_events,
@@ -549,6 +550,74 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
     est_niit = 0.038 * min(net_investment_income, max(0.0, agi - niit_threshold))
     est_cap_gains_total = est_fed + est_state + est_niit
 
+    # Voluntary extra federal withholding (`Withholding` paycheck rows)
+    # prepays this bill — credit it before suggesting a quarterly
+    # payment.  Withholding is treated by the IRS as paid evenly through
+    # the year, so it's the cleanest way to cover lumpy gains.
+    extra_withholding = sum(
+        d["amount"] * pay_freq
+        for d in active_paycheck_deductions(retirement_meta, yr)
+        if d["kind"] == "withholding"
+    )
+    est_after_withholding = max(0.0, est_cap_gains_total - extra_withholding)
+
+    # --- Safe-harbor check (current year only) ---------------------------
+    # IRS Form 2210: no underpayment penalty when withholding + timely
+    # estimated payments reach the LESSER of 90% of this year's tax or
+    # 100% of last year's total tax (110% when last year's AGI exceeded
+    # $150k / $75k MFS).  Needs a `Tax Return` metadata row with the
+    # prior year's Total Tax (line 24); AGI (line 11) picks the
+    # 100%-vs-110% threshold.  Projected withholding = the wage-tax
+    # estimate (a proxy for an accurately-filled W-4) + voluntary extra
+    # withholding — an estimate, labeled as such in the panel.
+    safe_harbor = None
+    if is_current_year:
+        _returns = (retirement_meta or {}).get("tax_returns") or {}
+        _prior = _returns.get(str(yr - 1)) or {}
+        _prior_tax = float(_prior.get("total_tax") or 0)
+        if _prior_tax > 0:
+            _prior_agi = _prior.get("agi")
+            _agi_thr = (75000.0 if status == "Married Filing Separately"
+                        else 150000.0)
+            _pct = 1.10 if (_prior_agi or 0) > _agi_thr else 1.00
+            prior_year_prong = _prior_tax * _pct
+            # This year's projected total FEDERAL tax: ordinary bracket
+            # tax (wages + dividends + ST gains) + LTCG + NIIT.
+            ordinary_tax = sum(b["tax_paid"] for b in bracket_fill)
+            est_total_federal = (ordinary_tax
+                                 + realized_lt * marginal_long + est_niit)
+            ninety_pct_prong = 0.9 * est_total_federal
+            effective_target = min(prior_year_prong, ninety_pct_prong)
+            # W-4 proxy: federal tax on wages only.
+            wage_taxable = max(0.0, salary - pretax_deductions - k401 - std)
+            w4_withholding_est = federal_tax_from_brackets(wage_taxable,
+                                                           brackets)
+            projected_withholding = w4_withholding_est + extra_withholding
+            shortfall = max(0.0, effective_target - projected_withholding)
+            _year_end = _date(yr, 12, 31)
+            remaining_paychecks = max(0, round(
+                (_year_end - today).days / 365.0 * pay_freq))
+            safe_harbor = {
+                "prior_year": yr - 1,
+                "prior_year_tax": round(_prior_tax, 2),
+                "prior_year_agi": (round(float(_prior_agi), 2)
+                                   if _prior_agi is not None else None),
+                "threshold_pct": _pct,
+                "prior_year_prong": round(prior_year_prong, 2),
+                "est_total_federal_tax": round(est_total_federal, 2),
+                "ninety_pct_prong": round(ninety_pct_prong, 2),
+                "effective_target": round(effective_target, 2),
+                "w4_withholding_est": round(w4_withholding_est, 2),
+                "extra_withholding": round(extra_withholding, 2),
+                "projected_withholding": round(projected_withholding, 2),
+                "covered": shortfall <= 0.0,
+                "shortfall": round(shortfall, 2),
+                "remaining_paychecks": remaining_paychecks,
+                "suggested_extra_per_paycheck": (
+                    round(shortfall / remaining_paychecks, 2)
+                    if shortfall > 0 and remaining_paychecks > 0 else None),
+            }
+
     # --- LTCG bracket headroom -------------------------------------------
     # The actionable twin of the ordinary bracket fill: "how much MORE
     # long-term gain can be realized this year before the LTCG rate steps
@@ -610,7 +679,14 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
         "est_cap_gains_tax_state": round(est_state, 2),
         "est_niit": round(est_niit, 2),
         "est_cap_gains_tax_total": round(est_cap_gains_total, 2),
-        "est_quarterly_payment": round(est_cap_gains_total / 4, 2),
+        # Extra federal withholding (annualized) credited against the
+        # bill; the suggested quarterly payment is on the REMAINDER.
+        "extra_withholding": round(extra_withholding, 2),
+        "est_tax_after_withholding": round(est_after_withholding, 2),
+        "est_quarterly_payment": round(est_after_withholding / 4, 2),
+        # Safe-harbor check vs the prior year's filed 1040 (`Tax Return`
+        # metadata rows).  None for past years or without the rows.
+        "safe_harbor": safe_harbor,
         "state_tax_rate": round(state_rate, 4),
         "is_projection": bool(is_current_year and year_fraction < 1.0),
         "year_fraction_observed": round(year_fraction, 4),

@@ -60,9 +60,12 @@ function _buildCashFlowForecast(passiveProjected) {
   // wages, and pre/post-tax benefits.  401(k) is NOT in this figure
   // (it's the Retirement contributions line above).
   const _pc = ANALYTICS.paycheck || null;
+  // Extra withholding is included: it leaves the paycheck (and roughly
+  // covers the tax on the investment income counted above pre-tax).
   const paycheckOutflows = _pc
     ? Math.round((_pc.taxes_annual || 0) + (_pc.pretax_annual || 0)
-      + (_pc.posttax_annual || 0) + (_pc.est_federal_tax_annual || 0))
+      + (_pc.posttax_annual || 0) + (_pc.est_federal_tax_annual || 0)
+      + (_pc.withholding_annual || 0))
     : 0;
 
   const rowDefs = [
@@ -155,6 +158,10 @@ function _buildPaycheckSection() {
     rows.push(line(_htmlEsc(d.label) + ' <span class="sub">post-tax</span>',
       -d.per_paycheck, -d.annual, 'negative'));
   }
+  for (const d of (p.withholding || [])) {
+    rows.push(line(_htmlEsc(d.label) + ' <span class="sub">extra withholding — prepays EOY taxes</span>',
+      -d.per_paycheck, -d.annual, 'negative'));
+  }
   rows.push(`<tr style="border-top:1px solid var(--border);">
     <td><b>Take-home (est.)</b></td>
     <td class="num"><b class="positive">${fmtMoney(p.take_home_per_paycheck)}</b></td>
@@ -174,7 +181,7 @@ function _buildPaycheckSection() {
       </table>
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
         Wage-only view: bonuses, dividends, and realized gains are excluded here (the Tax tab covers the full picture).
-        Federal tax is the estimated <b>liability</b> on wages${p.is_projection ? ' (current-year projection)' : ''}, not your actual withholding — compare it against your W-4 withholding to spot over/under-withholding.
+        Federal tax is the estimated <b>liability</b> on wages${p.is_projection ? ' (current-year projection)' : ''}, not your actual withholding — compare it against your W-4 withholding to spot over/under-withholding.${(p.withholding && p.withholding.length) ? '  The extra-withholding line is a voluntary prepayment of the year-end bill — the Tax tab credits it against the estimated tax on realized gains.' : ''}
         The 401(k) line is your employee deferral derived from actual contribution transactions (projected at YTD pace, capped at the IRS limit).
         Payroll-tax lines are your pay-stub amounts × ${p.frequency} pay periods.
         Pre-tax benefit lines also reduce the AGI / MAGI used for Roth eligibility on the Tax tab.

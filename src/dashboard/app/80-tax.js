@@ -109,6 +109,9 @@ function estimateTaxRates(year) {
       estNiit: py.est_niit,
       estCapGainsTaxTotal: py.est_cap_gains_tax_total,
       estQuarterlyPayment: py.est_quarterly_payment,
+      extraWithholding: py.extra_withholding || 0,
+      estTaxAfterWithholding: py.est_tax_after_withholding,
+      safeHarbor: py.safe_harbor || null,
       isProjection: !!py.is_projection,
       yearFraction: py.year_fraction_observed,
     };
@@ -273,15 +276,58 @@ function _buildEstimatedTaxSection(e) {
         ${stateItem}
         ${niitItem}
         ${item('Total estimated', total, 'negative')}
+        ${e.extraWithholding > 0 ? item('Extra withholding (annualized)', -e.extraWithholding, 'positive') : ''}
+        ${e.extraWithholding > 0 ? item('Still to cover', e.estTaxAfterWithholding, e.estTaxAfterWithholding > 0 ? 'negative' : 'positive') : ''}
         ${item('≈ per quarter (÷4)', e.estQuarterlyPayment)}
       </div>
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:10px;line-height:1.5;">
         Rough set-aside for IRS Form 1040-ES on <b>taxable-account</b> realized gains only:
         ST at your ordinary marginal rate, LT at the LTCG rate, plus state (gains taxed as
-        ordinary income in most states) and NIIT (3.8% above the MAGI threshold).  Not a
-        substitute for a tax pro — ignores withholding, credits, AMT, and safe-harbor
+        ordinary income in most states) and NIIT (3.8% above the MAGI threshold).
+        ${e.extraWithholding > 0 ? 'Your voluntary extra paycheck withholding is credited first — the IRS treats withholding as paid evenly through the year, making it the cleanest way to cover lumpy gains.  The quarterly figure is on the remainder.' : ''}
+        Not a substitute for a tax pro — ignores credits, AMT, and safe-harbor
         prior-year rules.  Even-quarters split is a simplification; gains realized late in
         the year may shift the due date.
+      </div>
+    </div>`;
+}
+
+// --- Safe-harbor check -----------------------------------------------------
+// IRS Form 2210 safe harbor: withholding ≥ min(90% of this year's tax,
+// 100%/110% of last year's).  Needs `Tax Return` metadata rows (prior
+// year's Total Tax + AGI).  All figures precomputed in analytics/tax.py.
+function _buildSafeHarborSection(e) {
+  const sh = e && e.safeHarbor;
+  if (!sh) return '';
+  const item = (label, val, cls) => `
+    <div class="item"><span class="label">${label}</span>
+      <span class="value ${cls || ''}">${typeof val === 'number' ? fmtMoney(val, 0) : val}</span></div>`;
+  const statusChip = sh.covered
+    ? '<span class="dh-chip positive" style="background:transparent;border:1px solid currentColor;">covered ✓</span>'
+    : '<span class="dh-chip negative" style="background:transparent;border:1px solid currentColor;">short ' + fmtMoney(sh.shortfall, 0) + '</span>';
+  const suggestion = (!sh.covered && sh.suggested_extra_per_paycheck != null)
+    ? `<div style="margin-top:8px;font-size:0.85rem;">To reach the safe harbor from withholding alone: add about <b>${fmtMoney(sh.suggested_extra_per_paycheck)}</b> extra federal withholding per paycheck for the remaining ${sh.remaining_paychecks} paychecks this year.</div>`
+    : '';
+  return `
+    <div class="section-header" style="margin-top:24px;">
+      <h2><span style="color:var(--accent);">Withholding Safe Harbor</span></h2>
+      <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">no underpayment penalty if withholding reaches the target</span>
+      <span style="margin-left:auto;">${statusChip}</span>
+    </div>
+    <div class="panel">
+      <div class="bracket-summary">
+        ${item(`${sh.prior_year} total tax (1040 line 24)`, sh.prior_year_tax)}
+        ${item(`Prior-year prong (× ${(sh.threshold_pct * 100).toFixed(0)}%)`, sh.prior_year_prong)}
+        ${item(`90% of this year's est. tax`, sh.ninety_pct_prong)}
+        ${item('Safe-harbor target (lesser)', sh.effective_target, 'negative')}
+        ${item('Projected withholding', sh.projected_withholding, sh.covered ? 'positive' : '')}
+        ${sh.covered ? item('Margin', sh.projected_withholding - sh.effective_target, 'positive') : item('Shortfall', sh.shortfall, 'negative')}
+      </div>
+      ${suggestion}
+      <div style="color:var(--text-dim);font-size:0.72rem;margin-top:10px;line-height:1.5;">
+        Prior-year prong uses ${(sh.threshold_pct * 100).toFixed(0)}% because ${sh.prior_year} AGI was ${sh.prior_year_agi != null ? fmtMoney(sh.prior_year_agi, 0) : 'unknown'} (110% applies above $150k, $75k MFS).
+        Projected withholding is an <b>estimate</b>: fin's wage-tax figure (${fmtMoney(sh.w4_withholding_est, 0)}, a proxy for an accurately-filled W-4) + your extra withholding (${fmtMoney(sh.extra_withholding, 0)}).
+        Check a recent pay stub's YTD federal withholding to confirm the real pace.  This year's estimated tax (${fmtMoney(sh.est_total_federal_tax, 0)} federal) projects current YTD pace — realizing more gains raises the 90% prong but never the prior-year prong, which is why the prior-year safe harbor is the reliable one in a big-gain year.
       </div>
     </div>`;
 }
@@ -865,6 +911,8 @@ function renderTax() {
     ${_buildBracketSection(est.year)}
 
     ${_buildEstimatedTaxSection(est)}
+
+    ${_buildSafeHarborSection(est)}
 
     <h3 class="tax-group-header">Forward planning — actionable today</h3>
 

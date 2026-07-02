@@ -163,8 +163,9 @@ is one of:
 | `Target Allocation` | Symbol = sector bucket (`ETFs`, `Cash`, …), Amount = target %.  Drives the Holdings tab's Target vs Actual rebalancing-drift view. |
 | `Retirement Age`  | Amount = integer age (default `67`).  Drives Monte Carlo horizon + Planning tab projection-age default. |
 | `Budget`          | A recurring living expense (rent, subscription, insurance…).  Symbol = category (`Housing`, `Subscriptions`, …), Amount = cost per period, Note = label with optional cadence suffix `@monthly` (default) / `@yearly` / `@quarterly` / `@6mo` / `@weekly`.  Date = effective-from; rows sharing a label supersede each other by date (rent increase = new row; `Amount = 0` cancels).  Drives the Income tab's Budget section + the cash-flow forecast's projected-savings line. |
-| `Paycheck Deduction` | A recurring per-paycheck payroll line.  Symbol = kind (`Pre-Tax` / `Tax` / `Post-Tax`), Amount = $ per paycheck (negative = a credit, e.g. a wellness refund), Note = label.  Pre-Tax rows reduce W-2 wages for AGI / MAGI / Roth eligibility; all rows feed the Income tab's Paycheck panel (gross → deductions → estimated take-home).  401(k) deferrals don't belong here — they're derived from the contribution transactions. |
+| `Paycheck Deduction` | A recurring per-paycheck payroll line.  Symbol = kind (`Pre-Tax` / `Tax` / `Post-Tax` / `Withholding`), Amount = $ per paycheck (negative = a credit, e.g. a wellness refund), Note = label.  Pre-Tax rows reduce W-2 wages for AGI / MAGI / Roth eligibility; `Withholding` = voluntary extra federal withholding (reduces take-home, credited against the estimated year-end tax on realized gains); all rows feed the Income tab's Paycheck panel (gross → deductions → estimated take-home).  401(k) deferrals don't belong here — they're derived from the contribution transactions. |
 | `Pay Frequency`   | Amount = pay periods per year (`12` / `24` / `26` / `52`, default `26` = biweekly).  Annualizes the paycheck rows. |
+| `Tax Return`      | A figure from a filed 1040.  Date = tax year, Symbol = field (`Total Tax` = line 24, `AGI` = line 11, `Withholding` = line 25d, `Wages`, `Capital Gains`), Amount = $.  The prior year's Total Tax + AGI drive the Tax tab's **withholding safe-harbor check** (IRS Form 2210: 90%-of-current vs 100%/110%-of-prior-year, whichever is less). |
 | `Lot Method`      | Symbol = account group, Note = `FIFO` / `LIFO` / `HIFO` — the lot-relief method that account's broker actually uses (e.g. Coinbase defaults to HIFO).  Affects realized gains / holding period, never balances. |
 | `Cost Basis`      | True cost basis for an off-platform crypto receive fin can't reconstruct.  Symbol = account group, Date = acquired date, Amount = total basis, Note = `"<qty> <asset>"` (optional `#N` to disambiguate). |
 | `Reconcile Balance` / `Reconcile Realized` / `Reconcile Income` / `Reconcile Section 1256` / `Reconcile Other Income` | Broker-reported ground truth (statement balance, 1099-B, 1099-DIV/INT, 1099-MISC) to check fin against — drives the Overview's Reconciliation panel.  Symbol = account group, Date = as-of date (balance) or year, Amount = the broker figure.  `Reconcile Realized` also overrides fin's realized figure in AGI / MAGI / Roth-eligibility math. |
@@ -230,9 +231,11 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   §1256 activity. Current-year figures are extrapolated from YTD pace
   (salary, bonuses, dividends, 401K — capped at IRS limit; realized
   gains kept YTD-only since sells are lumpy). Includes an **estimated
-  tax on realized gains** panel (federal + state + NIIT, with a
-  suggested quarterly amount) and a **Form 8949 CSV** export of
-  taxable-account disposals.
+  tax on realized gains** panel (federal + state + NIIT, net of any
+  voluntary extra paycheck withholding, with a suggested quarterly
+  amount on the remainder), a **withholding safe-harbor check** (vs
+  100%/110% of the prior year's 1040 — needs `Tax Return` metadata
+  rows), and a **Form 8949 CSV** export of taxable-account disposals.
 - **Crypto** — per-coin holdings, realized & income, recent activity,
   conversion/wrap log.
 - **Performance** — anchor stat cards (Total Return, Realized,
