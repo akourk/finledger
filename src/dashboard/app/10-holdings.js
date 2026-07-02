@@ -275,6 +275,20 @@ function activateTab(name, opts) {
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => activateTab(btn.dataset.tab));
 });
+
+// Hide tabs with no underlying activity so the nav is honest about
+// what matters for this portfolio.  The panel stays in the DOM (deep
+// links still work); only the nav button hides.
+(function hideEmptyTabs() {
+  const hide = (name) => {
+    const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+    if (btn) btn.style.display = 'none';
+  };
+  const optStats = ((ANALYTICS.options || {}).stats) || {};
+  if (!(optStats.trades || optStats.open_count)) hide('options');
+  const cryptoStats = ((ANALYTICS.crypto || {}).stats) || {};
+  if (!cryptoStats.txn_count) hide('crypto');
+})();
 // Hash routing — deep links and back/forward button
 window.addEventListener('hashchange', () => {
   const name = location.hash.slice(1);
@@ -755,6 +769,26 @@ function renderBasisTable() {
     });
     return `<tr>${cells.join('')}</tr>`;
   }).join('');
+
+  // One-line summary on the collapsed <details> so the headline delta
+  // is visible without expanding: widest realized-P&L spread between
+  // FIFO and any alternative method.
+  const line = document.getElementById('basisSummaryLine');
+  if (line) {
+    const fifoRe = ((basisMethods.fifo || {}).totals || {}).realized_gain;
+    let maxDelta = 0, maxMethod = null;
+    for (const m of ['lifo', 'hifo', 'avg']) {
+      const re = ((basisMethods[m] || {}).totals || {}).realized_gain;
+      if (typeof re === 'number' && typeof fifoRe === 'number'
+          && Math.abs(re - fifoRe) > Math.abs(maxDelta)) {
+        maxDelta = re - fifoRe;
+        maxMethod = methodLabels[m];
+      }
+    }
+    line.textContent = (maxMethod && Math.abs(maxDelta) >= 1)
+      ? `realized P&L under ${maxMethod} differs from FIFO by ${fmtSigned(maxDelta)}`
+      : 'FIFO vs LIFO / HIFO / Average — negligible difference';
+  }
 }
 
 renderBasisTable();

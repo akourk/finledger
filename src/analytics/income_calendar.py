@@ -23,7 +23,8 @@ from ..actions import INCOME_ACTIONS as _INCOME_ACTIONS
 
 
 def compute_income_calendar(txns: list[dict],
-                            holdings_by_account: list[dict]) -> dict:
+                            holdings_by_account: list[dict],
+                            annual_expenses: float | None = None) -> dict:
     # Held symbols that aren't cash, plus per-symbol cost basis
     # rolled up across accounts.  Yield-on-cost = trailing-12mo income
     # / aggregate cost basis — measures whether contribution-weighted
@@ -123,9 +124,20 @@ def compute_income_calendar(txns: list[dict],
         for m in sorted(monthly)
     ]
 
+    # Expense coverage: what % of the user's annual spending the
+    # portfolio's passive income already pays for.  The most motivating
+    # FIRE progress number there is — trends up with both income growth
+    # and expense discipline.  Requires an `Annual Expenses` metadata
+    # row; None otherwise (the dashboard hides the figure).
+    expense_coverage_pct = None
+    if annual_expenses and annual_expenses > 0:
+        expense_coverage_pct = round(ttm_total / annual_expenses * 100, 2)
+
     return {
         "forecast_12mo":       forecast,
         "forecast_total":      round(forecast_total, 2),
         "ttm_actual":          round(ttm_total, 2),
         "monthly_last_12mo":   monthly_series,
+        "annual_expenses":     round(annual_expenses, 2) if annual_expenses else None,
+        "expense_coverage_pct": expense_coverage_pct,
     }

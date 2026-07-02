@@ -566,6 +566,119 @@ def compute_twr_summary(txns: list[dict], history: list[dict],
 
 
 # ---------------------------------------------------------------------------
+# Money-weighted return (XIRR)
+# ---------------------------------------------------------------------------
+#
+# TWR (above) measures the PORTFOLIO's performance — it deliberately
+# neutralizes the timing of the user's deposits.  XIRR measures what the
+# USER'S DOLLARS earned, timing included.  Shown side by side they
+# surface the "behavior gap": XIRR below TWR means contribution timing
+# hurt (money arrived before drops); above means it helped.
+
+def _xnpv(rate: float, flows: list[tuple[float, float]]) -> float:
+    """Net present value of ``[(years_from_t0, amount), ...]`` at
+    ``rate`` (annual, as a fraction)."""
+    return sum(amt / (1.0 + rate) ** yrs for yrs, amt in flows)
+
+
+def _solve_xirr(flows: list[tuple[float, float]]) -> float | None:
+    """Solve XIRR by bisection on [-99.99%, +1000%].  Returns None when
+    the flows don't bracket a root (degenerate input) — callers show
+    "—" rather than a fabricated number."""
+    lo, hi = -0.9999, 10.0
+    f_lo, f_hi = _xnpv(lo, flows), _xnpv(hi, flows)
+    if f_lo == 0:
+        return lo
+    if f_hi == 0:
+        return hi
+    if (f_lo > 0) == (f_hi > 0):
+        return None
+    for _ in range(100):
+        mid = (lo + hi) / 2
+        f_mid = _xnpv(mid, flows)
+        if abs(f_mid) < 1e-9:
+            return mid
+        if (f_mid > 0) == (f_lo > 0):
+            lo, f_lo = mid, f_mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def compute_money_weighted_return(txns: list[dict], history: list[dict],
+                                  bridges: list[dict],
+                                  filter_groups: set | None) -> dict | None:
+    """Annualized money-weighted return (XIRR) over the same natural
+    window as ``compute_twr_summary`` for the given account filter.
+
+    Cash-flow convention (investor's pocket): the starting portfolio
+    value and every external contribution are negative (money out of
+    pocket), withdrawals and the final portfolio value are positive.
+    ``txn_external_cash_flow`` supplies the same flow classification
+    every other return metric uses.
+    """
+    if len(history) < 2:
+        return None
+    base_val = _filter_value_fn(filter_groups)
+
+    def val(h):
+        return base_val(h) + bridge_adjustment(h.get("date", ""), filter_groups, bridges)
+
+    # Natural start — same criterion as compute_twr_summary.
+    start_idx = 0
+    while start_idx < len(history):
+        h = history[start_idx]
+        if val(h) > 0:
+            break
+        if net_cash_flow(txns, "", h.get("date", ""), filter_groups) > 0:
+            break
+        start_idx += 1
+    if start_idx >= len(history) - 1:
+        return None
+
+    start_date = history[start_idx].get("date", "")
+    end_date = history[-1].get("date", "")
+    d0 = _parse_iso(start_date)
+    d1 = _parse_iso(end_date)
+    if not d0 or not d1 or d1 <= d0:
+        return None
+
+    from ..basis import txn_external_cash_flow
+    flows: list[tuple[float, float]] = [(0.0, -val(history[start_idx]))]
+    for t in txns:
+        d = t.get("date", "")
+        if not d or d <= start_date or d > end_date:
+            continue
+        if filter_groups is not None and t.get("account_group") not in filter_groups:
+            continue
+        f = txn_external_cash_flow(t)
+        if f == 0:
+            continue
+        td = _parse_iso(d)
+        if td is None:
+            continue
+        # Contribution (+f) = money out of the investor's pocket → negative.
+        flows.append(((td - d0).days / 365.25, -f))
+    end_value = val(history[-1])
+    flows.append(((d1 - d0).days / 365.25, end_value))
+
+    total_in = -sum(a for _, a in flows if a < 0)
+    if total_in <= 0:
+        return None
+    irr = _solve_xirr(flows)
+    if irr is None:
+        return None
+    return {
+        "annualized": round(irr, 6),
+        "start_date": start_date,
+        "end_date": end_date,
+        "total_invested": round(total_in, 2),
+        "end_value": round(end_value, 2),
+        "method": "xirr",
+    }
+
+
+# ---------------------------------------------------------------------------
 # True-Daily-TWR (Schwab-style) â€” used for retirement filters
 # ---------------------------------------------------------------------------
 #

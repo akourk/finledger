@@ -156,7 +156,15 @@ function renderAnnualBreakdown() {
   // ----- HEADER -------------------------------------------------------
   // Row 1: Year, Age, [account name (colspan = 3 collapsed / 6 expanded)]…, Sum (colspan 3), Target
   // Row 2: per-account sub-columns
+  // Savings rate per year — external net contributions ÷ gross income
+  // (salary + bonus from metadata).  Precomputed in analytics.savings_by_year.
+  const savingsByYear = ANALYTICS.savings_by_year || {};
+  const haveSavings = Object.keys(savingsByYear).length > 0;
+
   let h1 = '<tr><th rowspan="2" class="ab-sticky-col">Year</th><th rowspan="2">Age</th>';
+  if (haveSavings) {
+    h1 += '<th rowspan="2" title="Savings rate — external net contributions across all accounts ÷ gross income (salary + bonus from metadata.csv)">Sav%</th>';
+  }
   let h2 = '<tr>';
   for (const a of accounts) {
     const expanded = _annualExpanded.has(a);
@@ -209,6 +217,16 @@ function renderAnnualBreakdown() {
       `<th class="ab-sticky-col">${year}</th>`,
       `<td class="num">${ageAtYearEnd(year)}</td>`,
     ];
+    if (haveSavings) {
+      const sv = savingsByYear[year];
+      if (sv && sv.savings_rate_pct != null) {
+        const tip = `Contributed ${fmtMoney(sv.net_contributed)} of ${fmtMoney(sv.gross_income)} gross income`;
+        const svCls = sv.savings_rate_pct >= 0 ? 'positive' : 'negative';
+        cells.push(`<td class="num ${svCls}" title="${_htmlEsc(tip)}">${sv.savings_rate_pct.toFixed(0)}%</td>`);
+      } else {
+        cells.push('<td class="num">—</td>');
+      }
+    }
     let sumNow = 0, sumPrev = 0;
     for (const a of accounts) {
       const v = (snap.by_account_group || {})[a] || 0;
@@ -342,14 +360,15 @@ function renderTopHoldings() {
 function renderRecentTransactions() {
   const head = document.getElementById('recentTxnsHead');
   const body = document.getElementById('recentTxnsBody');
-  // When an as-of-date is set, show the most recent 15 txns at or
+  // When an as-of-date is set, show the most recent txns at or
   // before that date (so "recent" means "recent as of the selected
-  // view date", not "recent lifetime").
+  // view date", not "recent lifetime").  8 rows — a glanceable
+  // pulse-check; the "View all →" footer link covers the rest.
   const cutoff = asOfDate;
   const rows = txns
     .filter(t => !t.date || t.date <= cutoff)
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-    .slice(0, 15);
+    .slice(0, 8);
   head.innerHTML = `
     <th>Date</th>
     <th>Account</th>
@@ -775,7 +794,7 @@ function _buildMonthlyPnlSection() {
     <div class="section-header" style="margin-top:24px;">
       <h2><span style="color:var(--accent);">Monthly P&L</span></h2>
       <span class="as-of-hint" style="margin-left:auto;">
-        Investment return per month — net of contributions and withdrawals.  Compounded across the row to give a YTD figure.
+        Investment return per month — net of contributions and withdrawals.  YTD compounds the row's monthly returns, so it can differ slightly from the Annual Returns table (Modified Dietz with mid-period flow weighting) — both are correct, they just weight intra-period flows differently.
       </span>
     </div>
     <div class="panel">
@@ -839,7 +858,6 @@ function renderConcentration() {
   const cards = sections.map((s, i) => {
     const top = s.rows.slice(0, 5);
     if (!top.length) return '';
-    const sectionHhi = (top.reduce((sum, r) => sum + Math.pow((r.pct || 0) / 100, 2), 0) * 10000).toFixed(0);
     const sectionTop5 = fmtPct(top.reduce((sum, r) => sum + (r.pct || 0), 0), 1);
     const rows = top.map(r => {
       const pct = r.pct || 0;
@@ -854,13 +872,17 @@ function renderConcentration() {
         <span class="conc-pct">${fmtPct(pct, 1)}</span>
       </div>`;
     }).join('');
-    // Show global HHI/top5 on the first (positions) card; others get section-local
-    const hhi = i === 0 ? hhiGlobal : sectionHhi;
+    // One HHI is enough: the global (positions) figure on the first
+    // card.  Per-card HHIs were quant noise — the bars + Top-5 share
+    // already communicate the concentration story.
     const top5 = i === 0 ? top5Global : sectionTop5;
+    const hhiChip = i === 0
+      ? `<span title="Herfindahl index of position weights — under 1000 is diversified, over 2500 concentrated.">HHI <b>${hhiGlobal}</b></span>`
+      : '';
     return `<div class="concentration-card">
       <h4>${s.title}</h4>
       <div class="conc-stats">
-        <span>HHI <b>${hhi}</b></span>
+        ${hhiChip}
         <span>Top 5 <b>${top5}</b></span>
       </div>
       ${rows}
@@ -879,14 +901,14 @@ function renderConcentration() {
 function renderDataHealth() { /* merged into renderOverviewStatus() */ }
 
 // Overview tab renderer: kicks off top holdings / recent txns / allocation.
-// Daily P&L moved to Performance tab — Overview is meant to be a snapshot.
+// Overview is a snapshot: value, change, anything wrong.  Concentration
+// moved to Holdings (holdings-risk view); Year-by-Year moved to Planning
+// (goal tracking); Daily P&L lives on Performance.
 registerTabRenderer('overview', () => {
   renderOverviewStatus();
   renderTopHoldings();
   renderRecentTransactions();
   renderAllocation();
-  renderConcentration();
-  renderAnnualBreakdown();
 });
 // Overview is active on initial load, so render its lazy bits now.
 if (document.getElementById('tab-overview').classList.contains('active')) {
@@ -894,10 +916,13 @@ if (document.getElementById('tab-overview').classList.contains('active')) {
   renderTopHoldings();
   renderRecentTransactions();
   renderAllocation();
-  renderConcentration();
-  renderAnnualBreakdown();
   TAB_RENDERED.add('overview');
 }
+// Concentration renders into the Holdings tab's container.  Holdings
+// content is built eagerly at load (not via the lazy tab router), so
+// render this once here too — the container is simply hidden until the
+// tab activates.
+renderConcentration();
 
 // Render a row of stat cards from a `[{label, value, cls?, title?}]`
 // array.  Used by every tab that has a `<div class="stats">…</div>`

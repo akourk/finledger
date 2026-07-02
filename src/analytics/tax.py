@@ -532,6 +532,23 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
     est_niit = 0.038 * min(net_investment_income, max(0.0, agi - niit_threshold))
     est_cap_gains_total = est_fed + est_state + est_niit
 
+    # --- LTCG bracket headroom -------------------------------------------
+    # The actionable twin of the ordinary bracket fill: "how much MORE
+    # long-term gain can be realized this year before the LTCG rate steps
+    # up?"  LTCG stacks on top of taxable income, so headroom = distance
+    # from taxable_income to the current LTCG bracket's cap.  NIIT
+    # headroom = distance from AGI to the 3.8% surtax threshold.
+    ltcg_headroom = None
+    ltcg_next_rate = None
+    for i, (cap, _rate) in enumerate(ltcg):
+        if taxable_income <= cap:
+            if not (isinstance(cap, float) and math.isinf(cap)):
+                ltcg_headroom = max(0.0, cap - taxable_income)
+                if i + 1 < len(ltcg):
+                    ltcg_next_rate = ltcg[i + 1][1]
+            break
+    niit_headroom = max(0.0, niit_threshold - agi)
+
     return {
         "year": yr,
         "filing_status": status,
@@ -557,6 +574,13 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
         # driven by total taxable_income (since LTCG slots above ordinary).
         "marginal_short": round(marginal_short, 4),
         "marginal_long": round(marginal_long, 4),
+        # $ of additional LT gain realizable before the LTCG rate steps
+        # up (None when already in the top LTCG bracket), and the AGI
+        # distance to the NIIT 3.8% threshold.
+        "ltcg_headroom": round(ltcg_headroom, 2) if ltcg_headroom is not None else None,
+        "ltcg_next_rate": ltcg_next_rate,
+        "niit_headroom": round(niit_headroom, 2),
+        "niit_threshold": niit_threshold,
         "bracket_fill": bracket_fill,
         "headroom_to_next_bracket": round(headroom_to_next, 2),
         "next_bracket_rate": next_rate,

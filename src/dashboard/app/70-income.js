@@ -106,6 +106,18 @@ function renderIncome() {
     { label: 'Rewards (all-time)', value: fmtMoney(allTimeRew) },
     { label: 'Lending (all-time)', value: fmtMoney(allTimeLend) },
   ];
+  // Expense coverage — what % of annual spending passive income already
+  // pays for.  The FIRE progress number: at 100%, the portfolio's income
+  // covers the bills.  Needs an `Annual Expenses` metadata row.
+  const _cal = ANALYTICS.income_calendar || {};
+  if (_cal.expense_coverage_pct != null) {
+    statCards.push({
+      label: 'Covers Expenses',
+      value: _cal.expense_coverage_pct.toFixed(1) + '%',
+      cls: 'positive',
+      title: `Trailing-12-month portfolio income (${fmtMoney(_cal.ttm_actual || 0)}) ÷ annual expenses (${fmtMoney(_cal.annual_expenses || 0)}).  At 100%, passive income pays all the bills — the FIRE finish line.`,
+    });
+  }
   const statsHtml = _renderStatCards(statCards);
 
   // Annual summary table

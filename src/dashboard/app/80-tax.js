@@ -357,9 +357,17 @@ function _buildBracketSection(year) {
         <div class="item"><span class="label">Room in Bracket</span><span class="value">${fmtMoney(headroom, 0)}</span></div>
         <div class="item"><span class="label">Next Rate</span><span class="value">${nextRate != null ? (nextRate * 100).toFixed(0) + '%' : 'top'}</span></div>
         <div class="item"><span class="label">Federal Income Tax (est)</span><span class="value">${fmtMoney(totalTax, 0)}</span></div>
+        ${est.ltcg_headroom != null ? `
+        <div class="item" title="How much MORE long-term gain you can realize this year before the LTCG rate steps up${est.ltcg_next_rate != null ? ' to ' + (est.ltcg_next_rate * 100).toFixed(0) + '%' : ''}.  LTCG stacks on top of ordinary taxable income.">
+          <span class="label">LTCG Headroom (${(est.marginal_long * 100).toFixed(0)}% rate)</span>
+          <span class="value">${fmtMoney(est.ltcg_headroom, 0)}</span></div>` : ''}
+        ${est.niit_headroom != null ? `
+        <div class="item" title="AGI distance to the ${fmtMoney(est.niit_threshold || 200000, 0)} Net Investment Income Tax threshold — investment income above it picks up an extra 3.8%.">
+          <span class="label">NIIT Headroom</span>
+          <span class="value">${fmtMoney(est.niit_headroom, 0)}</span></div>` : ''}
       </div>
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:8px;line-height:1.4;">
-        Filled = income already allocated to that bracket.  Partial (gradient) shows the bracket where your taxable income ends.  Use <b>Room in Bracket</b> to estimate how much additional short-term capital gain would stay at ${(currentRate * 100).toFixed(0)}% vs push into the next tier.
+        Filled = income already allocated to that bracket.  Partial (gradient) shows the bracket where your taxable income ends.  Use <b>Room in Bracket</b> for short-term gains (they stack with ordinary income at ${(currentRate * 100).toFixed(0)}%); use <b>LTCG Headroom</b> for long-term gains — the amount you can realize at the current ${est.marginal_long != null ? (est.marginal_long * 100).toFixed(0) + '%' : ''} LTCG rate before the next tier bites.
       </div>
     </div>
   `;
@@ -878,21 +886,6 @@ function renderTax() {
     </div>
 
     <div class="section-header" style="margin-top:24px;">
-      <h2><span style="color:var(--accent);">Potential Wash Sales</span></h2>
-      <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">sold at a loss + bought same symbol within 30 days</span>
-    </div>
-    <div class="panel">
-      <table class="mini-table">
-        <thead><tr><th>Sell Date</th><th>Symbol</th><th class="num">Loss</th><th>Offending Buy</th></tr></thead>
-        <tbody>${washRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">No potential wash sales detected.</td></tr>'}</tbody>
-      </table>
-      <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">
-        Heuristic check: exact-symbol match only.  The IRS definition of "substantially identical"
-        is broader (includes options on the same underlying, some ETFs, etc.) — treat as a heads-up, not a rule.
-      </div>
-    </div>
-
-    <div class="section-header" style="margin-top:24px;">
       <h2><span style="color:var(--accent);">Long-Term Eligibility by Asset</span></h2>
       ${ltSummary}
     </div>
@@ -907,6 +900,22 @@ function renderTax() {
         click a column header to sort.  Yellow rows have a lot crossing into long-term within 60
         days — selling those sooner means paying the higher ordinary-income rate.  Retirement
         accounts are excluded (tax-deferred — the short/long distinction doesn't apply).
+        Pairs with the Harvest Candidates above: harvest now, or wait N days for LT treatment.
+      </div>
+    </div>
+
+    <div class="section-header" style="margin-top:24px;">
+      <h2><span style="color:var(--accent);">Potential Wash Sales</span></h2>
+      <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">sold at a loss + bought same symbol within 30 days</span>
+    </div>
+    <div class="panel">
+      <table class="mini-table">
+        <thead><tr><th>Sell Date</th><th>Symbol</th><th class="num">Loss</th><th>Offending Buy</th></tr></thead>
+        <tbody>${washRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">No potential wash sales detected.</td></tr>'}</tbody>
+      </table>
+      <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">
+        Heuristic check: exact-symbol match only.  The IRS definition of "substantially identical"
+        is broader (includes options on the same underlying, some ETFs, etc.) — treat as a heads-up, not a rule.
       </div>
     </div>
 

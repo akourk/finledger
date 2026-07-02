@@ -81,6 +81,11 @@ function renderPlanning() {
 
     ${_buildMonteCarloSection()}
   `;
+
+  // Year-by-Year table (goal tracking: balances vs targets + savings
+  // rate) — its containers live in the tab-planning markup below
+  // #planningContent, so re-render alongside the rest of the tab.
+  if (typeof renderAnnualBreakdown === 'function') renderAnnualBreakdown();
 }
 
 // Re-render Planning when the projection-age / contribution inputs change

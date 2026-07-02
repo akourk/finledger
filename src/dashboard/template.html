@@ -76,16 +76,6 @@
     </div>
   </div>
 
-  <!-- Year-by-year financial overview: pivot table with accounts as
-       columns, year-end balance + Δ% + Δ$ (and contributions on
-       expand) per cell.  Each account header is clickable to expand
-       three additional contribution columns inline. -->
-  <div class="section-header" id="annualBreakdownHeader" style="margin-top:24px;">
-    <h2><span style="color:var(--accent);">Year by Year</span></h2>
-    <span class="as-of-hint" style="margin-left:auto;">Click an account name to expand contribution columns.</span>
-  </div>
-  <div class="annual-breakdown-wrap" id="annualBreakdown"></div>
-
   <div class="overview-split">
     <div class="panel" id="topHoldingsPanel">
       <h3>Top Holdings</h3>
@@ -127,14 +117,6 @@
     </div>
   </div>
 
-  <!-- Concentration risk panel (precomputed in analytics.concentration) -->
-  <div class="section-header" style="margin-top:24px;">
-    <h2><span style="color:var(--accent);">Concentration Risk</span></h2>
-    <span class="as-of-hint" style="margin-left:auto;">
-      How much of the portfolio sits in any one position / sector.
-    </span>
-  </div>
-  <div id="concentrationContainer"></div>
 </div>
 
 <!-- ============================ HOLDINGS ============================ -->
@@ -189,27 +171,47 @@
 
   <div id="rebalanceSection"></div>
 
-  <div class="section-header" style="margin-top:32px;" id="basisHeader">
-    <h2><span style="color:var(--accent);">Lot Method Comparison</span></h2>
-    <div class="toggle-group">
-      <button class="tbtn"        id="btnBasisAll"  onclick="setBasisTypeFilter('all')">All</button>
-      <button class="tbtn"        id="btnBasisTax"  onclick="setBasisTypeFilter('Taxable')">Taxable</button>
-      <button class="tbtn active" id="btnBasisRet"  onclick="setBasisTypeFilter('Retirement')">Retirement</button>
-    </div>
+  <!-- Concentration risk panel (precomputed in analytics.concentration).
+       Lives on Holdings — it's a holdings-risk view. -->
+  <div class="section-header" style="margin-top:32px;">
+    <h2><span style="color:var(--accent);">Concentration Risk</span></h2>
+    <span class="as-of-hint" style="margin-left:auto;">
+      How much of the portfolio sits in any one position / sector.
+    </span>
   </div>
-  <div id="basisBody">
-    <div class="table-wrap">
-      <table>
-        <thead><tr id="basisHeaderRow"></tr></thead>
-        <tbody id="basisTbody"></tbody>
-      </table>
+  <div id="concentrationContainer"></div>
+
+  <!-- Lot Method Comparison — collapsed by default.  With per-account
+       lot methods configured in metadata.csv the four-method what-if
+       is a niche view; the summary line carries the headline delta. -->
+  <details class="hist-options-collapsible" id="basisCollapse" style="margin-top:32px;">
+    <summary class="hist-options-summary">
+      <span class="dh-label">Lot Method Comparison</span>
+      <span class="dh-status" id="basisSummaryLine">FIFO vs LIFO / HIFO / Average</span>
+      <span class="dh-hint">click to expand</span>
+    </summary>
+    <div class="section-header" id="basisHeader">
+      <h2><span style="color:var(--accent);">Lot Method Comparison</span></h2>
+      <div class="toggle-group">
+        <button class="tbtn"        id="btnBasisAll"  onclick="setBasisTypeFilter('all')">All</button>
+        <button class="tbtn"        id="btnBasisTax"  onclick="setBasisTypeFilter('Taxable')">Taxable</button>
+        <button class="tbtn active" id="btnBasisRet"  onclick="setBasisTypeFilter('Retirement')">Retirement</button>
+      </div>
     </div>
-    <div class="chart-empty" id="basisNote" style="padding:12px;text-align:left;">
-      Cost basis, realized P&amp;L, and unrealized P&amp;L computed under four lot-selection methods.
-      FIFO is the default used throughout the rest of the dashboard (and the IRS default).
-      LIFO/HIFO are tax-optimization alternatives; <b>Average</b> is the mutual-fund convention.
+    <div id="basisBody">
+      <div class="table-wrap">
+        <table>
+          <thead><tr id="basisHeaderRow"></tr></thead>
+          <tbody id="basisTbody"></tbody>
+        </table>
+      </div>
+      <div class="chart-empty" id="basisNote" style="padding:12px;text-align:left;">
+        Cost basis, realized P&amp;L, and unrealized P&amp;L computed under four lot-selection methods.
+        FIFO is the default used throughout the rest of the dashboard (and the IRS default).
+        LIFO/HIFO are tax-optimization alternatives; <b>Average</b> is the mutual-fund convention.
+      </div>
     </div>
-  </div>
+  </details>
 
 </div>
 
@@ -256,6 +258,16 @@
 <!-- ============================ PLANNING ============================ -->
 <div id="tab-planning" class="tab-panel">
   <div id="planningContent"><div class="tab-placeholder">Planning tab — rendered on activation.</div></div>
+
+  <!-- Year-by-year financial overview: pivot table with accounts as
+       columns, year-end balance + Δ% + Δ$ (and contributions on
+       expand) per cell.  Lives on Planning — it's goal tracking
+       (targets, savings rate) rather than a portfolio snapshot. -->
+  <div class="section-header" id="annualBreakdownHeader" style="margin-top:24px;">
+    <h2><span style="color:var(--accent);">Year by Year</span></h2>
+    <span class="as-of-hint" style="margin-left:auto;">Click an account name to expand contribution columns.</span>
+  </div>
+  <div class="annual-breakdown-wrap" id="annualBreakdown"></div>
 </div>
 
 <!-- ============================ INCOME ============================ -->

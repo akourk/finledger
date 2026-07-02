@@ -27,6 +27,7 @@ from ._shared import (
     bridge_adjustment, net_cash_flow,
     contributions_by_year,
     compute_annual_returns, compute_twr_summary, compute_twr_daily_summary,
+    compute_money_weighted_return,
 )
 from .alerts import compute_alerts
 from .changes import compute_changes
@@ -74,6 +75,10 @@ def build_analytics(txns: list[dict], history: list[dict],
         entry = {
             "annual":  compute_annual_returns(txns, history, bridges, filt),
             "summary": compute_twr_summary(txns, history, bridges, filt),
+            # Money-weighted (XIRR) alongside TWR: what the user's
+            # dollars earned, contribution timing included.
+            "money_weighted": compute_money_weighted_return(
+                txns, history, bridges, filt),
             "filter_groups": sorted(filt) if filt else None,
         }
         # True-Daily-TWR for retirement filters only.  See
@@ -245,9 +250,37 @@ def build_analytics(txns: list[dict], history: list[dict],
         cusip_collisions=rename_for_alerts,
     )
 
+    # Latest annual-expenses figure (drives FIRE + income expense
+    # coverage).  Most-recent entry wins, matching the FI-threshold rule.
+    _ann_exp_list = rm.get("annual_expenses") or []
+    latest_annual_expenses = None
+    if _ann_exp_list:
+        _latest_exp = max(_ann_exp_list, key=lambda x: x.get("date", ""))
+        if _latest_exp.get("amount"):
+            latest_annual_expenses = float(_latest_exp["amount"])
+
+    # "vs SPY" as a single dollar delta — the benchmark chart's headline.
+    benchmark_delta = None
+    if history:
+        _last_h = history[-1]
+        _pv = float(_last_h.get("total") or 0)
+        _bv = float(_last_h.get("benchmark_spy") or 0)
+        if _bv > 0:
+            benchmark_delta = {
+                "portfolio": round(_pv, 2),
+                "spy": round(_bv, 2),
+                "delta": round(_pv - _bv, 2),
+                "as_of": _last_h.get("date", ""),
+            }
+
+    from .savings import compute_fees, compute_savings_by_year
+
     out = {
         "rollover_bridges": bridges,
         "retirement_contributions_by_year": contribs_yr,
+        "savings_by_year":  compute_savings_by_year(txns, retirement_meta),
+        "fees":             compute_fees(txns),
+        "benchmark_delta":  benchmark_delta,
         "performance_by_filter": performance_by_filter,
         "options": compute_options_analytics(txns),
         "crypto": compute_crypto_analytics(txns, holdings),
@@ -267,7 +300,9 @@ def build_analytics(txns: list[dict], history: list[dict],
         "drawdown":        compute_drawdown(history, bridges),
         "daily_pnl":       compute_daily_pnl(history, txns),
         "trading_heatmap": compute_trading_heatmap(txns),
-        "income_calendar": compute_income_calendar(txns, holdings_by_account),
+        "income_calendar": compute_income_calendar(
+            txns, holdings_by_account,
+            annual_expenses=latest_annual_expenses),
         "monthly_pnl":     compute_monthly_pnl(history, txns, bridges),
         "monte_carlo":     monte_carlo,
         "changes":         changes,

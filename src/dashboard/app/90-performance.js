@@ -778,65 +778,11 @@ function _buildDrawdownSection() {
   `;
 }
 
-// --- Trading activity heatmap (Performance tab) ----------------------------
-function _buildTradingHeatmapSection() {
-  const hm = ANALYTICS.trading_heatmap || {};
-  const rows = hm.by_date || [];
-  if (!rows.length) return '';
-  const maxCount = hm.max_count || 1;
-  const byDate = {};
-  rows.forEach(r => { byDate[r.date] = r; });
-
-  // Range: one year back from last_date
-  const lastStr = hm.last_date || rows[rows.length - 1].date;
-  const lastD = new Date(lastStr + 'T00:00:00');
-  const startD = new Date(lastD);
-  startD.setFullYear(startD.getFullYear() - 1);
-  // Align start to the Sunday of its week so columns line up cleanly
-  while (startD.getDay() !== 0) startD.setDate(startD.getDate() - 1);
-
-  const cells = [];
-  const d = new Date(startD);
-  while (d <= lastD) {
-    const iso = d.toISOString().slice(0, 10);
-    const rec = byDate[iso];
-    let lvl = 0;
-    if (rec && rec.count > 0) {
-      const ratio = rec.count / maxCount;
-      if (ratio > 0.75) lvl = 4;
-      else if (ratio > 0.5) lvl = 3;
-      else if (ratio > 0.25) lvl = 2;
-      else lvl = 1;
-    }
-    const tip = rec
-      ? `${iso}: ${rec.count} trades, ${fmtMoney(rec.volume, 0)}`
-      : `${iso}: no trades`;
-    cells.push(`<div class="heatmap-cell l${lvl}" title="${_htmlEsc(tip)}"></div>`);
-    d.setDate(d.getDate() + 1);
-  }
-
-  const legend = `<div class="heatmap-legend">
-    <span>Less</span>
-    <span class="swatch heatmap-cell"></span>
-    <span class="swatch heatmap-cell l1"></span>
-    <span class="swatch heatmap-cell l2"></span>
-    <span class="swatch heatmap-cell l3"></span>
-    <span class="swatch heatmap-cell l4"></span>
-    <span>More</span>
-    <span style="margin-left:auto;">${hm.total_trades || 0} trades total</span>
-  </div>`;
-
-  return `
-    <div class="section-header" style="margin-top:24px;">
-      <h2><span style="color:var(--accent);">Trading Activity</span></h2>
-      <span class="as-of-hint" style="margin-left:auto;">Buy/sell/reinvest/convert counts per day — last 12 months.</span>
-    </div>
-    <div class="heatmap-wrap">
-      <div class="heatmap-grid">${cells.join('')}</div>
-      ${legend}
-    </div>
-  `;
-}
+// --- Trading activity heatmap: REMOVED -------------------------------------
+// A GitHub-style graph of trade counts rewards activity — the opposite
+// of what a buy-and-hold tracker should emphasize.  The analytics
+// (analytics.trading_heatmap) still ship in the JSON for anyone who
+// wants the data; only the UI section was dropped.
 
 // Single source of truth for windowed performance metrics on the
 // Performance tab.  Returns ``{cum, ann, sharpe, sortino, mdd,
@@ -1224,6 +1170,20 @@ function renderPerformance() {
     { label: 'Realized', value: fmtSigned(_whole_realized) },
     { label: 'Unrealized', value: fmtSigned(_whole_unrealized) },
     { label: 'Net Contributed', value: fmtMoney(_whole_netContrib) },
+    (() => {
+      // Lifetime broker fees/spread — parsed on every txn, aggregated
+      // in analytics.fees.  Tooltip carries the per-account breakdown.
+      const fees = ANALYTICS.fees || {};
+      const byAcct = fees.by_account || {};
+      const breakdown = Object.entries(byAcct)
+        .map(([a, v]) => `${a}: ${fmtMoney(v)}`).join('\n');
+      return {
+        label: 'Fees Paid',
+        value: fmtMoney(fees.total || 0),
+        title: 'Lifetime broker fees / spread across all transactions.'
+          + (breakdown ? '\n\n' + breakdown : ''),
+      };
+    })(),
   ];
 
   // Row 4 — same metrics, but filtered + windowed.  Plus Cumulative
@@ -1415,6 +1375,30 @@ function renderPerformance() {
       cls: acctDaily.cumulative >= 0 ? 'positive' : 'negative',
     });
   }
+  // Money-weighted return (XIRR) — precomputed server-side over the
+  // natural window per filter.  TWR measures the portfolio; XIRR
+  // measures what the user's DOLLARS earned, contribution timing
+  // included.  The gap between them is the "behavior gap".
+  const acctXirr = (!perfWindowCustom && performanceWindow === 'lifetime'
+    && ANALYTICS_PERF[analyticsFilt])
+    ? (ANALYTICS_PERF[analyticsFilt].money_weighted || null)
+    : null;
+  if (acctXirr && acctXirr.annualized != null) {
+    const gapNote = (acctTwr && acctTwr.annualized != null)
+      ? (acctXirr.annualized >= acctTwr.annualized
+        ? 'Above TWR: your contribution timing HELPED.'
+        : 'Below TWR: your contribution timing HURT (money tended to arrive before dips).')
+      : '';
+    acctSummaryCards.push({
+      label: acctLabel + ' — Money-Weighted (XIRR)',
+      value: fmtPctSigned(acctXirr.annualized) + ' <span class="sub">ann.</span>',
+      cls: acctXirr.annualized >= 0 ? 'positive' : 'negative',
+      title: 'What YOUR dollars earned per year, contribution timing included '
+        + `(TWR deliberately ignores timing).  ${gapNote}\n`
+        + `Window: ${acctXirr.start_date} → ${acctXirr.end_date}; `
+        + `total invested ${fmtMoney(acctXirr.total_invested)}.`,
+    });
+  }
   acctSummaryCards.push(
     {
       label: 'SPY — same period',
@@ -1439,7 +1423,8 @@ function renderPerformance() {
   );
   const acctSummaryHtml = '<div class="stats">' + acctSummaryCards.map(c => {
     const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
-    return `<div class="${cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
+    const titleAttr = c.title ? ` title="${_htmlEsc(c.title)}"` : '';
+    return `<div class="${cls}"${titleAttr}><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
   }).join('') + '</div>';
 
   // No per-section window/account selectors anymore — both live at
@@ -1757,6 +1742,18 @@ function renderPerformance() {
   root.innerHTML = `
     ${statsHtml}
 
+    <div class="toggles-card" style="margin-top:16px;">
+      <div class="toggles-row">
+        <span class="toggles-label">View:</span>
+        <div class="toggle-group">
+          <button class="tbtn${_perfView === 'returns' ? ' active' : ''}" id="perfViewBtnReturns" onclick="setPerfView('returns')">Returns</button>
+          <button class="tbtn${_perfView === 'risk' ? ' active' : ''}" id="perfViewBtnRisk" onclick="setPerfView('risk')">Risk</button>
+        </div>
+        <span class="toggles-hint">Returns: benchmark comparison, per-account TWR, winners &amp; losers.  Risk: drawdown, monthly P&amp;L, daily moves.</span>
+      </div>
+    </div>
+
+    <div id="perfViewReturns" style="${_perfView === 'returns' ? '' : 'display:none;'}">
     <div class="section-header" style="margin-top:24px;">
       <h2><span style="color:var(--accent);">Your Portfolio vs SPY Benchmark</span></h2>
     </div>
@@ -1813,11 +1810,6 @@ function renderPerformance() {
       </div>
     </div>
 
-    ${_buildDailyPnlSection()}
-    ${_buildMonthlyPnlSection()}
-    ${_buildDrawdownSection()}
-    ${_buildTradingHeatmapSection()}
-
     <div class="overview-split" style="margin-top:24px;">
       <div class="panel">
         <h3>Top 10 Winners</h3>
@@ -1840,7 +1832,30 @@ function renderPerformance() {
         </table>
       </div>
     </div>
+    </div>
+
+    <div id="perfViewRisk" style="${_perfView === 'risk' ? '' : 'display:none;'}">
+    ${_buildDrawdownSection()}
+    ${_buildMonthlyPnlSection()}
+    ${_buildDailyPnlSection()}
+    </div>
   `;
+}
+
+// Returns ↔ Risk sub-view for the Performance tab.  Both views render
+// into the DOM (string-built SVGs scale via viewBox), so switching is a
+// pure display toggle — no chart re-render needed.
+let _perfView = 'returns';
+function setPerfView(v) {
+  _perfView = v === 'risk' ? 'risk' : 'returns';
+  const ret = document.getElementById('perfViewReturns');
+  const risk = document.getElementById('perfViewRisk');
+  if (ret) ret.style.display = _perfView === 'returns' ? '' : 'none';
+  if (risk) risk.style.display = _perfView === 'risk' ? '' : 'none';
+  const bR = document.getElementById('perfViewBtnReturns');
+  const bK = document.getElementById('perfViewBtnRisk');
+  if (bR) bR.classList.toggle('active', _perfView === 'returns');
+  if (bK) bK.classList.toggle('active', _perfView === 'risk');
 }
 
 registerTabRenderer('performance', renderPerformance);
