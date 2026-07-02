@@ -1051,6 +1051,30 @@ function renderPerformance() {
     if (_winUpperIso && d > _winUpperIso) return s;
     return s + (t.realized_gain || 0);
   }, 0);
+  // Portion of that realized figure that comes from custodial-rollover
+  // liquidations (Distribution rows on IRA groups): when a custodian
+  // sells everything to wire the account elsewhere, FIFO books the
+  // market-value-vs-basis gap as "realized" on that one day.  That's
+  // correct lot bookkeeping but has no tax meaning inside the wrapper
+  // and reads as "I lost $X trading" — the recovery lives in the
+  // replacement lots' unrealized.  Surfaced as context on the card
+  // when it dominates the number.
+  const _ROLLOVER_GROUPS_JS = new Set(['Roth IRA', 'Rollover IRA']);
+  let rolloverRealized = 0;
+  const rolloverDates = new Set();
+  for (const t of txns) {
+    if (!_aggMatchesTxn(t)) continue;
+    const d = t.date || '';
+    if (_winLowerIso && d <= _winLowerIso) continue;
+    if (_winUpperIso && d > _winUpperIso) continue;
+    if (t.action !== 'Distribution') continue;
+    if (!_ROLLOVER_GROUPS_JS.has(t.account_group)) continue;
+    if (!t.realized_gain) continue;
+    rolloverRealized += t.realized_gain;
+    if (d) rolloverDates.add(d);
+  }
+  const rolloverDominates = Math.abs(rolloverRealized) >= 100
+    && Math.abs(rolloverRealized) >= Math.abs(totalRealized) * 0.5;
   // Net contributed in window: sum per-txn cash_flow over the same
   // filter+window.
   const netContrib = txns.reduce((s, t) => {
@@ -1200,10 +1224,19 @@ function renderPerformance() {
       title: `Dollar return over the window for the active filter — Modified Dietz numerator: end value − start value − net cash flow.  Window: ${performanceWindow}.`
     },
     {
-      label: `Realized <span class="sub">${_winLabel}</span>`,
+      label: `Realized <span class="sub">${_winLabel}</span>`
+        + (rolloverDominates ? ' <span class="sub" style="color:var(--yellow);">incl. rollover</span>' : ''),
       value: fmtSigned(totalRealized),
       cls: totalRealized >= 0 ? 'positive' : (totalRealized < 0 ? 'negative' : ''),
       title: `Realized gains for the active filter, on txns dated within the window.  Window: ${performanceWindow}.`
+        + (rolloverDominates
+          ? `\n\n${fmtSigned(rolloverRealized)} of this is the custodial-rollover liquidation`
+            + ` (${[...rolloverDates].sort().join(', ')}) — the custodian sold everything to`
+            + ` transfer the account, crystallizing market-value-vs-contributions on that day.`
+            + ` Bookkeeping, not a taxable event (retirement wrapper); the recovery since`
+            + ` shows up as UNREALIZED gain on the replacement lots, so this figure stays`
+            + ` fixed no matter how the account performs.`
+          : '')
     },
     {
       label: `Unrealized <span class="sub">${_winLabel}</span>`,

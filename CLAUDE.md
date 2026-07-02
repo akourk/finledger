@@ -119,13 +119,38 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     - `rollover_bridges` — Distribution→Transfer-In pairs (custodian
       moves) with 90-day / 5% tolerance matching. Consumers apply a
       bridge adjustment to effective balance during the window.
+      Robust to real-world shapes: same-group Distribution legs within
+      7 days merge into one event (one bridge row per leg, starting
+      when its cash left); when no single Transfer In matches, the SUM
+      of all unused in-window Transfer Ins is tried (one bridge row per
+      wire, stepping down as each lands); amount-less Transfer In rows
+      fall back to USD qty / qty×price.  Consumers: TWR + annual
+      returns + XIRR, the JS history chart, AND `drawdown` +
+      `monthly_pnl` (both take `bridges`).  A Roth/Rollover
+      Distribution ≥$1k with no covering bridge trips the
+      `unbridged_retirement_distribution` data-health warning — the
+      first place to look when the history chart shows an account
+      dipping to $0 around a custodian transfer.
     - `retirement_contributions_by_year` — tax-year-attributed
       contributions (USAA PRIOR YEAR handled). 401K and Rollover IRA
       merged since Rollover IRA is legacy 401K.
-    - `performance_by_filter` — per-filter (Total, Retirement,
-      Robinhood, Coinbase, 401K, Roth IRA, Rollover IRA, Apple Savings)
-      dict of `{annual: [...], summary: {...}, filter_groups: [...]}`.
-      Uses Modified Dietz per sub-period with bootstrap-noise guards.
+    - `performance_by_filter` — per-filter (Total, Investments,
+      Retirement, Taxable, per-account) dict of `{annual: [...],
+      summary: {...}, money_weighted: {...}, filter_groups: [...]}`.
+      `summary` is Modified-Dietz TWR chained per sub-period with
+      bootstrap-noise guards; `money_weighted` is XIRR over the same
+      natural window and flow rules (what the user's DOLLARS earned,
+      contribution timing included — shown beside TWR on the
+      Performance tab to surface the behavior gap).
+    - `savings_by_year` — per-year `{gross_income, net_contributed,
+      savings_rate_pct}` (salary + bonus from metadata vs external net
+      contributions; `analytics/savings.py`).  Drives the Sav% column
+      in the Year-by-Year table on Planning.
+    - `fees` — `{total, by_year, by_account}` rollup of per-txn broker
+      fees/spread (`analytics/savings.py`).  "Fees Paid" card on
+      Performance.
+    - `benchmark_delta` — latest-snapshot `{portfolio, spy, delta,
+      as_of}` dollar comparison vs the SPY-equivalent simulation.
     - `options` — open_contracts, closed_trades (with parsed
       underlying/expiry/type/strike + hold_days), by_underlying,
       annual_summary, cumulative_pnl, stats.
@@ -147,7 +172,16 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       `is_projection` flag with `year_fraction_observed` for the
       current year (salary, bonuses, dividends, and 401K extrapolated
       from YTD pace; 401K capped at IRS limit; realized gains kept
-      YTD-only since sells are lumpy).
+      YTD-only since sells are lumpy).  AGI/MAGI rules: portfolio
+      income counts NON-retirement accounts only (IRA/401K dividends
+      never hit AGI; Savings interest does); the 401K deduction skips
+      employer match / "match" descriptions and nets Contribution
+      Reversals.  Also emits `ltcg_headroom` / `ltcg_next_rate` ($ of
+      additional LT gain realizable before the LTCG rate steps up) and
+      `niit_headroom` / `niit_threshold` — shown in the Tax tab's
+      bracket panel.  ST/LT classification is calendar-correct via
+      `_is_long_term` (anniversary + 1 day; a sale exactly on the
+      one-year anniversary is short-term even across Feb 29).
     - `rebalancing` — Target vs Actual sector-allocation drift
       (`{rows: [{bucket, target_pct, current_pct, drift_pct,
       action_value}], untargeted_pct, ...}`) from `Target Allocation`
@@ -183,18 +217,23 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       index, top-5 share, and risk flags.
     - `drawdown` — series of `{date, drawdown_pct, running_peak,
       value}`, max-drawdown window with peak/trough/recovery dates,
-      and current_drawdown_pct.
+      and current_drawdown_pct.  Takes `bridges` — a custodial
+      rollover's in-flight window is not a drawdown.
     - `daily_pnl` — list of `{date, value, change, change_pct}` for
       the last 30 calendar days, walking back from today's positions
       and re-pricing at recent dates (market-only moves; same-day
       cash flows excluded).
-    - `trading_heatmap` — per-day trade counts + dollar volume for
-      the calendar heatmap on the Performance tab.
+    - `trading_heatmap` — per-day trade counts + dollar volume.
+      Still exported, but the dashboard section was REMOVED (a trade-
+      count graph rewards activity — wrong emphasis for buy-and-hold).
     - `income_calendar` — 12-month dividend / interest forecast per
-      held position (flat extrapolation of the last trailing 12mo).
+      held position (flat extrapolation of the last trailing 12mo),
+      plus `expense_coverage_pct` (TTM income ÷ latest `Annual
+      Expenses` metadata row — the "Covers Expenses" FIRE card on
+      Income; `None` without the metadata row).
     - `monthly_pnl` — year × month grid of investment returns
       (start/end snapshot delta minus net_contributed delta) plus
-      Sharpe / Sortino ratios.  Ratios filter on (start_value ≥ 1%
+      Sharpe / Sortino ratios.  Takes `bridges` (see rollover_bridges).  Ratios filter on (start_value ≥ 1%
       of all-time peak) AND (|return| ≤ 50%) — a self-scaling
       denominator gate plus a magnitude sanity cap that protects
       against parser-induced data artifacts.  Best/worst-month
@@ -202,8 +241,11 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     - `monte_carlo` — `{retirement, all_accounts, fi_threshold,
       annual_expenses}`.  Both scenarios run 1000 trials with seed=42
       (deterministic), 8% mean / 16% stdev returns on the equity
-      bucket, deterministic 4% yield on a cash bucket (Savings + USD
-      positions), trailing-3-year average annual contribution.
+      bucket, deterministic 4% yield on a cash bucket (= the Cash
+      SECTOR only — it already contains all USD positions incl.
+      Savings; adding the Savings groups on top double-counted the
+      HYSA and inverted the split), trailing-3-year average annual
+      contribution.
       `all_accounts` carries a `fire` sub-dict with the year each
       percentile band first crosses `fi_threshold = annual_expenses
       × 25` (4% rule).
@@ -245,6 +287,21 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     show arbitrary-date holdings / unrealized P&L without a JS replay
     of the basis walker.  Dust filter on `positions` mirrors main.py's
     `_is_dust` so counts match the current holdings table exactly.
+
+    **INVARIANT — the snapshot lot walker mirrors `basis._walk`.**
+    history.py keeps its own inline lot walker (it needs lot state at
+    every sample date), and basis-rule changes have TWICE landed in
+    basis.py without the matching history.py change (wrap
+    basis-carrying, FMV transfer-ins) — silently desyncing the
+    Overview Cost Basis line from the Holdings table.  It now reuses
+    `basis._consume_lots` / `_pair_wraps` / `_rescale_lots`, honours
+    `basis_override`, gives unpaired transfer-ins FMV basis, and takes
+    `account_methods` (per-account FIFO/LIFO/HIFO — main.py and the
+    refresh path both pass `retirement_meta["lot_methods"]`).  The
+    `history_holdings_basis_parity` data-health check (high severity,
+    enforced in tests) pins the two walkers together — **if you change
+    a basis rule, change BOTH walkers** (see the `fin-lot-walker-sync`
+    skill).
 15. **Export** (`export.export_json`) — JSON with a fixed field order so
     dashboard columns stay logical.
 16. **Dashboard** (`dashboard.generate_dashboard`) — string-interpolate the
@@ -252,17 +309,21 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     single HTML file. One file, no external assets. The dashboard is
     organized as a **tabbed single-page app** with hash routing:
 
-    - **Overview** — alerts/changes/reconciliation feedback panels
-      (collapse if empty; reconciliation shows fin vs broker-reported
-      figures with ok/warn/off status — see `analytics.reconciliation`),
-      stat cards (Value, Cost Basis, Unrealized/Realized P&L, Net
-      Contributed, Income, Total Return, Current Drawdown), history
-      chart with overlay toggles (Cost Basis, Unrealized Gain, SPY
-      Benchmark, Net Contributed, Year-over-Year), top 10 holdings,
-      recent 15 transactions, allocation donut (by account / type /
-      sector), concentration grid (positions/sectors/accounts).
-    - **Holdings** — holdings table (by asset/account/type/sector) +
-      lot method comparison table.
+    - **Overview** — deliberately slim: "what am I worth, how is it
+      changing, is anything wrong."  Alerts/changes/reconciliation
+      feedback panels (collapse if empty; reconciliation shows fin vs
+      broker-reported figures with ok/warn/off status — see
+      `analytics.reconciliation`), stat cards, history chart with
+      overlay toggles (Cost Basis, Unrealized Gain, SPY Benchmark,
+      Net Contributed, Year-over-Year), top holdings, recent 8
+      transactions (+ view-all link), allocation donut (by account /
+      type / sector).  Concentration moved to Holdings; Year-by-Year
+      moved to Planning.
+    - **Holdings** — holdings table (by asset/account/type/sector),
+      Target vs Actual, concentration grid (positions/sectors/
+      accounts; one global HHI on the positions card only), and the
+      lot-method comparison table (collapsed `<details>` — the
+      summary line carries the FIFO-vs-alternative realized delta).
     - **Transactions** — full ledger with filters, search, column toggle.
     - **Options** — lifetime P&L, win rate, cumulative P&L chart, open
       contracts, closed trades, per-underlying breakdown (with cross-
@@ -275,40 +336,55 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       content (projection, Monte Carlo, FIRE) lives on the **Planning**
       tab to keep this tab focused on account-specific facts.
     - **Planning** — scenario projection (5%/7%/9%/personal-rate),
-      Monte Carlo with All-Accounts ↔ Retirement-Only toggle (uses
-      equity bucket at 8% / 16% normal returns and a deterministic
-      cash bucket at 4% yield for Savings + USD positions; FI
-      threshold dashed line drawn on All-Accounts mode), FIRE
-      section (4% rule × `Annual Expenses` from
-      `data/metadata.csv` → FI number; FI Progress, Coast FI,
-      P(reach FI in window), per-percentile FI date table).
-    - **Income** — stat cards, 12-month total cash-flow forecast
+      Monte Carlo with All-Accounts ↔ Retirement-Only toggle (equity
+      bucket at 8% / 16% normal returns, deterministic cash bucket at
+      4%; FI threshold dashed line on All-Accounts mode), FIRE
+      section (4% rule × `Annual Expenses` from `data/metadata.csv`
+      → FI number; FI Progress, Coast FI, P(reach FI in window),
+      per-percentile FI date table), and the **Year-by-Year** table
+      (year-end balances per account with Δ%/Δ$, expandable
+      contribution columns, Target vs actual, and the Sav% savings-
+      rate column from `analytics.savings_by_year`).
+    - **Income** — stat cards (incl. "Covers Expenses" — TTM passive
+      income ÷ annual expenses), 12-month total cash-flow forecast
       (salary + bonuses + projected dividends − projected retirement
       contributions), 12-month dividend / interest forecast per held
       position, annual summary, monthly chart, by-source table.
     - **Tax** — grouped into "Forward planning — actionable today"
       (Tax Rates & Income panel with override inputs, Tax Bracket
-      Fill bar, Tax-Loss Harvest Candidates, Potential Wash Sales)
-      and "Historical realizations" (Realized Gains by Year, By
-      Asset).  §1256 columns are conditional — only rendered when
+      Fill bar with ordinary Room-in-Bracket + LTCG Headroom + NIIT
+      Headroom, Tax-Loss Harvest Candidates, Long-Term Eligibility —
+      adjacent because they're one decision: harvest now vs wait for
+      LT — then Potential Wash Sales) and "Historical realizations"
+      (Realized Gains by Year, By Asset).  §1256 columns are conditional — only rendered when
       any year/symbol has §1256 activity.  Section 1256 underlyings
       hardcoded in `dashboard/app.js` (SPX, NDX, NDXP, SPXW, XSP,
       RUT, DJX, VIX) get 60% LT / 40% ST regardless of holding
       period.
     - **Crypto** — per-coin holdings + realized + income, recent
       activity, conversion/wrap log.
-    - **Performance** — stat cards (Total Gain, Realized, Unrealized,
-      Net Contributed, Sharpe, Sortino), Your Portfolio vs SPY/BND/
-      VXUS/60-40 multi-benchmark chart, Annual Returns table, By
-      Account TWR section, Recent Daily P&L bars, Monthly P&L
-      year×month heatmap (with YTD column + best/worst-month
-      summary), Drawdown chart, Trading Activity heatmap, Top 10
-      Winners / Losers.
+    - **Performance** — anchor stat cards (Total Return, Realized,
+      Unrealized, Net Contributed, **Fees Paid**), account + window
+      selectors, filtered/windowed cards (incl. Sharpe/Sortino/Calmar/
+      MaxDD), then a **Returns ↔ Risk sub-toggle** (`setPerfView`;
+      both views render into the DOM, switching is a pure display
+      toggle).  Returns view: Your Portfolio vs SPY/BND/VXUS/60-40
+      multi-benchmark chart, By-Account TWR section (Mod-Dietz +
+      daily TWR for retirement filters + **Money-Weighted XIRR** with
+      behavior-gap tooltip), Annual Returns table, Top 10 Winners /
+      Losers.  Risk view: Drawdown chart, Monthly P&L year×month
+      heatmap (YTD column footnoted — compounded monthly vs the
+      Annual table's Modified Dietz), Recent Daily P&L bars.
+      (Trading Activity heatmap was removed from the UI.)
 
     Each tab's renderer is registered with `registerTabRenderer(name,
     fn)` and runs lazily on first activation. The Overview tab renders
     immediately on load. URL hash (`#options`, `#planning`, …)
-    deep-links and persists across reload.
+    deep-links and persists across reload.  Tabs with no underlying
+    activity (Options with zero contracts ever, Crypto with zero
+    crypto txns) auto-hide their nav buttons (`hideEmptyTabs` in
+    `app/10-holdings.js`); the panels stay in the DOM so deep links
+    still resolve.
 
 ## Invariants the code relies on
 
@@ -346,7 +422,11 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
 - **ETH ↔ ETH2 Coinbase conversions are Neutral** (same underlying asset,
   just the old staking wrapper; ETH2→ETH-USD via SYMBOL_MAP). Other
   *different-asset* conversions (Convert In/Out, e.g. BTC→ETH) synthesize a
-  paired `Convert In` leg and ARE taxable disposals.
+  paired `Convert In` leg and ARE taxable disposals.  **The synthesized
+  Convert In leg carries the conversion's USD value as its amount +
+  implied price (FMV basis)** — a $0-amount leg would give the acquired
+  asset $0 basis and realize the entire converted value AGAIN at the
+  eventual sale, double-counting the gain vs the broker's 1099-DA.
 - **Wrap / Unwrap (ETH ↔ CBETH) is basis-CARRYING, not a taxable
   disposal.**  CBETH is its own symbol (`CBETH-USD`), so wrapping crosses
   symbols, but it moves the same underlying — `Wrap Asset In/Out` and
@@ -837,6 +917,15 @@ process.
   are fetched** for a symbol. If you hand-edit the price cache to cover a
   new date range, also clear the corresponding splits entry so the
   backfill loop refetches it.
+- **A CHANGED split history invalidates the symbol's price cache**
+  (`prices._invalidate_prices_for_split_change`, called from both
+  `revalidate_stale_caches` and `ensure_coverage`'s fetch-time splits
+  refresh).  yfinance rescales the ENTIRE historical Close series when
+  a split happens, so previously-cached values are stranded in the
+  pre-split basis while `split_factor_since` assumes uniform
+  today-basis — mixing them mis-values every pre-split snapshot by the
+  split ratio.  First-time splits *backfills* deliberately do NOT
+  invalidate (those cached prices already reflect the old splits).
 - **Weekend / holiday lookup walks backward** up to 7 days. Outside that
   window, `get_price` returns None and `compute_history` silently skips
   the position (reflected in `priced_pct`). Don't "fix" this with

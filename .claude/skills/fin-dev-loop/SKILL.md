@@ -115,6 +115,54 @@ assuming a syntax-clean diff worked.
   `K401_LIMIT_BY_YEAR` and 401k logic, but that too now flows through
   `tax_tables`.)
 
+## Browser smoke test — for template / tab-structure / renderer changes
+
+The bundling test proves the splice; it does NOT prove the page runs.
+Anything that moves template containers, renames element ids, or changes
+tab renderers deserves a live check (a missing `getElementById` target
+fails silently or halts the script).
+
+1. **Syntax gate first** (fast, catches concat-order and paren errors):
+
+   ```bash
+   python -c "from pathlib import Path; from src.dashboard import _read_app_js; \
+   Path(r'<TMP>/fin-appjs-check.js').write_text(_read_app_js(), encoding='utf-8')"
+   node --check "<TMP>/fin-appjs-check.js"
+   ```
+
+2. **Serve the SCRATCH exports dir** (never the real `exports/`) and open
+   `dashboard.html` in the preview browser:
+
+   ```bash
+   python -m http.server 8791 --directory "$SCRATCH/exports"
+   ```
+
+3. In the browser console (or preview-eval), check for errors, then
+   drive every tab in one shot — `activateTab` is global:
+
+   ```js
+   ['performance','planning','holdings','income','tax','retirement',
+    'options','crypto','transactions','overview'].forEach(t => activateTab(t));
+   ```
+
+   Zero console errors after that sweep is the bar.  Then assert the
+   specific thing you changed exists (query the section header text or
+   element id) rather than eyeballing a screenshot — screenshots are for
+   layout only.
+
+Gotchas learned the hard way:
+- The tab router + `ACTION_COLORS` + `activateTab` live in
+  `app/10-holdings.js`, not `00-core.js`; `__JSON_DATA__` and
+  `ANALYTICS` live in `00-core.js`.  Concatenation is filename-order —
+  a new top-level use must come after its definition file.
+- String-built SVG charts that measure their container at render time
+  (e.g. the drawdown chart's `queueMicrotask` +
+  `getBoundingClientRect`) fall back to a fixed width when rendered
+  inside a `display:none` wrapper — fine, they scale via viewBox.
+- The Tax tab's default year filter is the current year; sample data
+  may have no transactions in it, so year-dependent sections
+  legitimately render empty until you `setTaxYearFilter('<year>')`.
+
 ## Before you call a change done
 
 1. `python -m pytest tests/ -q` is green (especially `test_pipeline_snapshot.py`).
