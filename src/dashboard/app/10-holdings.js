@@ -123,7 +123,9 @@ function _rolloverBridgeAdjustment(snapshotDate, filterSet) {
   }
   return adj;
 }
-document.getElementById('generated').textContent = DATA.generated || '';
+// "2026-07-02T07:09:18" → "2026-07-02 07:09" (seconds are noise here)
+document.getElementById('generated').textContent =
+  (DATA.generated || '').replace('T', ' ').slice(0, 16);
 
 // Render the persistent top-bar summary: portfolio value, total
 // return ($ + %), and 1-day change ($ + %).  Reads precomputed

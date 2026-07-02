@@ -31,7 +31,7 @@ by tests alone; only re-run the full pipeline when you need a rendered dashboard
 ### 1. Tests — first resort for almost everything
 
 ```bash
-python -m pytest tests/ -q                       # full suite (~129 tests, fast)
+python -m pytest tests/ -q                       # full suite (~220 tests, fast)
 python -m pytest tests/test_basis_walker.py -q   # one module
 python -m pytest tests/test_pipeline_snapshot.py -q   # end-to-end safety net
 ```
@@ -74,23 +74,26 @@ pipeline — the same mechanism the test suite uses.
 
 ### 3. Dashboard-only changes — re-bundle, don't re-pipeline
 
-The dashboard is `src/dashboard/{template.html,styles.css,app.js}` spliced into
-one HTML file by `src/dashboard/__init__.py` (`generate_dashboard`). `app.js`
-(~7.5K lines) is the place to edit behavior — it gets real editor support
-instead of living in a Python string.
+The dashboard is `src/dashboard/{template.html,styles.css,app/*.js}` spliced
+into one HTML file by `src/dashboard/__init__.py` (`generate_dashboard`). The
+JS lives in `app/` as one module per tab/concern (`00-core.js`,
+`10-holdings.js`, …, `95-transactions.js`), concatenated **in filename order**
+at bundle time — a top-level definition must precede its use, so edit the
+relevant module (or slot a new numbered file between existing ones).
 
 To re-bundle without re-running the pipeline, reuse an existing
 `exports/transactions.json` (from a scratch sample run):
 
 ```bash
-python -c "import json,pathlib; from src.dashboard import generate_dashboard; \
-d=json.load(open('PATH/transactions.json')); \
-generate_dashboard(d, pathlib.Path('PATH/dashboard.html'))"
+# generate_dashboard takes the JSON *path* (not a loaded dict).
+python -c "import pathlib; from src.dashboard import generate_dashboard; \
+generate_dashboard(pathlib.Path('PATH/transactions.json'), \
+pathlib.Path('PATH/dashboard.html'))"
 ```
 
 `tests/test_dashboard_bundling.py` covers the splice mechanics. After editing
-`app.js`, sanity-check it actually renders (the file is multi-MB) rather than
-assuming a syntax-clean diff worked.
+the `app/*.js` modules, sanity-check the bundle actually renders (the file is
+multi-MB) rather than assuming a syntax-clean diff worked.
 
 ## Where things live (so you edit the right file)
 
@@ -99,7 +102,7 @@ assuming a syntax-clean diff worked.
   ordering or balance/sign logic.
 - **Compute-once rule**: any derived figure the dashboard shows is computed in
   `src/analytics/` and embedded in the JSON; the JS consumes it. Do **not** add a
-  recomputation in `app.js` — that pattern has repeatedly produced figures that
+  recomputation in the dashboard JS — that pattern has repeatedly produced figures that
   subtly disagree with the Python. Add it to the right `analytics/` module and
   read it from the JSON in both places.
 - **Action vocabulary**: `src/actions.py` is the single source of truth. Adding an
@@ -109,8 +112,8 @@ assuming a syntax-clean diff worked.
 - **Tax reference data is single-sourced in Python.** The bracket / LTCG /
   standard-deduction / Roth-MAGI / §1256 tables live in `analytics/tax.py`,
   are emitted into the export via `tax_tables_to_json()` (under
-  `DATA.tax_tables`), and `app.js` reads them from there. The literals still in
-  `app.js` are emergency fallbacks only — **add a new tax year in
+  `DATA.tax_tables`), and the JS reads them from there. The literals still in
+  `app/80-tax.js` are emergency fallbacks only — **add a new tax year in
   `analytics/tax.py`, not in the JS.** (One genuine Python+JS pair remains: the
   `K401_LIMIT_BY_YEAR` and 401k logic, but that too now flows through
   `tax_tables`.)

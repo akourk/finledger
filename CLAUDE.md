@@ -808,7 +808,7 @@ threads through every consumer.
   `FIN_PROJECT_ROOT` / `FIN_DATA_DIR` / `FIN_CACHE_DIR` /
   `FIN_EXPORT_DIR` (falling back to repo-relative defaults).  Tests
   use this to redirect the pipeline at a tmp dir.
-- **`tests/`** — pytest suite (~105 tests).  Covers:
+- **`tests/`** — pytest suite (~220 tests).  Covers:
   - Parser corp-action handling (per-broker fixture CSVs)
   - Basis walker math (FIFO/LIFO/HIFO/Average)
   - Ticker rename layer

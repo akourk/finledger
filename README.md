@@ -37,8 +37,9 @@ All screenshots are rendered from the bundled **fictional** sample portfolio
    CSV-precision mismatches.
 8. **Classifies** each holding by sector (yfinance, cached locally).
 9. **Fetches and caches historical prices** for every symbol you've ever
-   held — split- and dividend-adjusted — so portfolio value can be
-   computed at any past date. Delisted / invalid tickers get an
+   held — split-adjusted but not dividend-adjusted, so each cached value
+   matches the actual market close on that date — so portfolio value can
+   be computed at any past date. Delisted / invalid tickers get an
    exponential backoff so failed fetches aren't retried every run.
 10. **Tracks cost basis** per lot (FIFO), realized gain on every sell,
     and unrealized gain on every remaining position — with transfer
@@ -136,7 +137,7 @@ side.  Use this to move your portfolio between machines without copying
 | Apple Savings        | Savings             | filename contains `apple-savings`                   |
 
 You can also drop a `manual-adjustments.csv` for corrections that aren't in
-any broker export (see `src/parsers.py::parse_manual` for the column format).
+any broker export (see `src/parsers/manual.py` for the column format).
 
 ### `metadata.csv` — personal info + project config
 
@@ -161,6 +162,9 @@ is one of:
 | `State Tax Rate`  | Amount = marginal state income-tax rate as a decimal (`0.093`).  Added to the federal marginal for the Tax tab's combined rate + estimated capital-gains tax. |
 | `Target Allocation` | Symbol = sector bucket (`ETFs`, `Cash`, …), Amount = target %.  Drives the Holdings tab's Target vs Actual rebalancing-drift view. |
 | `Retirement Age`  | Amount = integer age (default `67`).  Drives Monte Carlo horizon + Planning tab projection-age default. |
+| `Lot Method`      | Symbol = account group, Note = `FIFO` / `LIFO` / `HIFO` — the lot-relief method that account's broker actually uses (e.g. Coinbase defaults to HIFO).  Affects realized gains / holding period, never balances. |
+| `Cost Basis`      | True cost basis for an off-platform crypto receive fin can't reconstruct.  Symbol = account group, Date = acquired date, Amount = total basis, Note = `"<qty> <asset>"` (optional `#N` to disambiguate). |
+| `Reconcile Balance` / `Reconcile Realized` / `Reconcile Income` / `Reconcile Section 1256` / `Reconcile Other Income` | Broker-reported ground truth (statement balance, 1099-B, 1099-DIV/INT, 1099-MISC) to check fin against — drives the Overview's Reconciliation panel.  Symbol = account group, Date = as-of date (balance) or year, Amount = the broker figure.  `Reconcile Realized` also overrides fin's realized figure in AGI / MAGI / Roth-eligibility math. |
 
 `Account Group` / `Account Type` rows let you onboard a new broker or
 account name without editing `src/config.py`.  Built-in defaults from
@@ -174,17 +178,19 @@ falls back to it when `metadata.csv` is absent.
 The dashboard is a tabbed single-page app (URL hash routing, so
 `dashboard.html#planning` deep-links). Tabs:
 
-- **Overview** — alerts + "what changed since last run" feedback panels,
-  stat cards (Value, Cost Basis, Unrealized/Realized P&L, Net
-  Contributed, Income, Total Return, Current Drawdown), history chart
-  with overlay toggles (Cost Basis, Unrealized Gain, SPY Benchmark, Net
-  Contributed, Year-over-Year), top 10 holdings, recent transactions,
-  allocation donut, concentration grid (positions / sectors / accounts
-  with HHI + top-5 share).
+- **Overview** — persistent top bar (Portfolio Value, Total Return,
+  1-Day Change), alerts / "what changed since last run" /
+  **reconciliation** (fin vs broker-reported figures) feedback panels,
+  stat cards (Cost Basis, Unrealized/Realized P&L, Net Contributed,
+  Income, Current Drawdown), history chart with overlay toggles (Cost
+  Basis, Unrealized Gain, SPY Benchmark, Net Contributed,
+  Year-over-Year), top 10 holdings, recent transactions, allocation
+  donut.
 - **Holdings** — by Asset / Account / Type / Sector, with cost basis and
   unrealized gain columns. Plus a **Target vs Actual** rebalancing-drift
-  view (when `Target Allocation` is set) and a lot method comparison
-  table (FIFO / LIFO / HIFO / Average).
+  view (when `Target Allocation` is set), a concentration grid
+  (positions / sectors / accounts with HHI + top-5 share), and a lot
+  method comparison table (FIFO / LIFO / HIFO / Average).
 - **Transactions** — every row with per-field filters, free-text search,
   symbol filter, and column visibility toggle.
 - **Options** — cumulative P&L chart, open contracts (with DTE), closed
@@ -196,9 +202,11 @@ The dashboard is a tabbed single-page app (URL hash routing, so
 - **Planning** — scenario projection (5% / 7% / 9% / personal historical
   rate), Monte Carlo with All-Accounts ↔ Retirement-Only toggle (1000
   stochastic trials, equity bucket at 8% mean / 16% stdev plus a
-  deterministic 4%-yield cash bucket for Savings / USD), and a FIRE
+  deterministic 4%-yield cash bucket for Savings / USD), a FIRE
   section (4% rule × `Annual Expenses`) with FI Number, FI Progress,
-  Coast FI, P(reach FI in window), and per-percentile FI date table.
+  Coast FI, P(reach FI in window), and per-percentile FI date table,
+  plus the **Year-by-Year** table (year-end balances per account with
+  Δ% / Δ$, contribution columns, targets, and a savings-rate column).
 - **Income** — stat cards, 12-month total cash-flow forecast (salary +
   bonuses + projected dividends − projected retirement contributions),
   12-month dividend / interest forecast per held position, annual
@@ -217,12 +225,14 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   taxable-account disposals.
 - **Crypto** — per-coin holdings, realized & income, recent activity,
   conversion/wrap log.
-- **Performance** — stat cards (Total Gain, Realized, Unrealized, Net
-  Contributed, Sharpe, Sortino), Your Portfolio vs SPY / BND / VXUS /
-  60-40 multi-benchmark chart, Annual Returns + By Account TWR tables,
-  Recent Daily P&L bars, year × month Monthly P&L heatmap (with YTD
-  column + best/worst-month summary), Drawdown chart, Trading Activity
-  calendar heatmap, top 10 winners / losers.
+- **Performance** — anchor stat cards (Total Return, Realized,
+  Unrealized, Net Contributed, Fees Paid), account + window selectors,
+  windowed cards (incl. Sharpe / Sortino / Calmar / Max Drawdown), then
+  a **Returns ↔ Risk** sub-view.  Returns: Your Portfolio vs SPY / BND /
+  VXUS / 60-40 multi-benchmark chart, By-Account TWR (Modified Dietz +
+  money-weighted XIRR), Annual Returns table, top 10 winners / losers.
+  Risk: Drawdown chart, year × month Monthly P&L heatmap (with YTD
+  column + best/worst-month summary), Recent Daily P&L bars.
 
 Dark theme, tabular-numeric formatting, mobile responsive
 (`@media (max-width: 720px)` rules), no JS framework.
@@ -244,6 +254,7 @@ fin/
 │   └── ticker_renames.json     # Hand-curated retroactive ticker renames
 ├── src/
 │   ├── main.py            # CLI entry point & pipeline orchestration
+│   ├── pipeline_stages.py # Pure-function stages shared by main() + refresh
 │   ├── config.py          # Paths (env-var overridable: FIN_*_DIR)
 │   ├── actions.py         # Single source of truth — canonical action catalog
 │   ├── schema.py          # TypedDict shapes (Transaction, Holding, Snapshot)
@@ -261,6 +272,8 @@ fin/
 │   ├── sectors.py         # Sector lookup (cache + yfinance)
 │   ├── prices.py          # Historical price cache (yfinance, backoff)
 │   ├── basis.py           # Cost basis & realized/unrealized gains
+│   ├── cost_basis_overrides.py # Apply metadata `Cost Basis` rows onto lots
+│   ├── coinbase_reconcile.py   # Coinbase quirk fixes (implicit USD wallet)
 │   ├── history.py         # Portfolio value time series
 │   ├── metadata.py        # Parser for data/metadata.csv (birthday,
 │   │                      #   salary, bonuses, expenses, targets,
@@ -285,14 +298,19 @@ fin/
 │   │   ├── income_calendar.py # 12mo dividend / interest forecast
 │   │   ├── monte_carlo.py #   Stochastic projection (retirement +
 │   │   │                  #     all-accounts) + FIRE date crossings
+│   │   ├── rebalancing.py #   Target vs Actual sector-allocation drift
+│   │   ├── reconcile.py   #   fin vs broker-reported ground truth
+│   │   ├── savings.py     #   Savings rate by year + fee rollups
+│   │   ├── data_health.py #   Invariant checks (hard errors in tests)
 │   │   ├── changes.py     #   Run-over-run diff vs cache/last_run.json
 │   │   └── alerts.py      #   Severity-tagged signal aggregator
 │   └── dashboard/         # HTML dashboard generator (tabbed SPA)
 │       ├── __init__.py    #   Bundler: splices CSS + JS + JSON into one HTML
 │       ├── template.html  #   Page structure with @@STYLES@@ / @@APP_JS@@ markers
 │       ├── styles.css     #   Dashboard CSS
-│       └── app.js         #   Dashboard JS (~7500 lines)
-└── tests/                 # pytest test suite (~130 tests, no network calls)
+│       └── app/           #   Dashboard JS — one module per tab/concern,
+│                          #     concatenated in filename order at bundle time
+└── tests/                 # pytest test suite (~220 tests, no network calls)
     ├── conftest.py        #   Fixtures: isolated_workdir, stub_prices, writers
     ├── fixtures/          #   Synthetic multi-broker portfolio for E2E test
     └── test_*.py          #   One file per concern

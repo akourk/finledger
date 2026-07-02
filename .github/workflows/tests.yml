@@ -7,13 +7,17 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.10 backs the README's "Python 3.10+" claim; 3.12 covers current.
+        python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       # The app has no runtime dependency beyond yfinance, and yfinance is
       # imported lazily inside functions that the test suite stubs out — so
