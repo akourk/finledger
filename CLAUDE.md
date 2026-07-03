@@ -1142,7 +1142,8 @@ reports `first_run` in What's Changed.
 
 ## Data is sensitive
 
-Everything under `data/` and `exports/` is gitignored.  `cache/` is
+The WHOLE `data/` directory and `exports/` are gitignored (any
+extension — a stray `.bak`/`.xlsx` in `data/` won't leak).  `cache/` is
 checked in EXCEPT `cache/last_run.json` (which carries portfolio
 totals).  Treat CSV contents as private financial data — don't paste
 them into external services, issue bodies, or anywhere public.
@@ -1150,11 +1151,20 @@ them into external services, issue bodies, or anywhere public.
 **This repo is public.**  NEVER put the user's actual portfolio figures
 — dollar amounts, realized gains, balances, dividend/interest totals,
 account values — into **commit messages, PR descriptions, or any
-git-tracked/public file**.  Commit messages are an easy gap to forget
-(the gitignore only covers `data/` + `exports/`).  Describe changes
+git-tracked/public file**.  This includes **hardcoded figures in test
+fixtures** (the recurring gap — use synthetic round numbers in tests,
+never the user's real 1040 / broker figures).  Describe changes
 qualitatively: the mechanism, the files, the bug class.  "Coinbase
 reconciles closer under HIFO" — not the specific figure.  When in doubt,
-strip every `$amount` / `N.NN` from the message before committing.
+strip every `$amount` / `N.NN` before committing.
+
+**Mechanical backstop:** `githooks/pre-commit` (enabled via
+`git config core.hooksPath githooks`) blocks any commit whose staged
+additions contain a token from `.pii-denylist.txt` (gitignored, local
+list of real emails / account ids / distinctive figures).  It fires on
+every commit regardless of author — add new real figures to the
+denylist as they come up; never bypass with `--no-verify` unless the
+user explicitly asks.
 
 ## Adding sample data
 

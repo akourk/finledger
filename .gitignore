@@ -1,7 +1,16 @@
-# Personal data — broker CSV exports + your metadata.csv stay local.
+# Personal data — broker CSV exports, metadata.csv, and broker
+# reference reports (Coinbase gain/loss + raw-tx) all stay local.
+# `data/*` ignores every file of ANY extension under data/ (so a stray
+# .bak / .xlsx / .txt can't leak) while still letting the .gitkeep
+# through — a bare `data/` would ignore the dir itself and git couldn't
+# re-include anything inside it.
 # (samples/ is checked in — it's synthetic.)
-data/*.csv
-data/*.json
+data/*
+!data/.gitkeep
+
+# Local PII denylist consumed by the githooks/pre-commit guard —
+# real emails / account ids / figures.  Must never be committed.
+.pii-denylist.txt
 
 # Generated artifacts
 exports/

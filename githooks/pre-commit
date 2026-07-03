@@ -1,0 +1,53 @@
+#!/bin/sh
+# Pre-commit privacy guard.
+#
+# Blocks any commit whose STAGED ADDITIONS contain a token listed in
+# .pii-denylist.txt (gitignored, local-only) — real emails, account
+# ids, or distinctive financial figures.  This is a mechanical gate:
+# it runs on every `git commit` regardless of who (or what) is
+# committing, so personal data can't reach a tracked file — and thus
+# can't be pushed — even if the author forgets.
+#
+# Enable once per clone:
+#     git config core.hooksPath githooks
+#
+# Bypass (discouraged — only for a verified false positive):
+#     git commit --no-verify
+#
+# The denylist holds HIGH-PRECISION tokens only (see the file's own
+# header).  New real figures you start using should be added there.
+
+root=$(git rev-parse --show-toplevel)
+denylist="$root/.pii-denylist.txt"
+
+# The denylist itself must never be committed.
+if git diff --cached --name-only | grep -qx '.pii-denylist.txt'; then
+  echo "pre-commit: refusing to commit .pii-denylist.txt (must stay local)." >&2
+  exit 1
+fi
+
+[ -f "$denylist" ] || exit 0
+
+# Staged ADDED lines only (new content being introduced).
+added=$(git diff --cached --diff-filter=ACM -U0 | grep '^+' | grep -v '^+++')
+[ -n "$added" ] || exit 0
+
+blocked=0
+while IFS= read -r token || [ -n "$token" ]; do
+  case "$token" in ''|'#'*) continue ;; esac
+  if printf '%s\n' "$added" | grep -Fq -- "$token"; then
+    if [ "$blocked" -eq 0 ]; then
+      echo "pre-commit: BLOCKED — staged changes contain denylisted personal data:" >&2
+      blocked=1
+    fi
+    echo "    $token" >&2
+  fi
+done < "$denylist"
+
+if [ "$blocked" -ne 0 ]; then
+  echo "" >&2
+  echo "Use synthetic values (tests) or describe changes qualitatively." >&2
+  echo "If this is a false positive, prune the token from .pii-denylist.txt." >&2
+  exit 1
+fi
+exit 0

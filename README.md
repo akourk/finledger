@@ -383,8 +383,27 @@ raw broker name, `account_type` = `Taxable`.
 
 ## Privacy
 
-Your raw CSVs and generated exports are gitignored by default. The dashboard
-is a self-contained HTML file — nothing is uploaded anywhere.
+The entire `data/` directory and generated `exports/` are gitignored, so
+your raw broker CSVs, `metadata.csv`, and the Coinbase reference reports
+never get committed. The dashboard is a self-contained HTML file —
+nothing is uploaded anywhere.
+
+### Pre-commit guard
+
+A tracked pre-commit hook (`githooks/pre-commit`) blocks any commit whose
+staged additions contain a token listed in `.pii-denylist.txt` (a
+gitignored, local-only file of your real emails / account ids / distinctive
+figures). It's a mechanical backstop so personal data can't slip into a
+tracked file — e.g. a real dollar amount hardcoded into a test. **Enable it
+once per clone:**
+
+```bash
+git config core.hooksPath githooks
+```
+
+Seed `.pii-denylist.txt` with your high-precision tokens (see the template
+comments); add new real figures as you use them. Keep test fixtures and
+commit messages synthetic/qualitative — never your actual figures.
 
 If you're publishing a fork of this project:
 
@@ -399,7 +418,13 @@ auto-repopulated on every pipeline run from your own data; a fresh
 checkout will re-seed them from the new user's data).
 
 `cache/last_run.json` is gitignored — it carries portfolio totals.
-`data/*.csv` and `exports/` are also gitignored.
+All of `data/` and `exports/` are also gitignored.
+
+Broker **reference reports** (the Coinbase gain/loss and raw-transactions
+downloads) live in `data/` alongside your CSVs; the scanner classifies
+them `skip` (by filename `gainloss`/`rawtx` and header signature) so the
+transaction pipeline never parses them as trades. Recommended names:
+`coinbase-gainloss.csv` / `coinbase-rawtx.csv`.
 
 The synthetic `samples/portfolio.snapshot.json` shows how the project
 works without exposing real data.
