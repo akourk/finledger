@@ -15,9 +15,10 @@ from datetime import date, datetime, timedelta
 
 from .basis import (
     BASIS_EFFECTS, _basis_dollars, _basis_effect, _consume_lots,
-    _pair_transfers, _pair_wraps, _rescale_lots,
+    _consume_lots_directed, _pair_transfers, _pair_wraps, _rescale_lots,
     _sort_key as _basis_sort_key,
 )
+from .broker_lots import copy_disposal_lots, hints_for
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS
 from .prices import get_price, split_factor_since
 
@@ -160,7 +161,8 @@ def compute_history(txns: list[dict],
                     sector_of: dict[str, str],
                     *,
                     cadence: str = "month",
-                    account_methods: dict[str, str] | None = None) -> list[dict]:
+                    account_methods: dict[str, str] | None = None,
+                    disposal_lots: dict | None = None) -> list[dict]:
     """Build the portfolio value time series.
 
     Each snapshot is::
@@ -323,11 +325,19 @@ def compute_history(txns: list[dict],
     last_txn_price: dict[str, float] = {}
     idx = 0
 
-    def _consume(key, qty_to_remove):
+    # Broker-report disposal hints — own copy, exactly like basis._walk
+    # (consuming mutates hint state; each walker starts fresh).
+    _disposal_lots = copy_disposal_lots(disposal_lots)
+
+    def _consume(key, qty_to_remove, hints=None):
         """Remove qty_to_remove from lots[key] using the owning account's
         lot-relief method; return (basis_removed, carried).  Delegates to
-        basis._consume_lots so consume order (FIFO/LIFO/HIFO) matches
-        the annotated basis walk exactly."""
+        basis._consume_lots (or the report-directed variant when the
+        broker's gain/loss report covers this disposal) so consume order
+        matches the annotated basis walk exactly."""
+        if hints:
+            return _consume_lots_directed(lots[key], qty_to_remove,
+                                          _method_for(key[0]), hints)
         return _consume_lots(lots[key], qty_to_remove, _method_for(key[0]))
 
     def _push(key, qty_add, basis_dollars, date):
@@ -392,7 +402,9 @@ def compute_history(txns: list[dict],
                 # FMV-at-receipt when the broker recorded a price, else $0.
                 _push(key, qty, qty * p if p > 0 else 0.0, t.get("date", ""))
             elif effect == "remove":
-                _consume(key, qty)
+                _consume(key, qty,
+                         hints=hints_for(_disposal_lots, acct, sym,
+                                         t.get("date", "")))
             elif effect == "transfer_out":
                 if id(t) in tout_handled:
                     pass  # already moved eagerly by same-day paired TIN
@@ -431,7 +443,20 @@ def compute_history(txns: list[dict],
                     wrap_done.add(gkey)
                     g = wrap_groups.get(gkey)
                     if g and g["out"] and g["in"] and g["q_out"] > 0 and g["q_in"] > 0:
-                        _b, carried = _consume((acct, g["src"]), g["q_out"])
+                        # Direct the wrap's source consumption with the
+                        # destination's sell hints (scaled copy) —
+                        # mirrors basis._walk's wrap branch exactly.
+                        _wh = hints_for(_disposal_lots, acct, g["dst"],
+                                        t.get("date", ""))
+                        if _wh:
+                            _ratio = g["q_out"] / g["q_in"]
+                            _wh_copy = [{**h,
+                                         "qty_left": float(h.get("qty_left", 0) or 0) * _ratio}
+                                        for h in _wh]
+                            _b, carried = _consume((acct, g["src"]),
+                                                   g["q_out"], hints=_wh_copy)
+                        else:
+                            _b, carried = _consume((acct, g["src"]), g["q_out"])
                         for lot in _rescale_lots(carried, g["q_in"]):
                             lots[(acct, g["dst"])].append(lot)
                     elif g:
@@ -457,6 +482,14 @@ def compute_history(txns: list[dict],
                     for lot in lq:
                         lot["qty"] *= ratio
                         lot["basis_per_share"] /= ratio
+            elif (effect == "ignore" and qty > 0 and sym
+                  and sym != "USD" and t.get("basis_override") is not None):
+                # Neutral same-pool conversion with broker-reported
+                # basis (ETH2 deprecation etc.) — zero-gain rebase.
+                # Mirrors basis._walk's rebase_neutral branch.
+                _consume(key, qty)
+                _push(key, qty, float(t["basis_override"]),
+                      t.get("date", ""))
             # else: ignore / unknown → no-op
 
         by_group:       dict[str, float] = defaultdict(float)

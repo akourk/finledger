@@ -459,6 +459,80 @@ def _consume_from_key(state: dict, method: str, key: tuple, qty: float) -> tuple
     return _consume_lots(state["lots"][key], qty, method)
 
 
+def _consume_lots_directed(lots: list[dict], qty_to_remove: float,
+                           method: str, hints: list[dict] | None
+                           ) -> tuple[float, list[dict]]:
+    """Consume ``qty_to_remove`` following broker-report lot hints.
+
+    For each hint (a lot the broker's gain/loss report says this
+    disposal consumed), find the matching pool lot — exact acquired
+    date, then acquired date within ±2 days, then per-unit basis within
+    2% (wraps rescale per-unit by the conversion ratio, so date is the
+    primary key; per-unit is the fallback for date drift).  Any
+    remainder (hints exhausted or unmatched) falls back to the normal
+    ``method`` order.
+
+    This is purely a consume-ORDER strategy: the basis booked is always
+    the actual pool-lot basis, so balance↔basis parity and the
+    annotation reconstruction hold exactly as they do for FIFO/HIFO.
+    Hints' ``qty_left`` is decremented in place — same-day disposals
+    share one hint list and consume it progressively.
+    """
+    basis_removed = 0.0
+    carried: list[dict] = []
+    remaining = qty_to_remove
+
+    def _find(hint) -> int | None:
+        acq = hint.get("acquired") or ""
+        for i, lot in enumerate(lots):
+            if (lot.get("date") or "")[:10] == acq:
+                return i
+        if acq:
+            from datetime import date as _d, timedelta
+            try:
+                base = _d.fromisoformat(acq)
+                near = {(base + timedelta(days=dd)).isoformat()
+                        for dd in (-2, -1, 1, 2)}
+                for i, lot in enumerate(lots):
+                    if (lot.get("date") or "")[:10] in near:
+                        return i
+            except ValueError:
+                pass
+        pu = float(hint.get("per_unit") or 0)
+        if pu > 0:
+            for i, lot in enumerate(lots):
+                pps = lot.get("basis_per_share", 0.0)
+                if pps > 0 and abs(pps - pu) / pu <= 0.02:
+                    return i
+        return None
+
+    for h in (hints or []):
+        if remaining <= 1e-12:
+            break
+        want = min(float(h.get("qty_left", 0) or 0), remaining)
+        while want > 1e-12:
+            idx = _find(h)
+            if idx is None:
+                break
+            lot = lots[idx]
+            take = min(want, lot["qty"])
+            basis_removed += take * lot["basis_per_share"]
+            carried.append({"date": lot.get("date", ""), "qty": take,
+                            "basis_per_share": lot["basis_per_share"]})
+            lot["qty"] -= take
+            if lot["qty"] <= 1e-12:
+                lots.pop(idx)
+            want -= take
+            remaining -= take
+            h["qty_left"] = float(h.get("qty_left", 0) or 0) - take
+
+    if remaining > 1e-12:
+        b2, c2 = _consume_lots(lots, remaining, method)
+        basis_removed += b2
+        carried.extend(c2)
+    return basis_removed, carried
+
+
 def _push_lot(state: dict, method: str, key: tuple, qty: float, basis_dollars: float, date: str) -> None:
     if qty <= 0:
         return
@@ -489,7 +563,8 @@ def _push_carried_lots(state: dict, method: str, key: tuple, carried: list[dict]
 
 
 def _walk(txns: list[dict], method: str, *, annotate: bool,
-          account_methods: dict[str, str] | None = None) -> dict:
+          account_methods: dict[str, str] | None = None,
+          disposal_lots: dict | None = None) -> dict:
     """Walk `txns` applying basis rules under `method`.
 
     If `annotate` is True, mutates each txn with `cost_basis`,
@@ -503,8 +578,15 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
     the lot-list methods (fifo / lifo / hifo) — an ``avg`` override falls
     back to the base ``method``.  Balances are unaffected (same total qty
     consumed), only which lots' basis is realized.
+
+    `disposal_lots` directs sell-consumption per the broker's gain/loss
+    report (see broker_lots.py) — again a pure consume-order strategy.
+    The walk operates on its own copy since consuming mutates hint state.
     """
     state = _empty_state(method)
+
+    from .broker_lots import copy_disposal_lots, hints_for
+    disposal_lots = copy_disposal_lots(disposal_lots)
 
     def _method_for(acct: str) -> str:
         if not account_methods:
@@ -628,7 +710,18 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
 
         elif effect == "remove":
             proceeds = _basis_dollars(t)
-            basis_removed, carried = _consume_from_key(state, _method_for(acct), key, qty)
+            # Broker-report lot hints (gain/loss report rows for this
+            # account/symbol/date) direct WHICH lots the sale consumes;
+            # anything unmatched falls back to the account's method.
+            # avg has no discrete lots, so hints only apply to the
+            # lot-list methods.
+            _hints = hints_for(disposal_lots, acct, sym, t.get("date", ""))
+            _m = _method_for(acct)
+            if _hints and _m != "avg" and method != "avg":
+                basis_removed, carried = _consume_lots_directed(
+                    state["lots"][key], qty, _m, _hints)
+            else:
+                basis_removed, carried = _consume_from_key(state, _m, key, qty)
             cost_basis_value = basis_removed
             # A fee paid by redeeming shares (e.g. a fund maintenance fee)
             # removes the shares + their basis from the lot queue — so
@@ -736,8 +829,29 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 wrap_done.add(gkey)
                 g = wrap_groups.get(gkey)
                 if g and g["out"] and g["in"] and g["q_out"] > 0 and g["q_in"] > 0:
-                    B, carried = _consume_from_key(
-                        state, _method_for(acct), (acct, g["src"]), g["q_out"])
+                    # When the destination symbol has broker sell hints
+                    # on/near this date (wrap→sell runs), direct the
+                    # SOURCE consumption with them: the hints name the
+                    # acquired dates Coinbase's engine eventually sold,
+                    # and dates survive the wrap — so moving those exact
+                    # lots lets the directed sale match them.  A scaled
+                    # COPY is used (src/dst unit ratio) so the sale's
+                    # own hint budget is untouched.  Without this, an
+                    # HIFO wrap can move a different lot mix than the
+                    # broker carried and the sale realizes fin's mix.
+                    _wh = hints_for(disposal_lots, acct, g["dst"],
+                                    t.get("date", ""))
+                    if _wh and method != "avg" and _method_for(acct) != "avg":
+                        _ratio = g["q_out"] / g["q_in"]
+                        _wh_copy = [{**h,
+                                     "qty_left": float(h.get("qty_left", 0) or 0) * _ratio}
+                                    for h in _wh]
+                        B, carried = _consume_lots_directed(
+                            state["lots"][(acct, g["src"])], g["q_out"],
+                            _method_for(acct), _wh_copy)
+                    else:
+                        B, carried = _consume_from_key(
+                            state, _method_for(acct), (acct, g["src"]), g["q_out"])
                     _push_carried_lots(state, method, (acct, g["dst"]),
                                        _rescale_lots(carried, g["q_in"]))
                     for ol in g["out"]:
@@ -778,6 +892,23 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 old_total = sum(lot["qty"] for lot in lots)
                 _apply_split_to_lots(lots, old_total, qty)
 
+        elif (effect == "ignore" and qty > 0 and sym
+              and sym not in ("USD",) and t.get("basis_override") is not None):
+            # Neutral same-pool conversion carrying a broker-reported
+            # basis (Coinbase's ETH2↔ETH deprecation / staking events:
+            # the gain/loss report shows them as gain-0 dispositions
+            # whose acquired side carries the customer-provided basis).
+            # Rebase the pool at zero gain: consume qty, push one lot at
+            # the override basis.  Balance untouched (same key, −qty
+            # then +qty); no realized gain.  Annotated with the NET
+            # basis delta so derive_basis_by_key_from_txns reconstructs
+            # the pool change from this single txn.
+            consumed, _c = _consume_from_key(state, _method_for(acct), key, qty)
+            new_basis = float(t["basis_override"])
+            _push_lot(state, method, key, qty, new_basis, t.get("date", ""))
+            final_effect = "rebase_neutral"
+            cost_basis_value = new_basis - consumed
+
         # effect == "ignore" or "unknown": leave untouched
 
         if realized is not None:
@@ -799,7 +930,8 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
 # ---------------------------------------------------------------------------
 
 def compute_basis_default(txns: list[dict],
-                          account_methods: dict[str, str] | None = None) -> dict:
+                          account_methods: dict[str, str] | None = None,
+                          disposal_lots: dict | None = None) -> dict:
     """Run the annotated walker (FIFO by default), annotating txns in
     place.  Returns the final lot state for merging into holdings.
 
@@ -809,8 +941,14 @@ def compute_basis_default(txns: list[dict],
     (and thus realized_gain, holding period, MAGI), never balances.  The
     Lot-Method Comparison table (compute_basis_all_methods) still reports
     pure single-method totals for what-if comparison.
+
+    `disposal_lots` (from ``broker_lots.load_disposal_lots``) directs
+    sell-consumption to the specific lots the broker's gain/loss report
+    says each disposal consumed — the strongest form of lot relief,
+    superseding the method order wherever the report has rows.
     """
-    return _walk(txns, "fifo", annotate=True, account_methods=account_methods)
+    return _walk(txns, "fifo", annotate=True, account_methods=account_methods,
+                 disposal_lots=disposal_lots)
 
 
 def compute_basis_all_methods(txns: list[dict]) -> dict[str, dict]:
@@ -885,6 +1023,9 @@ def derive_basis_by_key_from_txns(txns: list[dict]) -> dict[tuple[str, str], flo
     - ``rebase_in``            → +cost_basis  (intra-group pair with a user basis
                                                override: the new customer-provided basis)
     - ``rebase_out``           → -cost_basis  (its counter-leg: the carried basis consumed)
+    - ``rebase_neutral``       → +cost_basis  (Neutral same-pool conversion rebased at a
+                                               broker-reported basis; cb is the NET delta:
+                                               override − consumed)
     - ``intra_group_noop``     → 0            (paired same-group transfer; both legs cancel)
     - ``split``                → 0            (qty rebalanced, total basis unchanged)
     - ``ignore``               → 0            (USD or empty symbol; not in lot queue)
@@ -906,7 +1047,8 @@ def derive_basis_by_key_from_txns(txns: list[dict]) -> dict[tuple[str, str], flo
             continue
         key = (t.get("account_group", ""), sym)
         if be in ("add", "zero_basis", "transfer_in", "transfer_in_unpaired",
-                  "wrap_in", "wrap_in_unpaired", "rebase_in"):
+                  "wrap_in", "wrap_in_unpaired", "rebase_in",
+                  "rebase_neutral"):
             by_key[key] = by_key.get(key, 0.0) + float(cb)
         elif be in ("remove", "transfer_out", "wrap_out", "wrap_out_unpaired",
                     "rebase_out"):

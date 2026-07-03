@@ -262,9 +262,19 @@ def _refresh_prices_only(args) -> None:
     from .cost_basis_overrides import match_and_stamp as _stamp_cb
     _stamp_cb(txns, retirement_meta.get("cost_basis_overrides"))
 
+    # Broker-reported disposal lots + acquisition basis — same sources
+    # as the full pipeline (see the main() call sites); the history
+    # walker and the FIFO re-walk below must see the same overrides or
+    # the refresh path would silently disagree with the full run.
+    from .broker_lots import (load_acquisition_lots, load_disposal_lots,
+                              stamp_acquisition_basis)
+    disposal_lots = load_disposal_lots(DATA_DIR)
+    stamp_acquisition_basis(txns, load_acquisition_lots(DATA_DIR))
+
     print("Computing portfolio history with refreshed prices...")
     history = compute_history(txns, sector_of,
-                              account_methods=retirement_meta.get("lot_methods"))
+                              account_methods=retirement_meta.get("lot_methods"),
+                              disposal_lots=disposal_lots)
     save_price_cache()
     print(f"  {len(history)} snapshot(s) from {history[0]['date'] if history else '—'} "
           f"to {history[-1]['date'] if history else '—'}")
@@ -275,7 +285,8 @@ def _refresh_prices_only(args) -> None:
     # walker re-writes identical annotations onto txns it's already
     # seen, and we only need state["lots"] downstream.
     refresh_fifo_state = compute_basis_default(
-        txns, account_methods=retirement_meta.get("lot_methods"))
+        txns, account_methods=retirement_meta.get("lot_methods"),
+        disposal_lots=disposal_lots)
     analytics = build_analytics(txns, history, holdings, holdings_by_account,
                                  retirement_meta,
                                  cash_summary=cash,
@@ -544,8 +555,31 @@ def main():
         for _w in _cb_warn:
             print(f"    ! {_w}")
 
+    # Broker-reported disposal lots (Coinbase gain/loss report in data/,
+    # scanner-skipped) — direct sell-consumption to the exact lots the
+    # broker's tax engine consumed, superseding the method order where
+    # the report has rows.  See src/broker_lots.py.
+    from .broker_lots import (load_acquisition_lots, load_disposal_lots,
+                              stamp_acquisition_basis)
+    disposal_lots = load_disposal_lots(DATA_DIR)
+    if disposal_lots:
+        _n_lots = sum(len(v) for v in disposal_lots.values())
+        print(f"  Broker lot report: {_n_lots} disposal lot(s) across "
+              f"{len(disposal_lots)} disposal day(s) — directing lot relief")
+
+    # Broker-reported ACQUISITION basis (Coinbase RAWTX report) — adopts
+    # Coinbase's own cost basis (incl. customer-provided receives and
+    # the gain-0 ETH2-deprecation rebases) onto matching lots.  Runs
+    # AFTER the user's Cost Basis rows so hand-entered values win.
+    _acq_rows = load_acquisition_lots(DATA_DIR)
+    if _acq_rows:
+        _n_st, _n_un = stamp_acquisition_basis(txns, _acq_rows)
+        print(f"  Broker acquisition basis: {_n_st} lot(s) stamped from "
+              f"RAWTX ({_n_un} report row(s) unmatched)")
+
     fifo_state = compute_basis_default(
-        txns, account_methods=retirement_meta.get("lot_methods"))
+        txns, account_methods=retirement_meta.get("lot_methods"),
+        disposal_lots=disposal_lots)
     fifo_basis_by_key: dict[tuple[str, str], float] = {}
     for row in state_to_holdings(fifo_state, "fifo"):
         fifo_basis_by_key[(row["account_group"], row["symbol"])] = row["cost_basis"]
@@ -740,7 +774,8 @@ def main():
     # or the latest snapshot's cost basis drifts from the holdings table.
     print("\nComputing portfolio history...")
     history = compute_history(txns, sector_of,
-                              account_methods=retirement_meta.get("lot_methods"))
+                              account_methods=retirement_meta.get("lot_methods"),
+                              disposal_lots=disposal_lots)
     save_price_cache()
     print(f"  {len(history)} snapshot(s) from {history[0]['date'] if history else '—'} "
           f"to {history[-1]['date'] if history else '—'}")

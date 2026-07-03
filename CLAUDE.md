@@ -827,6 +827,36 @@ threads through every consumer.
   LIQ/SOFF/CONV/SPR pooling, classification, description parsing).
   Pure, testable; the parsers call into these instead of inlining the
   pairing/classification logic.
+- **`src/broker_lots.py`** — report-directed lot relief.  Parses the
+  Coinbase tax-center **gain/loss report** (kept in `data/` as
+  reference; scanner classifies it `skip` by filename `rawtx`/`gainloss`
+  and by header signature) into per-disposal-day lot hints
+  `{(account_group, symbol, sell_date): [{acquired, qty, per_unit}]}`.
+  `basis._consume_lots_directed` consumes pool lots matching each hint
+  (exact acquired date → ±2-day date → per-unit basis ±2%), falling
+  back to the account's method order for the remainder.  A pure
+  consume-ORDER strategy — booked basis is always the actual pool-lot
+  basis, so every parity invariant holds unchanged.  Both walkers
+  (basis + history) and both pipeline paths take `disposal_lots`; each
+  walk deep-copies the hints (consuming mutates `qty_left`).  Hint
+  lookup concatenates the exact day with ±1 day (report timestamps are
+  UTC-shifted vs fin's txn dates); wrap consumption is ALSO directed by
+  the destination symbol's same-day sell hints (scaled copy) so
+  wrap→sell runs move the lots the broker actually sold.  The RAWTX
+  report supplies **acquisition basis** (`load_acquisition_lots` +
+  `stamp_acquisition_basis`): Buy / Receive / cross-symbol Convert /
+  Airdrop / Transfer rows auto-stamp `basis_override` onto matching fin
+  txns (user `Cost Basis` metadata rows stamp first and win; with the
+  RAWTX file in data/ the hand rows are redundant — the Receive rows
+  carry the same customer-provided figures).  Same-symbol conversions
+  (ETH2→ETH deprecation) are excluded from stamping — their basis
+  arrives via the Receive rows; a Neutral txn stamped with an override
+  still rebases the pool at zero gain (`rebase_neutral`).  KNOWN
+  LIMIT: Coinbase dates convert-carried lots by ORIGINAL acquisition
+  while fin's convert legs are dated at the convert — per-year realized
+  still shows offsetting timing drift vs the report in convert-heavy
+  years (net lifetime delta is small; `Reconcile Realized` rows keep
+  tax figures broker-authoritative).
 - **`src/cusips.py`** — CUSIP extraction + collision diagnostic.
   Robinhood embeds CUSIPs in description fields; we capture them
   per-txn and surface ticker-rename candidates (different ticker
@@ -974,6 +1004,15 @@ process.
   Coinbase's "Customer provided" cost-basis column).  fin cannot
   reconstruct off-platform basis; reconcile against the broker's
   gain/loss report and, where it matters for tax, supply the real figure.
+- **Report-directed lot relief supersedes the method order.**  When a
+  broker gain/loss report is present (`broker_lots.load_disposal_lots`),
+  the walker's `remove` branch consumes the specific lots the report
+  names for that (account, symbol, date) — the strongest form of lot
+  relief; FIFO/LIFO/HIFO only orders the unmatched remainder.  Hints
+  are shared per disposal day (same-day sells consume progressively)
+  and each walk operates on its own copy.  `avg` ignores hints (no
+  discrete lots).  Wraps preserve lot acquired-dates, so a hint naming
+  a 2021 acquisition finds the wrapped lot in the destination symbol.
 - **FIFO is the annotated default, overridable per account**. The
   annotated walk (`compute_basis_default`) uses FIFO unless an account is
   given a different lot-relief method via the `Lot Method` row in
@@ -1092,6 +1131,14 @@ process.
 `--import-snapshot PATH` (with `--force` to overwrite).  Used by
 `tools/build_sample_snapshot.py` to generate the synthetic
 `samples/portfolio.snapshot.json` that ships with the repo.
+
+The bundle includes **every** top-level `*.csv` unconditionally —
+`metadata.csv`, `manual-adjustments.csv`, and scanner-`skip`ped
+reference reports (the Coinbase RAWTX / gain-loss files) all travel
+with it.  Snapshot + repo checkout (which carries `cache/`) fully
+reproduces a working install; the only thing that resets is the
+gitignored `cache/last_run.json`, so the first run on a new machine
+reports `first_run` in What's Changed.
 
 ## Data is sensitive
 
