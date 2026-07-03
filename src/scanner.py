@@ -27,14 +27,14 @@ def detect_broker(filepath: Path) -> str:
     if name in ("metadata.csv", "retirement-data.csv"):
         return "skip"
 
-    # Coinbase REFERENCE reports — the tax-center "raw transactions" and
-    # "gain/loss" downloads.  These are per-lot / per-receive views of
-    # activity the regular Coinbase transactions CSV already carries;
-    # ingesting them would double-count every trade.  They're kept in
-    # data/ as broker ground truth for lot-level reconciliation, never
-    # parsed or renamed.  (Must check BEFORE the generic "coinbase"
-    # filename match.)
-    if "rawtx" in name or "gainloss" in name:
+    # Broker REFERENCE reports — Coinbase's tax-center "raw transactions"
+    # / "gain/loss" downloads and Robinhood's consolidated 1099 CSV.
+    # These are per-lot / per-form summaries of activity the regular
+    # transaction CSVs already carry; ingesting them would double-count.
+    # They're kept in data/ as broker ground truth for lot-level
+    # reconciliation, never parsed as transactions.  (Must check BEFORE
+    # the generic "coinbase" / "robinhood" filename matches.)
+    if "rawtx" in name or "gainloss" in name or "1099" in name:
         return "skip"
 
     # Filename pattern matching
@@ -115,6 +115,18 @@ def _detect_by_headers(filepath: Path) -> str:
         if "tax lot id" in header:
             return "skip"
         if "asset acquired" in header and "asset disposed" in header:
+            return "skip"
+
+        # Robinhood consolidated 1099 CSV — a multi-section file where
+        # column 0 tags each row's form ("1099-DIV" / "1099-INT" /
+        # "1099-B" / "1099-MISC") and each section carries its own
+        # header row.  Detected header-first so a fresh (UUID-named)
+        # yearly download is skipped without renaming.  The 1099-DIV
+        # header sits on line 0; the 1099-B header (per-lot detail we'll
+        # later consume for lot relief) is a few lines down.
+        if "ordinary div" in header and "qualified div" in header:
+            return "skip"
+        if "date acquired" in header and "sale date" in header:
             return "skip"
 
     return "unknown"
