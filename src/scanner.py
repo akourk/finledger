@@ -27,6 +27,16 @@ def detect_broker(filepath: Path) -> str:
     if name in ("metadata.csv", "retirement-data.csv"):
         return "skip"
 
+    # Coinbase REFERENCE reports — the tax-center "raw transactions" and
+    # "gain/loss" downloads.  These are per-lot / per-receive views of
+    # activity the regular Coinbase transactions CSV already carries;
+    # ingesting them would double-count every trade.  They're kept in
+    # data/ as broker ground truth for lot-level reconciliation, never
+    # parsed or renamed.  (Must check BEFORE the generic "coinbase"
+    # filename match.)
+    if "rawtx" in name or "gainloss" in name:
+        return "skip"
+
     # Filename pattern matching
     if "apple-savings" in name or "apple_savings" in name:
         return "apple_savings"
@@ -97,6 +107,15 @@ def _detect_by_headers(filepath: Path) -> str:
         # Coinbase Pro: "portfolio", "trade id", "product", "side", "size", "price", "fee"
         if "trade id" in header and "product" in header and "side" in header:
             return "coinbase_pro"
+
+        # Coinbase reference reports (see the filename check above) —
+        # recognized by their distinctive columns in case the files get
+        # renamed: the gain/loss report's per-lot "Tax lot ID", or the
+        # raw-transactions report's acquired/disposed column pair.
+        if "tax lot id" in header:
+            return "skip"
+        if "asset acquired" in header and "asset disposed" in header:
+            return "skip"
 
     return "unknown"
 

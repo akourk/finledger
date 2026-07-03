@@ -272,3 +272,58 @@ def test_active_paycheck_deductions_supersede_by_label():
     # As of two years ago, the older amount was active.
     rows_old = active_paycheck_deductions(meta, cur - 2)
     assert rows_old[0]["amount"] == 80.0
+
+
+def _sell(year, st_gain=0.0, lt_gain=0.0):
+    """One taxable sell per bucket for _tax_rate_estimate tests."""
+    out = []
+    if st_gain:
+        out.append({"date": f"{year}-03-01", "symbol": "AAA", "action": "Sell",
+                    "account_group": "Robinhood", "account_type": "Taxable",
+                    "amount": abs(st_gain) * 2, "realized_gain": st_gain,
+                    "holding_days": 100})
+    if lt_gain:
+        out.append({"date": f"{year}-03-02", "symbol": "BBB", "action": "Sell",
+                    "account_group": "Robinhood", "account_type": "Taxable",
+                    "amount": abs(lt_gain) * 2, "realized_gain": lt_gain,
+                    "holding_days": 700})
+    return out
+
+
+def test_capital_loss_capped_at_3000_for_agi():
+    """A big net realized loss deducts at most $3,000 against ordinary
+    income — it must not sink AGI by the full loss."""
+    from datetime import date
+    from src.analytics.tax import _tax_rate_estimate
+    cur = date.today().year
+    est = _tax_rate_estimate(str(cur), _meta(),
+                             _sell(cur, st_gain=-153.69, lt_gain=-30000.00))
+    # Raw figures preserved for display…
+    assert est["realized_st"] == pytest.approx(-153.69)
+    assert est["realized_lt"] == pytest.approx(-30000.00)
+    # …but AGI only drops by the capped $3,000.
+    assert est["realized_st_agi"] + est["realized_lt_agi"] == pytest.approx(-3000.0)
+    assert est["capital_loss_disallowed"] == pytest.approx(27259.60 - 3000.0)
+    assert est["agi"] == pytest.approx(104000.0 - 2340.0 - 3000.0)
+    # A net loss owes no capital-gains tax (was negative before the fix).
+    assert est["est_cap_gains_tax_total"] == 0.0
+
+
+def test_capital_loss_cross_netting():
+    """An ST loss offsets an LT gain before any cap; small net losses
+    (≤ $3,000) pass through uncapped."""
+    from datetime import date
+    from src.analytics.tax import _tax_rate_estimate
+    cur = date.today().year
+    # ST −5k vs LT +8k → net +3k, all LT for tax purposes.
+    est = _tax_rate_estimate(str(cur), _meta(),
+                             _sell(cur, st_gain=-5000.0, lt_gain=8000.0))
+    assert est["realized_st_agi"] == pytest.approx(0.0)
+    assert est["realized_lt_agi"] == pytest.approx(3000.0)
+    assert est["capital_loss_disallowed"] == 0.0
+    assert est["est_cap_gains_tax_total"] > 0
+    # Small net loss: no cap.
+    est2 = _tax_rate_estimate(str(cur), _meta(),
+                              _sell(cur, st_gain=-1200.0))
+    assert est2["realized_st_agi"] == pytest.approx(-1200.0)
+    assert est2["capital_loss_disallowed"] == 0.0

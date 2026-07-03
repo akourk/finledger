@@ -472,13 +472,42 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
     )
     pretax_deductions = min(max(0.0, pretax_deductions), salary)
 
+    # --- Capital-loss netting + the $3,000 ordinary-income cap ----------
+    # Simplified Schedule D: a loss on one side offsets gain on the
+    # other; a remaining NET loss deducts at most $3,000 against
+    # ordinary income (1040 line 7) — the excess carries forward, which
+    # fin doesn't model (noted in the Tax tab).  Without this cap, a
+    # big realized loss silently understated AGI / MAGI by the full
+    # loss and corrupted bracket, Roth-eligibility, and safe-harbor
+    # estimates.  ``realized_st`` / ``realized_lt`` keep the raw values
+    # for display; the *_agi variants feed the income build-up.
+    _st, _lt = realized_st, realized_lt
+    if _st < 0 < _lt:
+        _offset = min(-_st, _lt)
+        _st += _offset
+        _lt -= _offset
+    elif _lt < 0 < _st:
+        _offset = min(-_lt, _st)
+        _lt += _offset
+        _st -= _offset
+    _net_capital = _st + _lt
+    capital_loss_disallowed = 0.0
+    if _net_capital < -3000.0:
+        # After cross-netting, a net loss means both sides are ≤ 0 —
+        # scale them to sum to exactly −3000, preserving character.
+        capital_loss_disallowed = -_net_capital - 3000.0
+        _scale = 3000.0 / -_net_capital
+        _st *= _scale
+        _lt *= _scale
+    realized_st_agi, realized_lt_agi = _st, _lt
+
     # Ordinary income = wages (salary − pre-tax benefits) + bonuses +
     # dividends/interest + ST capital gains.  ST gains stack with the
     # ordinary bracket schedule, so they belong in the bracket-fill
     # display.  LT gains feed AGI separately.
     ordinary_income = ((salary - pretax_deductions) + bonuses
-                       + portfolio_income + realized_st)
-    gross_income = ordinary_income + realized_lt
+                       + portfolio_income + realized_st_agi)
+    gross_income = ordinary_income + realized_lt_agi
     agi = max(0.0, gross_income - k401)
     taxable_ordinary = max(0.0, ordinary_income - k401 - std)
     # Total taxable income (drives LTCG bracket selection)
@@ -539,14 +568,21 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
     marginal_short = _marginal_for(taxable_ordinary, brackets)
     marginal_long = _marginal_for(taxable_income, ltcg)
     state_rate = float((retirement_meta or {}).get("state_tax_rate", 0) or 0)
-    est_fed = realized_st * marginal_short + realized_lt * marginal_long
-    est_state = (realized_st + realized_lt) * state_rate
+    # Estimated tax uses the NETTED gains (post cross-netting, floored
+    # at 0): a net capital loss owes no capital-gains tax — the old
+    # raw-value formula produced a negative "estimated tax" in loss
+    # years.
+    _tax_st = max(0.0, realized_st_agi)
+    _tax_lt = max(0.0, realized_lt_agi)
+    est_fed = _tax_st * marginal_short + _tax_lt * marginal_long
+    est_state = (_tax_st + _tax_lt) * state_rate
     # NIIT: 3.8% on the lesser of net investment income or (MAGI − threshold).
     niit_threshold = {
         "Single": 200000, "Head of Household": 200000,
         "Married Filing Jointly": 250000, "Married Filing Separately": 125000,
     }.get(status, 200000)
-    net_investment_income = max(0.0, realized_st + realized_lt + portfolio_income)
+    net_investment_income = max(0.0, realized_st_agi + realized_lt_agi
+                                + portfolio_income)
     est_niit = 0.038 * min(net_investment_income, max(0.0, agi - niit_threshold))
     est_cap_gains_total = est_fed + est_state + est_niit
 
@@ -644,6 +680,12 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
         "portfolio_income_ytd": round(portfolio_income_ytd, 2),
         "realized_st": round(realized_st, 2),
         "realized_lt": round(realized_lt, 2),
+        # Post-netting values that actually feed AGI (net capital loss
+        # capped at −$3,000; the disallowed excess carries forward,
+        # which fin doesn't model).
+        "realized_st_agi": round(realized_st_agi, 2),
+        "realized_lt_agi": round(realized_lt_agi, 2),
+        "capital_loss_disallowed": round(capital_loss_disallowed, 2),
         # Accounts whose realized gain was overridden by a broker-reported
         # Reconcile Realized figure (off-platform basis fin can't see).
         "realized_override_accounts": _override_accts,

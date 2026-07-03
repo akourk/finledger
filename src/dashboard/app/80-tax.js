@@ -93,6 +93,7 @@ function estimateTaxRates(year) {
       portfolioIncomeYtd: py.portfolio_income_ytd,
       realizedST: py.realized_st || 0,
       realizedLT: py.realized_lt || 0,
+      capitalLossDisallowed: py.capital_loss_disallowed || 0,
       k401: py.k401,
       k401Ytd: py.k401_ytd,
       k401Limit: py.k401_limit,
@@ -855,6 +856,7 @@ function renderTax() {
           <div>Portfolio income${est.isProjection ? ' (projected)' : ''}: <b>${fmtMoney(est.portfolioIncome)}</b>${est.isProjection && est.portfolioIncomeYtd != null ? ` <span style="color:var(--text-dim);font-size:0.75rem;">YTD ${fmtMoney(est.portfolioIncomeYtd)}</span>` : ''}</div>
           <div>Realized ST gains${est.isProjection ? ' (YTD)' : ''}: <b class="${(est.realizedST || 0) >= 0 ? 'positive' : 'negative'}">${fmtSigned(est.realizedST || 0)}</b></div>
           <div>Realized LT gains${est.isProjection ? ' (YTD)' : ''}: <b class="${(est.realizedLT || 0) >= 0 ? 'positive' : 'negative'}">${fmtSigned(est.realizedLT || 0)}</b></div>
+          ${est.capitalLossDisallowed ? `<div>Capital-loss cap (−$3,000 max vs ordinary): <b class="positive">${fmtSigned(est.capitalLossDisallowed)}</b> <span style="color:var(--text-dim);font-size:0.75rem;">added back — excess carries forward (not modeled)</span></div>` : ''}
           <div>401K contribution${est.isProjection ? ' (projected)' : ''}: <b class="negative">${fmtMoney(-est.k401)}</b>${est.isProjection && est.k401Ytd != null ? ` <span style="color:var(--text-dim);font-size:0.75rem;">YTD ${fmtMoney(est.k401Ytd)}${est.k401Limit ? ` · cap ${fmtMoney(est.k401Limit, 0)}` : ''}</span>` : ''}</div>
           ${est.pretaxDeductions ? `<div>Pre-tax paycheck deductions: <b class="negative">${fmtMoney(-est.pretaxDeductions)}</b> <span style="color:var(--text-dim);font-size:0.75rem;">medical etc. — reduce W-2 wages</span></div>` : ''}
           <div>Standard deduction: <b class="negative">${fmtMoney(-est.stdDed)}</b></div>
