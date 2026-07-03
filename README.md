@@ -395,15 +395,15 @@ staged additions contain a token listed in `.pii-denylist.txt` (a
 gitignored, local-only file of your real emails / account ids / distinctive
 figures). It's a mechanical backstop so personal data can't slip into a
 tracked file — e.g. a real dollar amount hardcoded into a test. **Enable it
-once per clone:**
+once per clone** (it also seeds a starter denylist):
 
 ```bash
-git config core.hooksPath githooks
+sh tools/install-hooks.sh     # sets core.hooksPath=githooks
 ```
 
-Seed `.pii-denylist.txt` with your high-precision tokens (see the template
-comments); add new real figures as you use them. Keep test fixtures and
-commit messages synthetic/qualitative — never your actual figures.
+Then add your high-precision tokens to `.pii-denylist.txt`, and add new real
+figures as you use them. Keep test fixtures and commit messages
+synthetic/qualitative — never your actual figures.
 
 If you're publishing a fork of this project:
 

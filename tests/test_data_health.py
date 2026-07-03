@@ -389,3 +389,28 @@ def test_history_holdings_basis_parity_clean_when_matching(cache_dir):
         analytics={}, cache_dir=cache_dir,
     )
     assert not any(i["kind"] == "history_holdings_basis_parity" for i in issues)
+
+
+def test_realized_drift_tolerates_per_year_rounding():
+    """The by-year realized rows are rounded to cents; summing many of
+    them drifts from the unrounded txn total by a few cents — that's
+    rounding, not a real inconsistency, and must not warn."""
+    from src.analytics.data_health import _check_realized_gain_reconciliation
+    # 9 year rows each carrying a rounded st gain; the unrounded txn
+    # total is a hair off the sum of the rounded rows.
+    ry = [{"year": str(2017 + i), "st": round(100.0 + i * 0.333, 2), "lt": 0.0}
+          for i in range(9)]
+    ay = sum(r["st"] for r in ry)
+    txns = [{"realized_gain": ay + 0.02}]   # 2-cent rounding drift
+    assert _check_realized_gain_reconciliation(txns, {"tax": {"realized_by_year": ry}}) == []
+
+
+def test_realized_drift_flags_material_gap():
+    """A real inconsistency (well beyond per-row rounding) still warns."""
+    from src.analytics.data_health import _check_realized_gain_reconciliation
+    ry = [{"year": "2024", "st": 1000.0, "lt": 500.0}]
+    txns = [{"realized_gain": 2000.0}]      # $500 off — not rounding
+    issues = _check_realized_gain_reconciliation(txns, {"tax": {"realized_by_year": ry}})
+    assert len(issues) == 1
+    assert issues[0]["kind"] == "realized_gain_drift"
+    assert issues[0]["severity"] == "warn"

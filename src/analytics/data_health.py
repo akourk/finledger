@@ -117,7 +117,12 @@ def _check_realized_gain_reconciliation(txns: list[dict],
     ay = sum((r.get("st", 0) or 0) + (r.get("lt", 0) or 0)
              for r in ry if isinstance(r, dict))
     diff = txn_sum - ay
-    if abs(diff) < 0.01:
+    # The by-year rows are each rounded to cents, so summing N of them
+    # drifts from the unrounded txn total by up to ~$0.005 × N — pure
+    # rounding, not a real inconsistency.  Tolerate a penny per year row
+    # (floor $0.01) so a clean portfolio doesn't perpetually warn.
+    tolerance = max(0.01, 0.01 * len(ry))
+    if abs(diff) <= tolerance:
         return []
     return [{
         "kind": "realized_gain_drift",
