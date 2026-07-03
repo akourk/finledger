@@ -136,19 +136,19 @@ def test_form_8949_various_when_no_holding_days():
 def test_reconcile_realized_override_replaces_fin_computed():
     """A Reconcile Realized row makes the tax/MAGI calc trust the broker
     figure over fin's reconstruction (off-platform basis fin can't see).
-    fin computes $80k realized; the broker reported $19,025.81 → AGI uses
+    fin computes $80k realized; the broker reported $15,000 → AGI uses
     the broker number, preserving fin's short-term character."""
     from src.analytics.tax import _tax_rate_estimate
     meta = {"filing_status": "Single",
             "salary_history": [{"date": "2023-01-01", "amount": 120000}],
             "reconcile": [{"kind": "realized", "account_group": "Coinbase",
-                           "date": "2024", "amount": 20000.00}]}
+                           "date": "2024", "amount": 15000.0}]}
     txns = [{"date": "2024-03-01", "account_type": "Taxable",
              "account_group": "Coinbase", "symbol": "ETH-USD",
              "realized_gain": 80000, "holding_days": 100,
              "amount": 100000, "cost_basis": 20000}]
     e = _tax_rate_estimate("2024", meta, txns)
-    assert e["realized_st"] == pytest.approx(20000.00)   # overridden, not 80000
+    assert e["realized_st"] == pytest.approx(15000.0)   # overridden, not 80000
     assert e["realized_lt"] == 0.0
     assert e["realized_override_accounts"] == ["Coinbase"]
 

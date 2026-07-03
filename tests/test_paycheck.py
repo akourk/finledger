@@ -150,18 +150,18 @@ def test_metadata_parses_tax_return_rows(tmp_path):
     from src.metadata import parse_metadata
     (tmp_path / "metadata.csv").write_text(
         "Type,Date,Amount,Symbol,Note\n"
-        "Tax Return,2025,22000,Total Tax,1040 line 24\n"
-        "Tax Return,2025,150000,AGI,1040 line 11\n"
-        "Tax Return,2025,17479,Withholding,1040 line 25d\n"
-        "Tax Return,2024,20000,Total Tax,1040 line 24\n"
+        "Tax Return,2025,12000,Total Tax,1040 line 24\n"
+        "Tax Return,2025,95000,AGI,1040 line 11\n"
+        "Tax Return,2025,9000,Withholding,1040 line 25d\n"
+        "Tax Return,2024,11000,Total Tax,1040 line 24\n"
         "Tax Return,2025,999,Nonsense Field,ignored\n",
         encoding="utf-8")
     meta = parse_metadata(tmp_path)
     tr = meta["tax_returns"]
-    assert tr["2025"]["total_tax"] == 22000.0
-    assert tr["2025"]["agi"] == 150000.0
-    assert tr["2025"]["withholding"] == 17479.0
-    assert tr["2024"]["total_tax"] == 20000.0
+    assert tr["2025"]["total_tax"] == 12000.0
+    assert tr["2025"]["agi"] == 95000.0
+    assert tr["2025"]["withholding"] == 9000.0
+    assert tr["2024"]["total_tax"] == 11000.0
     assert "nonsense_field" not in tr["2025"]
 
 
@@ -186,17 +186,17 @@ def test_metadata_parses_paycheck_rows(tmp_path):
     from src.metadata import parse_metadata
     (tmp_path / "metadata.csv").write_text(
         "Type,Date,Amount,Symbol,Note\n"
-        "Paycheck Deduction,,110.00,Pre-Tax,Medical/PPO Before-Tax\n"
-        "Paycheck Deduction,,-7.50,Pre-Tax,Wellness Incentive\n"
-        "Paycheck Deduction,,300.00,Tax,OASDI\n"
-        "Paycheck Deduction,,13.99,Post-Tax,Long-Term Disability\n"
+        "Paycheck Deduction,,100.00,Pre-Tax,Medical Premium\n"
+        "Paycheck Deduction,,-5.00,Pre-Tax,Wellness Incentive\n"
+        "Paycheck Deduction,,250.00,Tax,OASDI\n"
+        "Paycheck Deduction,,10.00,Post-Tax,Long-Term Disability\n"
         "Paycheck Deduction,,5.00,Bogus Kind,Ignored row\n"
         "Pay Frequency,,26,,Biweekly\n",
         encoding="utf-8")
     meta = parse_metadata(tmp_path)
     rows = {r["label"]: r for r in meta["paycheck_deductions"]}
-    assert rows["Medical/PPO Before-Tax"]["kind"] == "pretax"
-    assert rows["Wellness Incentive"]["amount"] == -7.50
+    assert rows["Medical Premium"]["kind"] == "pretax"
+    assert rows["Wellness Incentive"]["amount"] == -5.00
     assert rows["OASDI"]["kind"] == "tax"
     assert rows["Long-Term Disability"]["kind"] == "posttax"
     assert "Ignored row" not in rows          # unknown kind dropped
@@ -297,13 +297,13 @@ def test_capital_loss_capped_at_3000_for_agi():
     from src.analytics.tax import _tax_rate_estimate
     cur = date.today().year
     est = _tax_rate_estimate(str(cur), _meta(),
-                             _sell(cur, st_gain=-153.69, lt_gain=-30000.00))
+                             _sell(cur, st_gain=-200.0, lt_gain=-9800.0))
     # Raw figures preserved for display…
-    assert est["realized_st"] == pytest.approx(-153.69)
-    assert est["realized_lt"] == pytest.approx(-30000.00)
+    assert est["realized_st"] == pytest.approx(-200.0)
+    assert est["realized_lt"] == pytest.approx(-9800.0)
     # …but AGI only drops by the capped $3,000.
     assert est["realized_st_agi"] + est["realized_lt_agi"] == pytest.approx(-3000.0)
-    assert est["capital_loss_disallowed"] == pytest.approx(27259.60 - 3000.0)
+    assert est["capital_loss_disallowed"] == pytest.approx(10000.0 - 3000.0)
     assert est["agi"] == pytest.approx(104000.0 - 2340.0 - 3000.0)
     # A net loss owes no capital-gains tax (was negative before the fix).
     assert est["est_cap_gains_tax_total"] == 0.0
