@@ -268,7 +268,7 @@ def _refresh_prices_only(args) -> None:
     # the refresh path would silently disagree with the full run.
     from .broker_lots import (load_acquisition_lots, load_disposal_lots,
                               stamp_acquisition_basis)
-    disposal_lots = load_disposal_lots(DATA_DIR)
+    disposal_lots = load_disposal_lots(DATA_DIR, txns)
     stamp_acquisition_basis(txns, load_acquisition_lots(DATA_DIR))
 
     print("Computing portfolio history with refreshed prices...")
@@ -555,13 +555,14 @@ def main():
         for _w in _cb_warn:
             print(f"    ! {_w}")
 
-    # Broker-reported disposal lots (Coinbase gain/loss report in data/,
-    # scanner-skipped) — direct sell-consumption to the exact lots the
-    # broker's tax engine consumed, superseding the method order where
-    # the report has rows.  See src/broker_lots.py.
+    # Broker-reported disposal lots (Coinbase gain/loss report + Robinhood
+    # consolidated 1099 in data/, scanner-skipped) — direct sell-consumption
+    # to the exact lots the broker reported, superseding the method order
+    # where the report has rows.  Robinhood needs `txns` to resolve the
+    # 1099-B security name to fin's symbol.  See src/broker_lots.py.
     from .broker_lots import (load_acquisition_lots, load_disposal_lots,
                               stamp_acquisition_basis)
-    disposal_lots = load_disposal_lots(DATA_DIR)
+    disposal_lots = load_disposal_lots(DATA_DIR, txns)
     if disposal_lots:
         _n_lots = sum(len(v) for v in disposal_lots.values())
         print(f"  Broker lot report: {_n_lots} disposal lot(s) across "

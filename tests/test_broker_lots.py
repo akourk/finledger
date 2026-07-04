@@ -297,3 +297,87 @@ def test_history_mirrors_neutral_rebase(stub_prices):
     fifo = compute_basis_default(txns)
     holdings = state_to_holdings(fifo, "fifo")
     assert sum(h["cost_basis"] for h in holdings) == pytest.approx(13768.0)
+
+
+# ---------------------------------------------------------------------------
+# Robinhood consolidated 1099 → stock lot-relief hints
+# ---------------------------------------------------------------------------
+
+def _write_rh_1099(path):
+    path.write_text(
+        "1099-DIV,ACCOUNT NUMBER,TAX YEAR,ORDINARY DIV,QUALIFIED DIV\n"
+        "1099-DIV,X,2024,10.00,10.00\n"
+        "1099-INT,ACCOUNT NUMBER,TAX YEAR,PAYER RTN,INT INCOME\n"
+        "1099-INT,X,2024,,5.00\n"
+        "1099-B,ACCOUNT NUMBER,TAX YEAR,DATE ACQUIRED,SALE DATE,DESCRIPTION,"
+        "SHARES,COST BASIS,SALES PRICE,TERM,WASH AMT DISALLOWED\n"
+        "1099-B,X,2024,20190601,20240301,APPLE INC. COMMON STOCK,10,1000.00,2000.00,LONG,0\n"
+        "1099-B,X,2024,20230601,20240301,APPLE INC. COMMON STOCK,5,900.00,1000.00,SHORT,0\n"
+        "1099-B,X,2024,20240101,20240401,NVDA 06/21/2024 CALL $120.00,1,300.00,500.00,SHORT,0\n",
+        encoding="utf-8")
+
+
+def _rh_sell(date, symbol, qty, amount):
+    return {"date": date, "account": "Robinhood", "account_group": "Robinhood",
+            "account_type": "Taxable", "symbol": symbol, "action": "Sell",
+            "quantity": qty, "price": 0.0, "fees": 0.0, "amount": amount,
+            "description": "", "source": "test"}
+
+
+def test_robinhood_1099_multi_section_parse(tmp_path):
+    from src.broker_lots import _parse_1099b_rows
+    _write_rh_1099(tmp_path / "robinhood-1099-2024.csv")
+    rows = _parse_1099b_rows(tmp_path / "robinhood-1099-2024.csv")
+    # Only the three 1099-B data rows (DIV/INT ignored); dates normalized.
+    assert len(rows) == 3
+    aapl = [r for r in rows if "APPLE" in r["desc"]]
+    assert len(aapl) == 2
+    assert aapl[0]["acquired"] == "2019-06-01"
+    assert aapl[0]["sold"] == "2024-03-01"
+
+
+def test_robinhood_1099_lots_resolves_symbol_by_txn(tmp_path):
+    from src.broker_lots import load_robinhood_1099_lots
+    _write_rh_1099(tmp_path / "robinhood-1099-2024.csv")
+    # fin Sell of 15 AAPL on the sale date, proceeds 3000 (=2000+1000).
+    txns = [_rh_sell("2024-03-01", "AAPL", 15.0, 3000.0)]
+    hints = load_robinhood_1099_lots(tmp_path, txns)
+    assert hints is not None
+    key = ("Robinhood", "AAPL", "2024-03-01")
+    assert key in hints
+    lots = hints[key]
+    assert len(lots) == 2                      # two tax lots
+    assert {round(l["per_unit"], 2) for l in lots} == {100.0, 180.0}
+    # The option row was skipped entirely.
+    assert not any(k[1].endswith("$120.00") or "NVDA" in k[1] for k in hints)
+
+
+def test_robinhood_1099_directs_realized_gain(isolated_workdir):
+    """End-to-end: with the 1099-B hint, fin's AAPL sale consumes the
+    lot the report names — changing which basis is realized vs FIFO."""
+    from src.broker_lots import load_robinhood_1099_lots
+    from src.basis import compute_basis_default
+    # fin pool: a cheap 2019 lot + a pricier 2023 lot, both held.
+    txns = [
+        _rh_sell("2019-06-01", "AAPL", 0, 0),   # placeholder replaced below
+    ]
+    txns = [
+        {"date": "2019-06-01", "account_group": "Robinhood", "account": "Robinhood",
+         "account_type": "Taxable", "symbol": "AAPL", "action": "Buy",
+         "quantity": 10, "price": 100.0, "fees": 0, "amount": 1000.0,
+         "description": "", "source": "t"},
+        {"date": "2023-06-01", "account_group": "Robinhood", "account": "Robinhood",
+         "account_type": "Taxable", "symbol": "AAPL", "action": "Buy",
+         "quantity": 5, "price": 180.0, "fees": 0, "amount": 900.0,
+         "description": "", "source": "t"},
+        _rh_sell("2024-03-01", "AAPL", 5.0, 1000.0),   # sell 5 sh
+    ]
+    # Report says the 2024-03-01 sale of 5 sh consumed the 2023 lot.
+    hints = {("Robinhood", "AAPL", "2024-03-01"): [
+        {"acquired": "2023-06-01", "qty": 5, "qty_left": 5, "per_unit": 180.0}]}
+    directed = compute_basis_default(txns, disposal_lots=hints)
+    # Directed → basis 900 (2023 lot): realized 1000 − 900 = 100.
+    assert directed["realized_total"] == pytest.approx(100.0)
+    plain = compute_basis_default([dict(t) for t in txns])
+    # FIFO → cheap 2019 lot (basis 500): realized 1000 − 500 = 500.
+    assert plain["realized_total"] == pytest.approx(500.0)

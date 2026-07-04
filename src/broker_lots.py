@@ -37,6 +37,7 @@ from pathlib import Path
 
 # The account group the Coinbase tax-center report describes.
 _REPORT_ACCOUNT_GROUP = "Coinbase"
+_ROBINHOOD_ACCOUNT_GROUP = "Robinhood"
 
 # Header signature — matches the scanner's skip rule for this file.
 _LOT_ID_COL = "tax lot id"
@@ -51,14 +52,27 @@ def _norm_symbol(asset: str) -> str:
 
 
 def _iso(s: str) -> str:
-    """Normalize the report's MM/DD/YYYY (or ISO) date to YYYY-MM-DD."""
+    """Normalize a report date (MM/DD/YYYY, YYYYMMDD, or ISO) to
+    YYYY-MM-DD.  Empty / unparseable → "" (Robinhood leaves acquired
+    blank for "Various" lots)."""
     s = (s or "").strip()
     if "/" in s:
         parts = s.split("/")
         if len(parts) == 3:
             m, d, y = parts
             return f"{y[:4]}-{int(m):02d}-{int(d):02d}"
+    if len(s) == 8 and s.isdigit():        # YYYYMMDD (Robinhood 1099-B)
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
     return s[:10]
+
+
+def _pdate(s: str):
+    """Parse an ISO YYYY-MM-DD (or 10-char prefix) into a date, else None."""
+    from datetime import date as _d
+    try:
+        return _d.fromisoformat((s or "")[:10])
+    except ValueError:
+        return None
 
 
 def _num(s: str) -> float:
@@ -82,14 +96,22 @@ def _is_gainloss_file(path: Path) -> bool:
     return False
 
 
-def load_disposal_lots(data_dir: Path) -> dict[tuple[str, str, str], list[dict]] | None:
-    """Find + parse gain/loss report(s) in ``data_dir``.
+def load_disposal_lots(data_dir: Path,
+                       txns: list[dict] | None = None
+                       ) -> dict[tuple[str, str, str], list[dict]] | None:
+    """Find + parse broker disposal reports in ``data_dir`` into the
+    per-disposal lot-hint dict, or ``None`` when none are present.
 
-    Returns the hint dict described in the module docstring, or ``None``
-    when no report file exists.  Multiple report files merge (rows
-    accumulate per key) — harmless if the user drops overlapping
-    exports, since hints direct consume ORDER; exhausted hints simply
-    fall back to the method order.
+    Merges two sources into one dict keyed by
+    ``(account_group, symbol, sale_date)``:
+      - Coinbase tax-center gain/loss report(s) (symbol from the report)
+      - Robinhood consolidated 1099 CSV(s) 1099-B section (symbol resolved
+        from ``txns`` by matching each disposal to fin's Sell) — only when
+        ``txns`` is supplied.
+
+    Multiple report files merge (rows accumulate per key) — harmless if
+    the user drops overlapping exports, since hints direct consume ORDER;
+    exhausted hints simply fall back to the method order.
     """
     if not data_dir.exists():
         return None
@@ -108,6 +130,13 @@ def load_disposal_lots(data_dir: Path) -> dict[tuple[str, str, str], list[dict]]
                     "qty_left": row["qty"],
                     "per_unit": row["per_unit"],
                 })
+
+    rh = load_robinhood_1099_lots(data_dir, txns) if txns else None
+    if rh:
+        found = True
+        for k, v in rh.items():
+            out.setdefault(k, []).extend(v)
+
     return out if found else None
 
 
@@ -149,6 +178,162 @@ def _parse_gainloss(path: Path) -> list[dict]:
             "per_unit": basis / qty if qty > 0 else 0.0,
         })
     return out
+
+
+# ---------------------------------------------------------------------------
+# Robinhood consolidated 1099 — 1099-B per-lot disposals (STOCK lot relief)
+# ---------------------------------------------------------------------------
+# The yearly consolidated 1099 CSV is multi-section: column 0 tags each row's
+# form (1099-DIV / 1099-INT / 1099-B / 1099-MISC) and each section carries its
+# own header row (col 1 == "ACCOUNT NUMBER").  The 1099-B section is the
+# per-lot capital-gains detail — one row per tax lot a sale consumed:
+# DATE ACQUIRED, SALE DATE, DESCRIPTION, SHARES, COST BASIS, SALES PRICE, TERM.
+#
+# fin's own Robinhood transaction CSVs already carry accurate buy prices, so
+# unlike Coinbase we don't need the 1099 for BASIS — we need it for lot RELIEF
+# ORDER (which acquisition lot each sale consumed; e.g. the NVDA sale fin's
+# FIFO relieves short-term while the 1099-B reports it long-term).  The
+# DESCRIPTION is a full security NAME (not a ticker) with a fixed-width
+# space-wrap artifact, so instead of name→ticker resolution we match each
+# disposal to fin's own Sell txn by (sale date, shares, proceeds) and take the
+# symbol from there.  Options are skipped: each option position is a single
+# lot, so lot relief is a no-op for them (their realized differences are
+# BTO/STC pairing, not lot order).
+
+_1099_FORMS = {"1099-DIV", "1099-INT", "1099-B", "1099-MISC"}
+
+
+def _is_robinhood_1099_file(path: Path) -> bool:
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            head = "".join(f.readline() for _ in range(4)).lower()
+    except OSError:
+        return False
+    return "1099-div" in head or ("date acquired" in head and "sale date" in head)
+
+
+def _parse_1099b_rows(path: Path) -> list[dict]:
+    """Section-aware parse of one consolidated 1099: yield one dict per
+    1099-B DATA row.  Tracks the 1099-B header's column positions (a
+    header row is the one whose column 1 is the literal "ACCOUNT NUMBER")
+    so the section boundaries are handled exactly as the user described —
+    switch on the column-0 form tag."""
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.reader(f))
+    except OSError:
+        return []
+    bcols = None
+    out: list[dict] = []
+    for r in rows:
+        if not r or r[0] not in _1099_FORMS:
+            continue
+        if r[0] != "1099-B":
+            continue
+        if len(r) > 1 and r[1].strip().upper() == "ACCOUNT NUMBER":
+            bcols = {c.strip().lower(): i for i, c in enumerate(r)}
+            continue
+        if bcols is None:
+            continue
+
+        def g(name: str) -> str:
+            i = bcols.get(name)
+            return r[i].strip() if (i is not None and i < len(r)) else ""
+
+        desc = " ".join(g("description").split())   # collapse wrap-artifact spaces
+        shares = _num(g("shares"))
+        if shares <= 0 or not desc:
+            continue
+        out.append({
+            "desc":     desc,
+            "acquired": _iso(g("date acquired")),
+            "sold":     _iso(g("sale date")),
+            "shares":   shares,
+            "basis":    _num(g("cost basis")),
+            "proceeds": _num(g("sales price")),
+        })
+    return out
+
+
+def _is_option_desc(desc: str) -> bool:
+    u = desc.upper()
+    return " CALL $" in u or " PUT $" in u
+
+
+def load_robinhood_1099_lots(data_dir: Path,
+                             txns: list[dict]) -> dict | None:
+    """Parse Robinhood consolidated 1099 CSV(s) → STOCK disposal-lot hints
+    keyed by ``(Robinhood, symbol, sale_date)`` (same shape as the
+    Coinbase gain/loss hints).  ``txns`` is required to resolve the
+    symbol.  Returns ``None`` when no 1099 file is present.
+    """
+    if not data_dir.exists() or not txns:
+        return None
+
+    # fin's Robinhood STOCK sells (options excluded) with proceeds.
+    sells: list[dict] = []
+    for t in txns:
+        if t.get("account_group") != _ROBINHOOD_ACCOUNT_GROUP:
+            continue
+        sym = t.get("symbol", "") or ""
+        if " Call " in sym or " Put " in sym:
+            continue
+        if (t.get("action") or "") != "Sell":
+            continue
+        d = _pdate(t.get("date", ""))
+        q = float(t.get("quantity", 0) or 0)
+        if d is None or q <= 0:
+            continue
+        sells.append({"date": d, "symbol": sym, "qty": q,
+                      "amt": abs(float(t.get("amount", 0) or 0))})
+
+    out: dict = {}
+    found = False
+    for p in sorted(data_dir.glob("*.csv")):
+        if not _is_robinhood_1099_file(p):
+            continue
+        found = True
+        rows = [r for r in _parse_1099b_rows(p)
+                if not _is_option_desc(r["desc"])]
+        # Group by (sale date, security) — one sale can consume several
+        # tax lots (multiple rows), all sharing the fin Sell txn.
+        groups: dict = {}
+        for r in rows:
+            groups.setdefault((r["sold"], r["desc"]), []).append(r)
+
+        for (sold, desc), grp in groups.items():
+            sd = _pdate(sold)
+            if sd is None:
+                continue
+            tot_sh = sum(r["shares"] for r in grp)
+            tot_pr = sum(r["proceeds"] for r in grp)
+            # Match to fin's Sell: date ±3d, shares within 2%, proceeds
+            # within 5% (a mis-match is a safe no-op — a hint on the wrong
+            # symbol simply won't find a lot and falls back to the method).
+            best = None
+            best_score = None
+            for s in sells:
+                if abs((s["date"] - sd).days) > 3:
+                    continue
+                if abs(s["qty"] - tot_sh) > max(1e-6, tot_sh * 0.02):
+                    continue
+                if tot_pr > 0 and abs(s["amt"] - tot_pr) > max(1.0, tot_pr * 0.05):
+                    continue
+                score = (abs((s["date"] - sd).days), abs(s["qty"] - tot_sh))
+                if best_score is None or score < best_score:
+                    best, best_score = s, score
+            if best is None:
+                continue
+            key_sym = best["symbol"]
+            for r in grp:
+                out.setdefault(
+                    (_ROBINHOOD_ACCOUNT_GROUP, key_sym, r["sold"]), []).append({
+                        "acquired": r["acquired"],
+                        "qty":      r["shares"],
+                        "qty_left": r["shares"],
+                        "per_unit": r["basis"] / r["shares"] if r["shares"] > 0 else 0.0,
+                    })
+    return out if found else None
 
 
 def hints_for(disposal_lots: dict | None, account_group: str, symbol: str,
