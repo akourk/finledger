@@ -856,7 +856,22 @@ threads through every consumer.
   while fin's convert legs are dated at the convert — per-year realized
   still shows offsetting timing drift vs the report in convert-heavy
   years (net lifetime delta is small; `Reconcile Realized` rows keep
-  tax figures broker-authoritative).
+  tax figures broker-authoritative).  **Robinhood** consolidated 1099
+  CSVs (`robinhood-1099-{year}.csv`, scanner-`skip`) feed the same
+  disposal-lot mechanism via `load_robinhood_1099_lots(data_dir, txns)`:
+  a section-aware parse of the multi-section 1099 (switch on the
+  column-0 form tag; header row = col1 == "ACCOUNT NUMBER") pulls the
+  1099-B per-lot rows, and each disposal is resolved to fin's Sell txn
+  by (sale date, shares, proceeds) — the DESCRIPTION is a security
+  NAME, not a ticker, so txn-matching sidesteps name→ticker resolution.
+  Options are skipped (single-lot; no relief benefit).  This directs
+  each stock sale to the acquisition lot the broker actually relieved,
+  correcting fin's FIFO short-vs-long-term mis-classification.  Only
+  the consume ORDER is directed — fin keeps its OWN per-lot basis (its
+  Robinhood buy prices are accurate), so year TOTALS keep a small
+  residual vs the 1099-B; tax stays broker-authoritative via the
+  Reconcile Realized override.  `load_disposal_lots` merges Coinbase +
+  Robinhood hints into one dict.
 - **`src/cusips.py`** — CUSIP extraction + collision diagnostic.
   Robinhood embeds CUSIPs in description fields; we capture them
   per-txn and surface ticker-rename candidates (different ticker
