@@ -25,7 +25,7 @@ def compute_daily_pnl(history: list[dict],
         return []
 
     from ..config import CASH_SYMBOLS
-    from ..prices import get_price
+    from ..prices import get_price, get_series
 
     # Use today's positions as the constant share count, reprice at
     # recent dates.  Same trick as compute_header_summary; means we
@@ -47,12 +47,32 @@ def compute_daily_pnl(history: list[dict],
     series = []
     prev_total = None
 
+    # Trading-day detection: a date only earns a bar if at least one
+    # held symbol has an ACTUAL close cached for that exact date.
+    # Without this, get_price's 7-day walk-back fills weekends and
+    # holidays with the prior close, emitting flat zero-change bars
+    # (except crypto, which trades 7 days and legitimately keeps its
+    # weekend dates).  Prefetch each symbol's series once for the
+    # window rather than probing per (date × symbol).
+    window_start = (today - timedelta(days=window_days)).isoformat()
+    series_by_sym: dict[str, dict] = {}
+    for pos in today_positions:
+        sym = pos.get("symbol", "")
+        if sym and sym not in CASH_SYMBOLS and sym not in series_by_sym:
+            series_by_sym[sym] = get_series(sym, window_start, today_str)
+    # If the cache covers nothing (fresh install, all txn-price
+    # fallbacks), keep the old emit-every-day behaviour rather than
+    # producing an empty chart.
+    have_cache = any(series_by_sym.values())
+
     # Walk back window_days calendar days (we'll skip dates with no
     # price coverage — handles weekends/holidays without us doing a
     # full trading-calendar lookup).
     for offset in range(window_days, -1, -1):
         d = today - timedelta(days=offset)
         d_iso = d.isoformat()
+        if have_cache and not any(d_iso in s for s in series_by_sym.values()):
+            continue   # no symbol actually closed on this date
         total = 0.0
         had_any_price = False
         for pos in today_positions:

@@ -112,7 +112,9 @@ def compute_income_calendar(txns: list[dict],
         if a not in _INCOME_ACTIONS:
             continue
         d = t.get("date", "")
-        if not d or d < one_year_ago:
+        # Same window as the TTM loop above — a future-dated row (bad
+        # parse, post-dated broker entry) must not add a phantom month.
+        if not d or d < one_year_ago or d > today_iso:
             continue
         amt = float(t.get("amount", 0) or 0)
         if amt <= 0:

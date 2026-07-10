@@ -117,7 +117,11 @@ def build_analytics(txns: list[dict], history: list[dict],
         try:
             birth = _dt.strptime(bd, "%Y-%m-%d").date()
             today = _dt.now().date()
-            age = (today - birth).days // 365
+            # Calendar age — days//365 drifts by the accumulated leap
+            # days (reports the birthday a week early by your 30s),
+            # which shifts the Monte Carlo horizon a year at the edges.
+            age = (today.year - birth.year
+                   - ((today.month, today.day) < (birth.month, birth.day)))
             # Monte Carlo horizon = years until the user's target
             # retirement age (data/metadata.csv `Retirement Age`,
             # default 67).  Naming the local `years_to_60` is

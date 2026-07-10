@@ -97,6 +97,11 @@ def compute_crypto_analytics(txns: list[dict], holdings: list[dict]) -> dict:
     # Totals
     total_value = sum((h.get("value") or 0) for h in crypto_holdings)
     total_basis = sum((h.get("cost_basis") or 0) for h in crypto_holdings)
+    # Unrealized sums the per-holding figures (present only when the
+    # coin is priced).  ``total_value - total_basis`` counted an
+    # unpriced coin's basis (value None → 0) as pure loss.
+    total_unrealized = sum((h.get("unrealized_gain") or 0)
+                           for h in crypto_holdings)
     total_realized = sum((t.get("realized_gain") or 0) for t in crypto_txns)
     total_income = sum(float(t.get("amount", 0) or 0)
                        for t in crypto_txns
@@ -108,7 +113,7 @@ def compute_crypto_analytics(txns: list[dict], holdings: list[dict]) -> dict:
         "stats": {
             "total_value": round(total_value, 2),
             "total_basis": round(total_basis, 2),
-            "total_unrealized": round(total_value - total_basis, 2),
+            "total_unrealized": round(total_unrealized, 2),
             "total_realized": round(total_realized, 2),
             "total_income": round(total_income, 2),
             "txn_count": len(crypto_txns),

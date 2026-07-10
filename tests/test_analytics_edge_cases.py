@@ -241,3 +241,57 @@ def test_trivial_filter_keeps_fractional_but_material_positions():
     assert "BTC-USD" not in trivial
     assert "ENVXW" in trivial
     assert ends["BTC-USD"] == "2023-06-05"
+
+
+def test_daily_pnl_skips_non_trading_days(isolated_workdir):
+    """Dates where NO held symbol has an actual cached close (weekends,
+    market holidays) must not emit bars — get_price's 7-day walk-back
+    used to fill them with the prior close, producing flat zero-change
+    entries.  Crypto symbols with weekend closes keep those dates."""
+    import json as _json
+    cache = isolated_workdir / "cache" / "price_cache.json"
+    # Mon 2025-01-06 .. Fri 01-10, then Mon 01-13.  11th/12th = weekend.
+    series = {f"2025-01-{d:02d}": 100.0 + d for d in (6, 7, 8, 9, 10, 13)}
+    cache.write_text(_json.dumps({"FOO": series}), encoding="utf-8")
+    from src.analytics.daily_pnl import compute_daily_pnl
+    history = [{"date": "2025-01-13", "total": 113.0,
+                "positions": [{"symbol": "FOO", "quantity": 1.0,
+                               "value": 113.0}]}]
+    out = compute_daily_pnl(history, [], window_days=10)
+    dates = {r["date"] for r in out}
+    assert "2025-01-11" not in dates
+    assert "2025-01-12" not in dates
+    assert "2025-01-13" in dates
+    assert len(dates) >= 3   # the weekday run survived
+
+
+def test_crypto_unrealized_ignores_unpriced_coins():
+    """A coin with basis but no price (value None) must not drag
+    total_unrealized down by its full basis."""
+    from src.analytics.crypto import compute_crypto_analytics
+    holdings = [
+        {"symbol": "BTC-USD", "quantity": 1, "value": 50000.0,
+         "cost_basis": 30000.0, "unrealized_gain": 20000.0},
+        {"symbol": "DEADCOIN-USD", "quantity": 100, "value": None,
+         "cost_basis": 5000.0, "unrealized_gain": None},
+    ]
+    out = compute_crypto_analytics([], holdings)
+    assert out["stats"]["total_unrealized"] == 20000.0
+
+
+def test_income_calendar_excludes_future_dated_income():
+    """A future-dated income row (bad parse / post-dated broker entry)
+    must not add a phantom month to the trailing-12mo chart."""
+    from datetime import date, timedelta
+    from src.analytics.income_calendar import compute_income_calendar
+    recent = (date.today() - timedelta(days=10)).isoformat()
+    future = (date.today() + timedelta(days=40)).isoformat()
+    txns = [
+        {"date": recent, "action": "Dividend", "symbol": "VTI", "amount": 10.0},
+        {"date": future, "action": "Dividend", "symbol": "VTI", "amount": 99.0},
+    ]
+    out = compute_income_calendar(txns, [])
+    months = {r["month"] for r in out["monthly_last_12mo"]}
+    assert future[:7] not in months
+    assert sum(r["amount"] for r in out["monthly_last_12mo"]) == 10.0
+    assert out["ttm_actual"] == 10.0
