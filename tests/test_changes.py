@@ -102,3 +102,17 @@ def test_build_analytics_with_bare_inputs_leaves_no_snapshot(tmp_path,
     out = build_analytics([], history, [], [], retirement_meta={})
     assert out["changes"].get("skipped_empty_run") is True
     assert not (tmp_path / "last_run.json").exists()
+
+
+def test_new_txn_on_already_seen_date_is_counted(tmp_path):
+    """A new txn landing on a date that already had activity must show
+    up in new_txns_by_date — the old set-membership diff hid it."""
+    from src.analytics.changes import compute_changes
+    compute_changes([_txn("2026-01-02")], _mk_holdings(100.0), [],
+                    {}, {}, tmp_path)
+    out = compute_changes(
+        [_txn("2026-01-02"), _txn("2026-01-02"), _txn("2026-01-03")],
+        _mk_holdings(120.0), [], {}, {}, tmp_path)
+    by_date = {r["date"]: r["count"] for r in out["new_txns_by_date"]}
+    assert by_date == {"2026-01-02": 1, "2026-01-03": 1}
+    assert out["txn_count_delta"] == 2

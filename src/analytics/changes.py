@@ -106,12 +106,18 @@ def compute_changes(txns: list[dict],
     if prev is None:
         return {"first_run": True, "current": payload}
 
-    # Build diff
-    prev_dates_set = set(prev.get("txn_dates", []))
+    # Build diff — per-date COUNT delta, not set membership.  The
+    # snapshot stores every txn's date, so a new txn landing on a date
+    # that already had activity (same-day re-export refresh, a broker
+    # backfilling a missed row) still shows up as +N on that date; the
+    # old membership test silently hid those.
+    from collections import Counter
+    prev_date_counts = Counter(prev.get("txn_dates", []))
     new_dates: dict[str, int] = {}
-    for d in payload["txn_dates"]:
-        if d not in prev_dates_set:
-            new_dates[d] = new_dates.get(d, 0) + 1
+    for d, c in Counter(payload["txn_dates"]).items():
+        delta = c - prev_date_counts.get(d, 0)
+        if delta > 0:
+            new_dates[d] = delta
 
     prev_by_sym = prev.get("value_by_symbol", {})
     movers = []
