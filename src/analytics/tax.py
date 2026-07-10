@@ -618,10 +618,16 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
             _pct = 1.10 if (_prior_agi or 0) > _agi_thr else 1.00
             prior_year_prong = _prior_tax * _pct
             # This year's projected total FEDERAL tax: ordinary bracket
-            # tax (wages + dividends + ST gains) + LTCG + NIIT.
+            # tax (wages + dividends + ST gains) + LTCG + NIIT.  The LTCG
+            # term uses the NETTED, floored-at-zero LT gain (_tax_lt) —
+            # the same value the estimated-cap-gains figure uses.  The
+            # raw realized_lt would let a net LT loss subtract loss ×
+            # LTCG-rate from the projection (only $3k of a net capital
+            # loss ever offsets income), understating the 90% prong and
+            # falsely reporting the safe harbor as covered.
             ordinary_tax = sum(b["tax_paid"] for b in bracket_fill)
             est_total_federal = (ordinary_tax
-                                 + realized_lt * marginal_long + est_niit)
+                                 + _tax_lt * marginal_long + est_niit)
             ninety_pct_prong = 0.9 * est_total_federal
             effective_target = min(prior_year_prong, ninety_pct_prong)
             # W-4 proxy: federal tax on wages only.

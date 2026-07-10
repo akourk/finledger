@@ -327,3 +327,42 @@ def test_capital_loss_cross_netting():
                               _sell(cur, st_gain=-1200.0))
     assert est2["realized_st_agi"] == pytest.approx(-1200.0)
     assert est2["capital_loss_disallowed"] == 0.0
+
+
+def test_safe_harbor_lt_loss_does_not_reduce_projected_tax():
+    """A net LT capital LOSS must not subtract loss × LTCG-rate from the
+    safe-harbor's projected federal tax.  The projection's LTCG term
+    uses the netted, floored-at-zero LT gain (same value as the
+    estimated-cap-gains figure) — the raw realized_lt once let a −$40k
+    loss knock $6k off the 90% prong and falsely report "covered"."""
+    from datetime import date
+    from src.analytics.tax import _tax_rate_estimate
+    cur = date.today().year
+    meta = _meta(tax_returns={str(cur - 1): {"total_tax": 12000.0,
+                                             "agi": 100000.0}})
+    lt_loss = [{
+        "date": f"{cur}-02-01", "symbol": "XYZ", "action": "Sell",
+        "account_group": "Robinhood", "account_type": "Taxable",
+        "quantity": 100, "amount": 10000.0, "realized_gain": -40000.0,
+        "cost_basis": 50000.0,
+        "lot_breakdown": [{
+            "date_acquired": f"{cur - 3}-01-15", "qty": 100,
+            "cost_basis": 50000.0, "proceeds": 10000.0, "days": 1100,
+        }],
+    }]
+    base = _tax_rate_estimate(str(cur), meta, [])
+    with_loss = _tax_rate_estimate(str(cur), meta, lt_loss)
+    sh_base, sh_loss = base["safe_harbor"], with_loss["safe_harbor"]
+    # The loss legitimately lowers ordinary tax a little (the −$3k
+    # capped deduction flows through the netted ST/LT AGI values), but
+    # never by anything close to loss × LTCG rate.
+    assert sh_loss["est_total_federal_tax"] >= sh_base["est_total_federal_tax"] - 3000 * 0.24
+    # And a positive-LT year still projects MORE tax than the base.
+    lt_gain = [dict(lt_loss[0], amount=90000.0, realized_gain=40000.0,
+                    lot_breakdown=[{
+                        "date_acquired": f"{cur - 3}-01-15", "qty": 100,
+                        "cost_basis": 50000.0, "proceeds": 90000.0,
+                        "days": 1100}])]
+    with_gain = _tax_rate_estimate(str(cur), meta, lt_gain)
+    assert (with_gain["safe_harbor"]["est_total_federal_tax"]
+            > sh_base["est_total_federal_tax"])
