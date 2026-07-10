@@ -40,6 +40,54 @@ def test_chain_link_uses_trailing_not_alltime_peak():
     assert r == pytest.approx(0.32, abs=0.01)
 
 
+def test_chain_link_carries_unabsorbed_flow_from_skipped_periods():
+    """A deposit whose cash sits invisible (USD in a non-Savings account
+    isn't tracked) and gets INVESTED in a later month must not book that
+    investment as market gain.
+
+    Scenario: $2,000 portfolio; $5,000 deposited in January (flow-guard
+    skips the period — flow >> balance — and the snapshot value doesn't
+    move because the cash is untracked); the $5,000 is invested Feb 1 so
+    the Feb snapshot jumps to $7,000 with zero February flow.  Without
+    the unabsorbed-flow carry the chain booked Feb as +250% pure gain.
+    With it, the carried $5,000 nets the jump out to ~0%.
+    """
+    from src.analytics._shared import _chain_link_return
+    snaps = [
+        {"date": "2022-12-31", "v": 2000.0},
+        {"date": "2023-01-31", "v": 2000.0},   # deposit invisible (cash)
+        {"date": "2023-02-28", "v": 7000.0},   # deposit invested Feb 1
+        {"date": "2023-03-31", "v": 7350.0},   # +5% real market month
+    ]
+    txns = [{"date": "2023-01-15", "account_group": "Robinhood",
+             "account_type": "Taxable", "action": "Deposit",
+             "symbol": "USD", "quantity": 0, "price": 0, "amount": 5000.0}]
+    r = _chain_link_return(snaps, lambda h: h["v"], txns, None)
+    # Only March's +5% is a real return; Jan is skipped (flow noise) and
+    # Feb's jump is the carried deposit, not gain.  Allow Dietz midpoint
+    # slack on the Feb period but rule out anything like the old +250%.
+    assert r == pytest.approx(0.05, abs=0.08)
+
+
+def test_chain_link_absorbed_flow_carries_nothing():
+    """The mirror case: when a skipped period's flow IS visible in its
+    ending value (contribution + buy land in the same snapshot — the
+    normal case), nothing carries; the next clean period is measured
+    against the already-grown base."""
+    from src.analytics._shared import _chain_link_return
+    snaps = [
+        {"date": "2023-01-31", "v": 1000.0},
+        {"date": "2023-02-28", "v": 7000.0},   # +$6k contributed AND invested
+        {"date": "2023-03-31", "v": 7700.0},   # +10% real market month
+    ]
+    txns = [{"date": "2023-02-10", "account_group": "X",
+             "account_type": "Retirement", "action": "Contribution",
+             "symbol": "FOO", "quantity": 1, "price": 6000.0,
+             "amount": 6000.0}]
+    r = _chain_link_return(snaps, lambda h: h["v"], txns, None)
+    assert r == pytest.approx(0.10, abs=0.01)
+
+
 def _assert_finite(obj, path="root"):
     """Recursively assert no float in `obj` is NaN or Infinity."""
     if isinstance(obj, float):

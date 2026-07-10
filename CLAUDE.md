@@ -138,7 +138,10 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       Retirement, Taxable, per-account) dict of `{annual: [...],
       summary: {...}, money_weighted: {...}, filter_groups: [...]}`.
       `summary` is Modified-Dietz TWR chained per sub-period with
-      bootstrap-noise guards; `money_weighted` is XIRR over the same
+      bootstrap-noise guards (a guard-skipped period's UNABSORBED
+      flow carries into the next measured period — a deposit whose
+      untracked cash is invested a month later must not book the
+      value jump as market gain); `money_weighted` is XIRR over the same
       natural window and flow rules (what the user's DOLLARS earned,
       contribution timing included — shown beside TWR on the
       Performance tab to surface the behavior gap).

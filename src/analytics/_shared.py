@@ -440,17 +440,23 @@ def compute_annual_returns(txns: list[dict], history: list[dict],
 
 
 def _period_return(prev: dict, curr: dict, val_fn, txns: list[dict],
-                   filter_groups: set | None) -> float | None:
+                   filter_groups: set | None,
+                   extra_flow: float = 0.0) -> float | None:
     """Modified-Dietz period return, with bootstrap-noise guards.
 
     Returns the period return as a fraction (e.g. 0.015 = 1.5%), or None
     if the period is too noisy to estimate (cash flow dwarfs share
     balance â€” typically early in a brokerage account before much of the
     cash has been invested).
+
+    ``extra_flow`` is unabsorbed flow carried in from earlier skipped
+    periods (see _chain_link_return) — treated as if it landed in this
+    period, so the value it eventually becomes isn't booked as gain.
     """
     sv = val_fn(prev)
     ev = val_fn(curr)
-    net = net_cash_flow(txns, prev.get("date", ""), curr.get("date", ""), filter_groups)
+    net = (net_cash_flow(txns, prev.get("date", ""), curr.get("date", ""), filter_groups)
+           + extra_flow)
     denom = sv + net / 2
     if denom <= 0:
         return None
@@ -484,12 +490,26 @@ def _chain_link_return(snaps: list[dict], val_fn, txns: list[dict],
     lifetime TWR disagree with the per-year table.  The trailing peak only
     skips a period once the portfolio has genuinely crashed to <1% of a
     level it actually reached.
+
+    **Unabsorbed-flow carry**: when a period is skipped by the noise
+    guards, its external flow can't just be dropped.  USD in non-Savings
+    accounts is invisible to snapshot value (see CLAUDE.md), so a deposit
+    that gets invested in a LATER month shows up as a value jump with no
+    flow — and skipping only the deposit month books that jump as pure
+    market gain (observed: a +175% phantom month that pushed a losing
+    year's chained TWR to +94%).  The portion of a skipped period's flow
+    that did NOT materialize in its ending value is carried forward and
+    treated as flow in the next measured period, so the value it becomes
+    is netted out rather than booked as return.  Flow that WAS absorbed
+    into the skipped period's value (the normal same-snapshot case)
+    carries nothing — the next period's start value already includes it.
     """
     if len(snaps) < 2:
         return None
     cumulative = 1.0
     any_valid = False
     peak_so_far = 0.0
+    pending_flow = 0.0   # unabsorbed external flow from skipped periods
     for i in range(1, len(snaps)):
         prev = snaps[i - 1]
         sv = val_fn(prev)
@@ -497,9 +517,22 @@ def _chain_link_return(snaps: list[dict], val_fn, txns: list[dict],
             peak_so_far = sv
         if sv < peak_so_far * 0.01:
             continue   # crashed to <1% of a prior high — skip from chain
-        r = _period_return(prev, snaps[i], val_fn, txns, filter_groups)
+        r = _period_return(prev, snaps[i], val_fn, txns, filter_groups,
+                           extra_flow=pending_flow)
         if r is None:
+            # Carry the part of this period's (flow + prior pending) that
+            # didn't show up in its ending value — contributed cash still
+            # in flight to the visible asset universe.  One-sided
+            # (deposits only): the sell-then-withdraw mirror image books
+            # offsetting phantom legs that roughly cancel in the chain,
+            # but a dropped deposit's gain leg has no offsetting loss leg.
+            net = (net_cash_flow(txns, prev.get("date", ""),
+                                 snaps[i].get("date", ""), filter_groups)
+                   + pending_flow)
+            absorbed = val_fn(snaps[i]) - sv
+            pending_flow = max(0.0, net - max(0.0, absorbed))
             continue
+        pending_flow = 0.0
         cumulative *= (1 + r)
         any_valid = True
     return cumulative - 1 if any_valid else None
