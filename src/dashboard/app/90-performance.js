@@ -917,7 +917,15 @@ function computeWindowedMetrics(filterKey, windowKey) {
 
   // Max drawdown over the windowed FILTERED values.  Resets the
   // running peak at window start so a high pre-window peak doesn't
-  // dominate.
+  // dominate.  For the LIFETIME window, mirror Python's
+  // drawdown.compute_drawdown small-base rule: drawdowns whose peak
+  // was below 5% of the filtered all-time peak are excluded — an
+  // early-portfolio crash on a tiny base isn't comparable to today's
+  // risk profile (the Calmar tooltip has always described this rule;
+  // the JS recompute previously skipped it and disagreed with the
+  // Python Drawdown section on the same tab).  Shorter windows skip
+  // the gate, same as Python's windowed slices.
+  const ddSmallBase = windowKey === 'lifetime' ? filteredPeak * 0.05 : 0;
   let runningPeak = 0;
   let curPeakDate = windowed[0].date;
   let mdd = 0, mddPeak = null, mddTrough = null;
@@ -928,7 +936,7 @@ function computeWindowedMetrics(filterKey, windowKey) {
       curPeakDate = h.date;
     } else if (runningPeak > 0) {
       const dd = (v - runningPeak) / runningPeak;
-      if (dd < mdd) {
+      if (dd < mdd && runningPeak >= ddSmallBase) {
         mdd = dd;
         mddPeak = curPeakDate;
         mddTrough = h.date;
@@ -1756,31 +1764,39 @@ function renderPerformance() {
     return `<div class="${cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
   }).join('') + '</div>';
 
-  // Top 10 winners (by total_gain)
+  // Top 10 winners — POSITIVE total_gain only.  Without the sign
+  // filter, a portfolio with fewer than 10 winning positions padded
+  // the table with losers rendered green (and the losers table showed
+  // winners).  Empty state instead of padding.
   const sortedByGain = [...positions].sort((a, b) => (b.total_gain || 0) - (a.total_gain || 0));
-  const winnerRows = sortedByGain.slice(0, 10).map(p => {
-    const pctStr = p.pctReturn != null ? (p.pctReturn >= 0 ? '+' : '') + p.pctReturn.toFixed(1) + '%' : '—';
-    return `<tr>
+  const _emptyRow = (msg) =>
+    `<tr><td colspan="5" style="color:var(--text-dim);">${msg}</td></tr>`;
+  const winnerRows = sortedByGain
+    .filter(p => (p.total_gain || 0) > 0)
+    .slice(0, 10).map(p => {
+      const pctStr = p.pctReturn != null ? (p.pctReturn >= 0 ? '+' : '') + p.pctReturn.toFixed(1) + '%' : '—';
+      return `<tr>
       <td><b>${symLabel(p.symbol)}</b></td>
       <td>${p.sector || ''}</td>
       <td class="num">${fmtMoney(p.value)}</td>
       <td class="num"><span class="positive">${fmtSigned(p.total_gain)}</span></td>
       <td class="num positive">${pctStr}</td>
     </tr>`;
-  }).join('');
+    }).join('') || _emptyRow('No positions in the green');
 
-  // Top 10 losers (most-negative total_gain)
-  const loserRows = [...sortedByGain].reverse().slice(0, 10).map(p => {
-    const pctStr = p.pctReturn != null ? (p.pctReturn >= 0 ? '+' : '') + p.pctReturn.toFixed(1) + '%' : '—';
-    const cls = (p.total_gain || 0) < 0 ? 'negative' : '';
-    return `<tr>
+  // Top 10 losers — NEGATIVE total_gain only (most-negative first).
+  const loserRows = [...sortedByGain].reverse()
+    .filter(p => (p.total_gain || 0) < 0)
+    .slice(0, 10).map(p => {
+      const pctStr = p.pctReturn != null ? (p.pctReturn >= 0 ? '+' : '') + p.pctReturn.toFixed(1) + '%' : '—';
+      return `<tr>
       <td><b>${symLabel(p.symbol)}</b></td>
       <td>${p.sector || ''}</td>
       <td class="num">${fmtMoney(p.value)}</td>
-      <td class="num"><span class="${cls}">${fmtSigned(p.total_gain)}</span></td>
-      <td class="num ${cls}">${pctStr}</td>
+      <td class="num"><span class="negative">${fmtSigned(p.total_gain)}</span></td>
+      <td class="num negative">${pctStr}</td>
     </tr>`;
-  }).join('');
+    }).join('') || _emptyRow('No positions in the red');
 
   root.innerHTML = `
     ${statsHtml}

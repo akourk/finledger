@@ -61,10 +61,12 @@ def compute_position_returns(txns: list[dict], holdings: list[dict]) -> dict:
             "pct_return": round(pct, 2) if pct is not None else None,
         })
     rows.sort(key=lambda x: -x["total_gain"])
+    # Sign-filtered: a portfolio with fewer than 10 winners must not pad
+    # the winners list with losing positions (and vice versa).
     return {
         "positions": rows,
-        "winners": rows[:10],
-        "losers": list(reversed(rows))[:10],
+        "winners": [r for r in rows if r["total_gain"] > 0][:10],
+        "losers": [r for r in reversed(rows) if r["total_gain"] < 0][:10],
     }
 
 
