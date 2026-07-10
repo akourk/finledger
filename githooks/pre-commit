@@ -35,7 +35,24 @@ added=$(git diff --cached --diff-filter=ACM -U0 | grep '^+' | grep -v '^+++')
 blocked=0
 while IFS= read -r token || [ -n "$token" ]; do
   case "$token" in ''|'#'*) continue ;; esac
-  if printf '%s\n' "$added" | grep -Fq -- "$token"; then
+  hit=0
+  case "$token" in
+    *[!0-9.,]*)
+      # Non-numeric token (email, account id) — plain substring match.
+      printf '%s\n' "$added" | grep -Fq -- "$token" && hit=1
+      ;;
+    *)
+      # Purely numeric token — require digit boundaries so it can't
+      # fire inside the decimal expansion of an unrelated number
+      # (a 6-digit token once matched the middle of a public market
+      # price in cache/price_cache.json).  The real figure still
+      # matches with $ / .00 / EOL around it — only an adjacent
+      # DIGIT disqualifies the hit.
+      esc=$(printf '%s' "$token" | sed 's/\./\\./g')
+      printf '%s\n' "$added" | grep -Eq -- "(^|[^0-9])${esc}(\$|[^0-9])" && hit=1
+      ;;
+  esac
+  if [ "$hit" -eq 1 ]; then
     if [ "$blocked" -eq 0 ]; then
       echo "pre-commit: BLOCKED — staged changes contain denylisted personal data:" >&2
       blocked=1
