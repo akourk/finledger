@@ -157,14 +157,36 @@ def rename_data_files(data_dir: Path, *, dry_run: bool = False) -> dict[str, str
     Uses a two-pass approach (temp names first) to avoid collisions.
     Returns {old_name: new_name} for files that were renamed.
     """
+    from .broker_lots import _is_robinhood_1099_file, robinhood_1099_tax_year
+
     # Group files by their canonical prefix
     prefix_files: dict[str, list[Path]] = defaultdict(list)
     skipped: list[str] = []
+    # Consolidated 1099s are scanner-"skip" (reference reports, never
+    # parsed as transactions) but still get the self-naming treatment:
+    # a fresh UUID-named yearly download renames to
+    # robinhood-1099-{TAX YEAR}.csv (year read from the file itself).
+    plan_1099: list[tuple[Path, str]] = []
+    claimed_1099: set[str] = {p.name for p in data_dir.glob("robinhood-1099-*.csv")}
 
     for csv_file in sorted(data_dir.glob("*.csv")):
         broker = detect_broker(csv_file)
 
         if broker in ("skip", "unknown"):
+            if broker == "skip" and _is_robinhood_1099_file(csv_file):
+                year = robinhood_1099_tax_year(csv_file)
+                final_1099 = f"robinhood-1099-{year}.csv" if year else None
+                if final_1099 and csv_file.name != final_1099:
+                    if final_1099 in claimed_1099:
+                        # A file with this year's canonical name already
+                        # exists (corrected-1099 re-download?) — never
+                        # clobber it; leave the new file for the user.
+                        print(f"  ! {csv_file.name}: {final_1099} already "
+                              f"exists — leaving as-is")
+                    else:
+                        claimed_1099.add(final_1099)
+                        plan_1099.append((csv_file, final_1099))
+                        continue
             skipped.append(csv_file.name)
             continue
         if broker == "manual":
@@ -193,6 +215,10 @@ def rename_data_files(data_dir: Path, *, dry_run: bool = False) -> dict[str, str
                 final_name = f"{prefix}-{i}.csv"
                 if f.name != final_name:
                     rename_plan.append((f, final_name))
+
+    # Consolidated-1099 renames ride the same two-pass mechanism; their
+    # target names can't collide with the canonical broker prefixes.
+    rename_plan.extend(plan_1099)
 
     if not rename_plan:
         return {}

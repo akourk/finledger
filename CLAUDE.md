@@ -33,7 +33,11 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
    `manual` / `skip` / `unknown`.
 2. **Rename** (`scanner.rename_data_files`) — two-pass rename to
    `{broker-prefix}.csv` or `{broker-prefix}-{n}.csv`. Two-pass (`.tmp-*`
-   intermediates) avoids collisions when swapping names.
+   intermediates) avoids collisions when swapping names.  Scanner-`skip`
+   files are left alone EXCEPT Robinhood consolidated 1099s: a fresh
+   UUID-named download self-names to `robinhood-1099-{TAX YEAR}.csv`
+   (year read from the file; an existing file with that name is never
+   clobbered).
 3. **Parse** (`parsers.parse_all_files`) — dispatch to a per-broker parser.
    Every parser returns the same 10-field dict (`date, account, symbol,
    action, quantity, price, fees, amount, description, source`).

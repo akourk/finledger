@@ -61,3 +61,44 @@ def test_robinhood_1099_is_skipped(tmp_path):
         "Trans Code,Quantity,Price,Amount\n",
         encoding="utf-8")
     assert detect_broker(txn) == "robinhood"
+
+
+def test_robinhood_1099_uuid_upload_auto_renames(tmp_path):
+    """A fresh UUID-named consolidated-1099 download self-names to
+    robinhood-1099-{TAX YEAR}.csv (year read from the file); an
+    existing canonical file for the same year is never clobbered."""
+    from src.scanner import rename_data_files
+
+    body_2024 = (
+        "1099-DIV,ACCOUNT NUMBER,TAX YEAR,ORDINARY DIV,QUALIFIED DIV\n"
+        "1099-DIV,X,2024,1.00,1.00\n"
+        "1099-B,ACCOUNT NUMBER,TAX YEAR,DATE ACQUIRED,SALE DATE,"
+        "DESCRIPTION,SHARES,COST BASIS,SALES PRICE,TERM\n"
+    )
+    uuid = tmp_path / "6a123a1a-063c-45a0-b985-708786a2d61a.csv"
+    uuid.write_text(body_2024, encoding="utf-8")
+
+    renames = rename_data_files(tmp_path)
+    assert renames.get(uuid.name) == "robinhood-1099-2024.csv"
+    assert (tmp_path / "robinhood-1099-2024.csv").exists()
+    assert not uuid.exists()
+
+    # Already-canonical file: no rename on a second pass.
+    assert rename_data_files(tmp_path) == {}
+
+    # A second upload for the SAME year must not clobber the existing
+    # file — it stays under its original name.
+    dup = tmp_path / "0f0f0f0f-1111-2222-3333-444444444444.csv"
+    dup.write_text(body_2024, encoding="utf-8")
+    renames = rename_data_files(tmp_path)
+    assert dup.name not in renames
+    assert dup.exists()
+
+    # Dry run reports the rename without touching the file.
+    uuid2 = tmp_path / "9b999b9b-063c-45a0-b985-708786a2d61a.csv"
+    uuid2.write_text(body_2024.replace("2024", "2023"), encoding="utf-8")
+    plan = rename_data_files(tmp_path, dry_run=True)
+    assert plan.get(uuid2.name) == "robinhood-1099-2023.csv"
+    assert uuid2.exists()
+    rename_data_files(tmp_path)
+    assert (tmp_path / "robinhood-1099-2023.csv").exists()

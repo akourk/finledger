@@ -212,6 +212,35 @@ def _is_robinhood_1099_file(path: Path) -> bool:
     return "1099-div" in head or ("date acquired" in head and "sale date" in head)
 
 
+def robinhood_1099_tax_year(path: Path) -> str | None:
+    """Tax year of a consolidated 1099 — from the first data row's
+    TAX YEAR column (every section carries one).  Used by the scanner's
+    rename pass so a fresh UUID-named yearly download self-names to
+    ``robinhood-1099-{year}.csv`` like the transaction CSVs do.
+    Returns None when the file has no parsable year."""
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            cols: dict[str, int] | None = None
+            for r in csv.reader(f):
+                if not r or r[0] not in _1099_FORMS:
+                    continue
+                if len(r) > 1 and r[1].strip().upper() == "ACCOUNT NUMBER":
+                    # Section header — (re)learn column positions.
+                    cols = {c.strip().lower(): i for i, c in enumerate(r)}
+                    continue
+                if cols is None:
+                    continue
+                i = cols.get("tax year")
+                if i is None or i >= len(r):
+                    continue
+                y = r[i].strip()
+                if len(y) == 4 and y.isdigit():
+                    return y
+    except OSError:
+        return None
+    return None
+
+
 def _parse_1099b_rows(path: Path) -> list[dict]:
     """Section-aware parse of one consolidated 1099: yield one dict per
     1099-B DATA row.  Tracks the 1099-B header's column positions (a
