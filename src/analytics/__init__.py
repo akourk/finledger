@@ -174,11 +174,13 @@ def build_analytics(txns: list[dict], history: list[dict],
                 # FIRE threshold: most-recent annual_expenses entry × 25
                 # (the classic 4% safe-withdrawal-rate rule).
                 fi_threshold = None
+                mc_annual_expenses = None
                 ann_exp_list = rm.get("annual_expenses") or []
                 if ann_exp_list:
                     latest = max(ann_exp_list, key=lambda x: x.get("date", ""))
                     if latest.get("amount"):
-                        fi_threshold = float(latest["amount"]) * 25
+                        mc_annual_expenses = float(latest["amount"])
+                        fi_threshold = mc_annual_expenses * 25
 
                 mc_retirement = compute_monte_carlo(
                     current_balance=ret_value,
@@ -196,8 +198,10 @@ def build_analytics(txns: list[dict], history: list[dict],
                     "retirement":   mc_retirement,
                     "all_accounts": mc_all,
                     "fi_threshold": fi_threshold,
-                    "annual_expenses":
-                        float(ann_exp_list[-1]["amount"]) if ann_exp_list else None,
+                    # Same latest-by-date row the fi_threshold uses —
+                    # ann_exp_list[-1] (file order) disagreed with it
+                    # whenever the metadata rows weren't date-sorted.
+                    "annual_expenses": mc_annual_expenses,
                 }
         except (ValueError, TypeError):
             monte_carlo = None
