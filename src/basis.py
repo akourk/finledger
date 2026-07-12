@@ -484,21 +484,38 @@ def _consume_lots_directed(lots: list[dict], qty_to_remove: float,
 
     def _find(hint) -> int | None:
         acq = hint.get("acquired") or ""
-        for i, lot in enumerate(lots):
-            if (lot.get("date") or "")[:10] == acq:
-                return i
+        pu = float(hint.get("per_unit") or 0)
+
+        def _best(idxs: list[int]) -> int | None:
+            # Among several date-matching lots, prefer the one whose
+            # per-unit basis is closest to the hint's — same-date pools
+            # routinely hold multiple lots at different per-units (e.g.
+            # the 14 ETH2-deprecation rebases all dated one day), and
+            # first-match consumed the wrong lot's basis.
+            if not idxs:
+                return None
+            if len(idxs) == 1 or pu <= 0:
+                return idxs[0]
+            return min(idxs, key=lambda i: abs(
+                lots[i].get("basis_per_share", 0.0) - pu))
+
+        exact = [i for i, lot in enumerate(lots)
+                 if (lot.get("date") or "")[:10] == acq]
+        got = _best(exact)
+        if got is not None:
+            return got
         if acq:
             from datetime import date as _d, timedelta
             try:
                 base = _d.fromisoformat(acq)
                 near = {(base + timedelta(days=dd)).isoformat()
                         for dd in (-2, -1, 1, 2)}
-                for i, lot in enumerate(lots):
-                    if (lot.get("date") or "")[:10] in near:
-                        return i
+                got = _best([i for i, lot in enumerate(lots)
+                             if (lot.get("date") or "")[:10] in near])
+                if got is not None:
+                    return got
             except ValueError:
                 pass
-        pu = float(hint.get("per_unit") or 0)
         if pu > 0:
             for i, lot in enumerate(lots):
                 pps = lot.get("basis_per_share", 0.0)
@@ -585,8 +602,12 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
     """
     state = _empty_state(method)
 
-    from .broker_lots import copy_disposal_lots, hints_for
+    from .broker_lots import (build_wrap_demand, copy_disposal_lots,
+                              hints_for, take_wrap_demand, wrap_next_dates)
     disposal_lots = copy_disposal_lots(disposal_lots)
+    # Per-walk future-demand pool for wrap direction (independent
+    # qty budget from the sale hints above — see broker_lots).
+    wrap_demand = build_wrap_demand(disposal_lots)
 
     def _method_for(acct: str) -> str:
         if not account_methods:
@@ -623,6 +644,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
     # Wrap/unwrap groups (basis-carrying conversions), processed
     # atomically the first time any leg is met.
     wrap_groups = _pair_wraps(txns)
+    wrap_until = wrap_next_dates(wrap_groups)
     wrap_done: set[tuple] = set()
     # Per-leg annotations (effect, cost_basis, realized) computed when a
     # wrap group is processed atomically, applied as each leg is reached.
@@ -829,26 +851,28 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 wrap_done.add(gkey)
                 g = wrap_groups.get(gkey)
                 if g and g["out"] and g["in"] and g["q_out"] > 0 and g["q_in"] > 0:
-                    # When the destination symbol has broker sell hints
-                    # on/near this date (wrap→sell runs), direct the
-                    # SOURCE consumption with them: the hints name the
-                    # acquired dates Coinbase's engine eventually sold,
-                    # and dates survive the wrap — so moving those exact
-                    # lots lets the directed sale match them.  A scaled
-                    # COPY is used (src/dst unit ratio) so the sale's
-                    # own hint budget is untouched.  Without this, an
-                    # HIFO wrap can move a different lot mix than the
-                    # broker carried and the sale realizes fin's mix.
-                    _wh = hints_for(disposal_lots, acct, g["dst"],
-                                    t.get("date", ""))
+                    # Direct the SOURCE consumption by the destination
+                    # symbol's FUTURE report disposals (wrap demand):
+                    # the report's later sales of the destination name
+                    # the acquired dates Coinbase's engine actually
+                    # relieved, and dates survive the wrap — so moving
+                    # those exact lots lets each directed sale find
+                    # them.  (Was same-day-sell-hints only, which left
+                    # any wrap NOT followed by a same-day sale on HIFO
+                    # order — the source of multi-$k per-year realized
+                    # timing drift vs the broker report.)  The demand
+                    # pool's budget is independent of the sales' own
+                    # hint budget.
+                    _wh = take_wrap_demand(wrap_demand, acct, g["dst"],
+                                           t.get("date", ""),
+                                           g["q_in"], g["q_out"],
+                                           until=wrap_until.get(
+                                               (acct, g["dst"],
+                                                t.get("date", "") or "")))
                     if _wh and method != "avg" and _method_for(acct) != "avg":
-                        _ratio = g["q_out"] / g["q_in"]
-                        _wh_copy = [{**h,
-                                     "qty_left": float(h.get("qty_left", 0) or 0) * _ratio}
-                                    for h in _wh]
                         B, carried = _consume_lots_directed(
                             state["lots"][(acct, g["src"])], g["q_out"],
-                            _method_for(acct), _wh_copy)
+                            _method_for(acct), _wh)
                     else:
                         B, carried = _consume_from_key(
                             state, _method_for(acct), (acct, g["src"]), g["q_out"])

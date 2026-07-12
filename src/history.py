@@ -18,7 +18,8 @@ from .basis import (
     _consume_lots_directed, _pair_transfers, _pair_wraps, _rescale_lots,
     _sort_key as _basis_sort_key,
 )
-from .broker_lots import copy_disposal_lots, hints_for
+from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
+                          take_wrap_demand, wrap_next_dates)
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS
 from .prices import get_price, split_factor_since
 
@@ -304,6 +305,7 @@ def compute_history(txns: list[dict],
     # Wrap/unwrap groups — basis-carrying conversions processed
     # atomically the first time any leg is met, exactly like basis.py.
     wrap_groups = _pair_wraps(txns)
+    wrap_until = wrap_next_dates(wrap_groups)
     wrap_done: set[tuple] = set()
 
     def _method_for(acct: str) -> str:
@@ -326,8 +328,11 @@ def compute_history(txns: list[dict],
     idx = 0
 
     # Broker-report disposal hints — own copy, exactly like basis._walk
-    # (consuming mutates hint state; each walker starts fresh).
+    # (consuming mutates hint state; each walker starts fresh).  The
+    # wrap-demand pool (future-disposal direction for wraps) is likewise
+    # per-walk with its own budget.
     _disposal_lots = copy_disposal_lots(disposal_lots)
+    _wrap_demand = build_wrap_demand(_disposal_lots)
 
     def _consume(key, qty_to_remove, hints=None):
         """Remove qty_to_remove from lots[key] using the owning account's
@@ -443,18 +448,19 @@ def compute_history(txns: list[dict],
                     wrap_done.add(gkey)
                     g = wrap_groups.get(gkey)
                     if g and g["out"] and g["in"] and g["q_out"] > 0 and g["q_in"] > 0:
-                        # Direct the wrap's source consumption with the
-                        # destination's sell hints (scaled copy) —
-                        # mirrors basis._walk's wrap branch exactly.
-                        _wh = hints_for(_disposal_lots, acct, g["dst"],
-                                        t.get("date", ""))
+                        # Direct the wrap's source consumption by the
+                        # destination's FUTURE report disposals (wrap
+                        # demand) — mirrors basis._walk's wrap branch
+                        # exactly.
+                        _wh = take_wrap_demand(_wrap_demand, acct,
+                                               g["dst"], t.get("date", ""),
+                                               g["q_in"], g["q_out"],
+                                               until=wrap_until.get(
+                                                   (acct, g["dst"],
+                                                    t.get("date", "") or "")))
                         if _wh:
-                            _ratio = g["q_out"] / g["q_in"]
-                            _wh_copy = [{**h,
-                                         "qty_left": float(h.get("qty_left", 0) or 0) * _ratio}
-                                        for h in _wh]
                             _b, carried = _consume((acct, g["src"]),
-                                                   g["q_out"], hints=_wh_copy)
+                                                   g["q_out"], hints=_wh)
                         else:
                             _b, carried = _consume((acct, g["src"]), g["q_out"])
                         for lot in _rescale_lots(carried, g["q_in"]):
