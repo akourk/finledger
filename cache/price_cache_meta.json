@@ -1052,6 +1052,12 @@
       "failure_count": 0,
       "last_fetch": "2026-07-10T09:39:09"
     },
+    "SLS": {
+      "covered_end": "2026-07-10",
+      "covered_start": "2017-05-23",
+      "failure_count": 0,
+      "last_fetch": "2026-07-12T14:34:00"
+    },
     "SMCI": {
       "covered_end": "2026-07-10",
       "covered_start": "2017-05-23",
@@ -1123,6 +1129,12 @@
       "covered_start": "2017-05-23",
       "failure_count": 0,
       "last_fetch": "2026-07-01T16:07:39"
+    },
+    "SPMO": {
+      "covered_end": "2026-07-10",
+      "covered_start": "2017-05-23",
+      "failure_count": 0,
+      "last_fetch": "2026-07-12T14:34:00"
     },
     "SPRY": {
       "covered_end": "2026-07-10",
