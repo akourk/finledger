@@ -907,7 +907,10 @@ threads through every consumer.
   broker→parser dispatch table and re-exports the public API;
   `_helpers.py` has the shared `_txn()`, `_num()`, `_date_*()`
   helpers and the ticker-rename layer; per-broker logic lives in
-  `robinhood.py`, `coinbase.py`, `schwab.py`, `vanguard.py`,
+  `robinhood.py`, `robinhood_apex.py` (hand-entered 2017-18 Apex-era
+  trades transcribed from old 1099 PDFs; covered CONV migration
+  rows are neutralized by `main._reconcile_apex_conversions`),
+  `coinbase.py`, `schwab.py`, `vanguard.py`,
   `voya.py`, `usaa.py`, `apple_savings.py`, `manual.py`.  Adding a
   new broker is a new file + one line in `__init__.py`.
 - **`src/analytics/`** — package directory.  `_shared.py` has

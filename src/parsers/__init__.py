@@ -24,6 +24,7 @@ from .apple_savings import parse_apple_savings
 from .coinbase import parse_coinbase, parse_coinbase_pro
 from .manual import parse_manual
 from .robinhood import parse_robinhood
+from .robinhood_apex import parse_robinhood_apex
 from .schwab import parse_schwab
 from .usaa import parse_usaa
 from .vanguard import parse_vanguard_401k
@@ -33,13 +34,15 @@ __all__ = [
     "Transaction", "apply_ticker_rename",
     "parse_all_files",
     "parse_apple_savings", "parse_coinbase", "parse_coinbase_pro",
-    "parse_manual", "parse_robinhood", "parse_schwab", "parse_usaa",
+    "parse_manual", "parse_robinhood", "parse_robinhood_apex",
+    "parse_schwab", "parse_usaa",
     "parse_vanguard_401k", "parse_voya_401k",
 ]
 
 
 _PARSERS = {
     "robinhood": parse_robinhood,
+    "robinhood_apex": parse_robinhood_apex,
     "coinbase": parse_coinbase,
     "coinbase_pro": parse_coinbase_pro,
     "schwab_rollover": parse_schwab,

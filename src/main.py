@@ -129,6 +129,50 @@ def _reconcile_usaa_to_schwab_transfer(txns: list[dict]) -> list[dict]:
 
     return out
 
+def _reconcile_apex_conversions(txns: list[dict]) -> list[dict]:
+    """Neutralize Robinhood clearing-migration CONV rows whose position
+    is already covered by the hand-entered Apex-era file.
+
+    Robinhood's late-2018 move from Apex clearing to self-clearing
+    emitted a CONV row for every position carried across — previously
+    the only record of those positions, since the transaction exports
+    don't reach back into the Apex era.  With the hand-entered
+    robinhood-apex CSV supplying the true buy legs, an untouched CONV
+    double-adds the position (observed: an expired put showing +1 open
+    contract forever).  A CONV is re-tagged Neutral only when the Apex
+    file's net quantity for that symbol on/before the CONV date covers
+    it — positions with no Apex-file history (e.g. a referral free
+    share) keep their CONV as the origin row.
+    """
+    apex_rows = [t for t in txns if "apex" in (t.get("source") or "").lower()]
+    if not apex_rows:
+        return txns
+    _SELLS = {"Sell", "Option Sell"}
+
+    def _apex_net(symbol: str, on_or_before: str) -> float:
+        net = 0.0
+        for t in apex_rows:
+            if t.get("symbol") != symbol or (t.get("date") or "") > on_or_before:
+                continue
+            q = abs(float(t.get("quantity", 0) or 0))
+            net += -q if t.get("action") in _SELLS else q
+        return net
+
+    for t in txns:
+        if (t.get("raw_action") or t.get("action") or "").upper() != "CONV":
+            continue
+        sym = t.get("symbol") or ""
+        qty = abs(float(t.get("quantity", 0) or 0))
+        if not sym or qty <= 0:
+            continue
+        if _apex_net(sym, t.get("date") or "") >= qty - 1e-6:
+            t["action"] = "Neutral"
+            t["description"] = ((t.get("description") or "")
+                                + " [auto-reconciled: position covered by "
+                                  "Apex-era file]").strip()
+    return txns
+
+
 def _refresh_prices_only(args) -> None:
     """Fast path: re-pull today's prices and regenerate the dashboard
     without re-processing CSVs.
@@ -485,6 +529,11 @@ def main():
 
     # --- Step 4a: Reconcile known custodial transfers (USAA -> Schwab Roth) ---
     txns = _reconcile_usaa_to_schwab_transfer(txns)
+
+    # --- Step 4a-ii: Neutralize Apex-covered Robinhood CONV migration rows ---
+    # Runs pre-normalization (matches the raw CONV code).  See the
+    # function docstring for the double-count this prevents.
+    txns = _reconcile_apex_conversions(txns)
 
     # --- Step 4b-pre: Load user metadata + apply account-mapping overrides ---
     # Read data/metadata.csv (or legacy data/retirement-data.csv).  Any

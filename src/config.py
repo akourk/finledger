@@ -33,6 +33,7 @@ EXPORT_DIR = _resolve("FIN_EXPORT_DIR", PROJECT_ROOT / "exports")
 
 CANONICAL_PREFIXES = {
     "robinhood": "robinhood",
+    "robinhood_apex": "robinhood-apex",
     "coinbase": "coinbase",
     "coinbase_pro": "coinbase-pro-gdax",
     "schwab_rollover": "schwab-rollover-ira",

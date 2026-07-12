@@ -63,6 +63,12 @@ def detect_broker(filepath: Path) -> str:
     if name.startswith("schwabrothcontributoryira"):
         return "schwab_roth"
 
+    # Robinhood Apex-era hand-entered transactions (must check before
+    # the generic "robinhood" match — the conventional filename contains
+    # both words, e.g. "robinhood apex transactions.csv").
+    if "apex" in name:
+        return "robinhood_apex"
+
     # Coinbase Pro / GDAX (must check before generic coinbase)
     if "gdax" in name or "coinbase-pro" in name or "coinbase_pro" in name:
         return "coinbase_pro"
@@ -99,6 +105,11 @@ def _detect_by_headers(filepath: Path) -> str:
         # Robinhood: "Activity Date", "Trans Code", "Instrument", etc.
         if "activity date" in header and "trans code" in header:
             return "robinhood"
+
+        # Robinhood Apex-era hand-entered CSV (transcribed from the old
+        # 1099 PDFs — see parsers/robinhood_apex.py for the format).
+        if "security description" in header and "transaction description" in header:
+            return "robinhood_apex"
 
         # Coinbase: "Timestamp", "Transaction Type", "Asset", etc.
         if "timestamp" in header and "transaction type" in header and "asset" in header:
