@@ -381,3 +381,72 @@ def test_robinhood_1099_directs_realized_gain(isolated_workdir):
     plain = compute_basis_default([dict(t) for t in txns])
     # FIFO → cheap 2019 lot (basis 500): realized 1000 − 500 = 500.
     assert plain["realized_total"] == pytest.approx(500.0)
+
+
+def test_robinhood_1099_income_rows(tmp_path):
+    """DIV box 1a + INT box 1 sum into one auto Reconcile Income row per
+    tax year, shaped like a parsed metadata row."""
+    from src.broker_lots import load_robinhood_1099_income
+    _write_rh_1099(tmp_path / "robinhood-1099-2024.csv")
+    rows = load_robinhood_1099_income(tmp_path)
+    assert rows == [{
+        "kind": "income", "account_group": "Robinhood", "date": "2024",
+        "amount": 15.0,
+        "note": "auto: robinhood-1099-2024.csv (1099-DIV 1a + 1099-INT box 1)",
+    }]
+
+
+def test_merge_auto_reconcile_manual_row_wins(tmp_path):
+    """A hand-entered Reconcile Income row for the same account/year
+    suppresses the auto row; other years still merge in."""
+    from src.broker_lots import (load_robinhood_1099_income,
+                                 merge_auto_reconcile_rows)
+    _write_rh_1099(tmp_path / "robinhood-1099-2024.csv")
+    auto = load_robinhood_1099_income(tmp_path)
+    manual = [{"kind": "income", "account_group": "Robinhood",
+               "date": "2024", "amount": 14.5, "note": "hand-corrected"}]
+    merged = merge_auto_reconcile_rows(manual, auto)
+    assert len(merged) == 1 and merged[0]["amount"] == 14.5
+    # Different kind for the same year still merges.
+    manual2 = [{"kind": "realized", "account_group": "Robinhood",
+                "date": "2024", "amount": 100.0, "note": ""}]
+    merged2 = merge_auto_reconcile_rows(manual2, auto)
+    assert len(merged2) == 2
+
+
+def test_wrap_directed_by_future_sale_demand(tmp_path):
+    """A wrap must move the lots the report's LATER destination sales
+    name — not the HIFO pick.  Here CBETH is sold a month after the
+    wrap; the report says that sale consumed a 2020-acquired lot, so
+    the wrap must carry the cheap 2020 ETH lot into CBETH even though
+    HIFO would move the expensive 2021 lot."""
+    (tmp_path / "Coinbase-0-CB-GAINLOSSCSV.csv").write_text(
+        "Gain/loss report\n"
+        "\n"
+        "Transaction Type,Transaction ID,Tax lot ID,Asset name,Amount,"
+        "Date Acquired,Cost basis (USD),Date of Disposition,"
+        "Proceeds (USD),Gains (Losses) (USD),Holding period (Days),"
+        "Data source\n"
+        "Sell,tx-9,lot-9,CBETH,2.0,05/10/2020,400.00,04/01/2024,"
+        "6000.00,5600.00,1400,Coinbase\n",
+        encoding="utf-8")
+    from src.broker_lots import load_disposal_lots
+    from src.basis import compute_basis_default
+    txns = [
+        _txn("2020-05-10", "Buy", 2.0, 200.0, 400.0),
+        _txn("2021-09-02", "Buy", 2.0, 3800.0, 7600.0),
+        # Wrap 2 ETH → 2 CBETH on 2024-03-01; sale is a month later.
+        _txn("2024-03-01", "Wrap Asset Out", 2.0),
+        _txn("2024-03-01", "Wrap Asset In", 2.0, symbol="CBETH-USD"),
+        _txn("2024-04-01", "Sell", 2.0, 3000.0, 6000.0, symbol="CBETH-USD"),
+    ]
+    lots = load_disposal_lots(tmp_path)
+    compute_basis_default(txns, account_methods={"Coinbase": "hifo"},
+                          disposal_lots=lots)
+    sale = txns[-1]
+    # Directed: consumed the 2020 lot's $400 basis → gain 5600 (matches
+    # the report).  Undirected HIFO wrap would have moved the 2021 lot
+    # ($7600 basis → gain -1600).
+    assert sale["cost_basis"] == pytest.approx(400.0, abs=0.01)
+    assert sale["realized_gain"] == pytest.approx(5600.0, abs=0.01)
+    assert sale["lot_breakdown"][0]["date_acquired"] == "2020-05-10"

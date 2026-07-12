@@ -365,6 +365,81 @@ def load_robinhood_1099_lots(data_dir: Path,
     return out if found else None
 
 
+def load_robinhood_1099_income(data_dir: Path) -> list[dict]:
+    """Auto-generate ``Reconcile Income`` rows from the consolidated
+    1099s' DIV/INT sections: 1099-DIV box 1a (``ORDINARY DIV``, which
+    includes qualified) + 1099-INT box 1 (``INT INCOME``) per tax year.
+
+    This is exactly the figure fin's ``income`` reconcile kind checks
+    (dividends + interest + lending — Robinhood bundles stock-lending
+    income into the 1099-INT as substitute interest), so each year with
+    a 1099 on disk gets a broker-ground-truth row without hand-entering
+    it in metadata.csv.  Returned rows have the same shape as parsed
+    ``Reconcile *`` metadata rows; a hand-entered row for the same
+    (kind, account, year) wins (see ``merge_auto_reconcile_rows``).
+    """
+    out: list[dict] = []
+    if not data_dir.exists():
+        return out
+    for p in sorted(data_dir.glob("*.csv")):
+        if not _is_robinhood_1099_file(p):
+            continue
+        year = robinhood_1099_tax_year(p)
+        if not year:
+            continue
+        try:
+            with open(p, newline="", encoding="utf-8-sig") as f:
+                rows = list(csv.reader(f))
+        except OSError:
+            continue
+        # Per-section header column maps, keyed by the form tag in
+        # column 0 (each data row carries its own tag, so a map lookup
+        # by tag is robust to section ordering).
+        cols_by_form: dict[str, dict[str, int]] = {}
+        want = {"1099-DIV": "ordinary div", "1099-INT": "int income"}
+        total = 0.0
+        found_col = False
+        for r in rows:
+            if not r or r[0] not in _1099_FORMS:
+                continue
+            if len(r) > 1 and r[1].strip().upper() == "ACCOUNT NUMBER":
+                cols_by_form[r[0]] = {c.strip().lower(): i
+                                      for i, c in enumerate(r)}
+                continue
+            col = want.get(r[0])
+            if col is None:
+                continue
+            i = cols_by_form.get(r[0], {}).get(col)
+            if i is None or i >= len(r):
+                continue
+            found_col = True
+            total += _num(r[i])
+        if found_col:
+            out.append({
+                "kind": "income",
+                "account_group": _ROBINHOOD_ACCOUNT_GROUP,
+                "date": year,
+                "amount": round(total, 2),
+                "note": f"auto: {p.name} (1099-DIV 1a + 1099-INT box 1)",
+            })
+    return out
+
+
+def merge_auto_reconcile_rows(manual: list[dict] | None,
+                              auto: list[dict]) -> list[dict]:
+    """Append auto-generated reconcile rows to the user's hand-entered
+    ones, skipping any (kind, account_group, year) the user already
+    covers — a hand row may carry a corrected figure and must win."""
+    manual = list(manual or [])
+    have = {(r.get("kind"), r.get("account_group"), (r.get("date") or "")[:4])
+            for r in manual}
+    for r in auto:
+        key = (r.get("kind"), r.get("account_group"), (r.get("date") or "")[:4])
+        if key not in have:
+            manual.append(r)
+    return manual
+
+
 def hints_for(disposal_lots: dict | None, account_group: str, symbol: str,
               date: str) -> list[dict] | None:
     """Hint lots for a disposal: the exact day's list PLUS the adjacent
@@ -401,6 +476,114 @@ def copy_disposal_lots(disposal_lots: dict | None) -> dict | None:
     if not disposal_lots:
         return None
     return {k: [dict(h) for h in v] for k, v in disposal_lots.items()}
+
+
+# ---------------------------------------------------------------------------
+# Wrap demand — which lots should a basis-carrying wrap move?
+# ---------------------------------------------------------------------------
+# A wrap (ETH→CBETH) is not itself a disposal, but it decides WHICH lots
+# end up in the destination pool — and the broker's later sales of the
+# destination relieve specific acquired-date lots.  fin's HIFO wrap order
+# routinely moved a different lot mix than the broker's chain carried, so
+# even with sale hints directing every disposal, the destination pool
+# lacked the named acquired dates and the directed consume fell back to
+# the method order (observed: offsetting multi-$k per-year realized drift
+# between fin and the Coinbase report in convert-heavy years).
+#
+# The demand pool aggregates, per (account, symbol), every report
+# disposal lot in sold-date order.  When a wrap fires, it takes demand
+# entries with sold-date on/after the wrap date — up to the wrapped
+# quantity — and directs its SOURCE consumption to those acquired dates
+# (dates survive `_rescale_lots`, so the later directed sale then finds
+# exactly those lots).  The pool is separate from the sale hints
+# (`qty_left` budgets are independent) and each walk builds its own copy.
+
+def build_wrap_demand(disposal_lots: dict | None) -> dict | None:
+    """``{(account_group, symbol): [{sold, acquired, qty_left}, ...]}``
+    sorted by sold date.  Entries without an acquired date (``Various``)
+    are skipped — they can't direct anything."""
+    if not disposal_lots:
+        return None
+    out: dict[tuple[str, str], list[dict]] = {}
+    for (acct, sym, sold), hints in disposal_lots.items():
+        for h in hints:
+            acq = h.get("acquired") or ""
+            q = float(h.get("qty", 0) or 0)
+            if not acq or q <= 0:
+                continue
+            out.setdefault((acct, sym), []).append(
+                {"sold": sold, "acquired": acq, "qty_left": q,
+                 "per_unit": float(h.get("per_unit", 0) or 0)})
+    for v in out.values():
+        v.sort(key=lambda e: e["sold"])
+    return out or None
+
+
+def take_wrap_demand(demand: dict | None, account_group: str, dst_sym: str,
+                     date: str, q_in: float, q_out: float,
+                     until: str | None = None) -> list[dict] | None:
+    """Consume up to ``q_in`` destination-units of future demand for
+    ``dst_sym`` and return the equivalent SOURCE-unit hint list for
+    ``_consume_lots_directed`` (``per_unit`` 0 disables the per-unit
+    fallback — acquired-date matching only).
+
+    ``sold >= date − 1 day`` mirrors the UTC-shift tolerance used by
+    ``hints_for``.  ``until`` (exclusive) bounds the window at the NEXT
+    wrap of the same destination: a lot sold after that wrap could have
+    arrived via it, so this wrap must not grab its demand — without the
+    bound, early wraps greedily drained the whole pool and the final
+    wrap→sell run got nothing (observed: the last wrap fell back to
+    HIFO and the directed sale missed the broker's 2021-dated lot).
+    Mutates the shared pool so two wraps feeding the same sales split
+    the demand instead of both moving it.
+    """
+    if not demand or q_in <= 0 or q_out <= 0:
+        return None
+    entries = demand.get((account_group, dst_sym))
+    if not entries:
+        return None
+    base = _pdate(date)
+    if base is None:
+        return None
+    from datetime import timedelta
+    cutoff = (base - timedelta(days=1)).isoformat()
+    ratio = q_out / q_in
+    taken: list[dict] = []
+    remaining = q_in
+    for e in entries:
+        if remaining <= 1e-12:
+            break
+        if until and e["sold"] >= until:
+            break   # sorted by sold — everything after belongs to later wraps
+        if e["sold"] < cutoff or e["qty_left"] <= 1e-12:
+            continue
+        take = min(e["qty_left"], remaining)
+        e["qty_left"] -= take
+        remaining -= take
+        # per_unit converts dest-units → src-units (basis is invariant
+        # across the wrap: pu_src = pu_dst × q_in/q_out).  Lets the
+        # directed consume tie-break among same-date source lots.
+        taken.append({"acquired": e["acquired"],
+                      "qty_left": take * ratio,
+                      "per_unit": float(e.get("per_unit", 0) or 0) / ratio
+                                  if ratio > 0 else 0.0})
+    return taken or None
+
+
+def wrap_next_dates(wrap_groups: dict) -> dict:
+    """``{(account, dst_sym, wrap_date): next_wrap_date | None}`` for the
+    valid wrap groups — the ``until`` bound for ``take_wrap_demand``.
+    Takes the ``_pair_wraps`` group dict (both walkers build it)."""
+    by_dst: dict[tuple[str, str], list[str]] = {}
+    for (acct, date, _kind), g in (wrap_groups or {}).items():
+        if g.get("out") and g.get("in") and g.get("q_out", 0) > 0 and g.get("q_in", 0) > 0:
+            by_dst.setdefault((acct, g["dst"]), []).append(date)
+    out: dict = {}
+    for (acct, dst), dates in by_dst.items():
+        dates.sort()
+        for i, d in enumerate(dates):
+            out[(acct, dst, d)] = dates[i + 1] if i + 1 < len(dates) else None
+    return out
 
 
 # ---------------------------------------------------------------------------

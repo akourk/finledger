@@ -267,9 +267,16 @@ def _refresh_prices_only(args) -> None:
     # walker and the FIFO re-walk below must see the same overrides or
     # the refresh path would silently disagree with the full run.
     from .broker_lots import (load_acquisition_lots, load_disposal_lots,
+                              load_robinhood_1099_income,
+                              merge_auto_reconcile_rows,
                               stamp_acquisition_basis)
     disposal_lots = load_disposal_lots(DATA_DIR, txns)
     stamp_acquisition_basis(txns, load_acquisition_lots(DATA_DIR))
+
+    # Auto Reconcile Income rows from consolidated 1099s — mirrors the
+    # full pipeline so the refresh path's reconciliation panel matches.
+    retirement_meta["reconcile"] = merge_auto_reconcile_rows(
+        retirement_meta.get("reconcile"), load_robinhood_1099_income(DATA_DIR))
 
     print("Computing portfolio history with refreshed prices...")
     history = compute_history(txns, sector_of,
@@ -561,12 +568,27 @@ def main():
     # where the report has rows.  Robinhood needs `txns` to resolve the
     # 1099-B security name to fin's symbol.  See src/broker_lots.py.
     from .broker_lots import (load_acquisition_lots, load_disposal_lots,
+                              load_robinhood_1099_income,
+                              merge_auto_reconcile_rows,
                               stamp_acquisition_basis)
     disposal_lots = load_disposal_lots(DATA_DIR, txns)
     if disposal_lots:
         _n_lots = sum(len(v) for v in disposal_lots.values())
         print(f"  Broker lot report: {_n_lots} disposal lot(s) across "
               f"{len(disposal_lots)} disposal day(s) — directing lot relief")
+
+    # Auto Reconcile Income rows from the consolidated 1099s' DIV/INT
+    # sections (broker ground truth per tax year).  Hand-entered
+    # Reconcile rows for the same (kind, account, year) win.
+    _auto_income = load_robinhood_1099_income(DATA_DIR)
+    if _auto_income:
+        _before = len(retirement_meta.get("reconcile") or [])
+        retirement_meta["reconcile"] = merge_auto_reconcile_rows(
+            retirement_meta.get("reconcile"), _auto_income)
+        _added = len(retirement_meta["reconcile"]) - _before
+        if _added:
+            print(f"  1099 income cross-check: {_added} auto Reconcile "
+                  f"Income row(s) from consolidated 1099s")
 
     # Broker-reported ACQUISITION basis (Coinbase RAWTX report) — adopts
     # Coinbase's own cost basis (incl. customer-provided receives and
