@@ -510,6 +510,13 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   underlying stock's position. The new `"Options"` sector (detected in
   `sectors._classify_no_fetch` by ` Call ` / ` Put ` markers) catches
   these symbols before the multi-word → Mutual Funds fallback.
+  **Valuation uses the ×100 contract multiplier**
+  (`config.contract_multiplier`): quantity is CONTRACTS and price is
+  the per-share premium, so every qty×price valuation site (holdings,
+  snapshots, 1-day change, daily P&L, basis-methods rows) scales
+  options by 100 — basis is amount-based and needs no scaling.  Open
+  options are valued at their last-traded premium (yfinance can't
+  price them), so their displayed value stays flat between trades.
 - **Robinhood option exercises (OEXCS + OCC) are paired in the parser.**
   Robinhood writes the contract disposal and its cash proceeds as two
   rows: OEXCS ("1S" quantity = 1 contract, empty amount) and OCC
