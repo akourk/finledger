@@ -362,13 +362,15 @@ function renderRecentTransactions() {
   const body = document.getElementById('recentTxnsBody');
   // When an as-of-date is set, show the most recent txns at or
   // before that date (so "recent" means "recent as of the selected
-  // view date", not "recent lifetime").  8 rows — a glanceable
-  // pulse-check; the "View all →" footer link covers the rest.
+  // view date", not "recent lifetime").  15 rows inside a fixed-height
+  // scroll region (matches Top Holdings so the two side-by-side panels
+  // stay the same height); ~8 visible — a glanceable pulse-check —
+  // and the "View all →" footer link covers the rest.
   const cutoff = asOfDate;
   const rows = txns
     .filter(t => !t.date || t.date <= cutoff)
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-    .slice(0, 8);
+    .slice(0, 15);
   head.innerHTML = `
     <th>Date</th>
     <th>Account</th>
@@ -519,47 +521,40 @@ function fmtMoneyShort(v) {
   return sign + '$' + n.toFixed(0);
 }
 
-// --- Overview feedback: alerts + "what changed since last run" ------------
-// Both panels render as collapsible <details> elements (default-closed)
-// to match the Data Health panel below — keeps the Overview tab's
-// initial scroll-length tight.  The summary line surfaces the count
-// + a severity-tinted chip so the user can decide whether to expand.
-// Combined Overview status panels.  Renders into a single grid
-// container two collapsible cards:
-//   1. Status — Attention (actionable signals) + Data Health
-//      (pipeline integrity) merged.  Different concerns but both
-//      "things to know about your dashboard" — collapsing them into
-//      one card cuts visual clutter while preserving distinction
-//      via internal section headers.
-//   2. What's Changed — period-over-period diff vs last run.
-// Both cards default to collapsed.  When either is empty the slot
-// stays empty so the grid auto-collapses to one column or none.
+// --- Overview feedback: alerts + changes + reconciliation -----------------
+// ONE collapsible card.  Three earlier cards (Status / What's Changed /
+// Reconciliation) sat in a 2-column grid, which stretched a collapsed
+// neighbor to the expanded card's height — a big blank panel.  Merging
+// them into a single <details> keeps the Overview's initial scroll
+// tight (one summary line carrying every signal as chips) and expands
+// into clearly-headed sections:
+//   Attention (actionable signals) · Data Health (pipeline integrity)
+//   · What's Changed (diff vs last run) · Reconciliation (vs broker docs)
+// Summary tint = the most severe signal across all sections.
 function renderOverviewStatus() {
   const host = document.getElementById('overviewStatus');
   if (!host) return;
   const alerts = ANALYTICS.alerts || [];
   const issues = ANALYTICS.data_health || [];
   const changes = ANALYTICS.changes || {};
-  const parts = [];
 
-  // ----- Combined Status card -----------------------------------------
-  // Combines Attention (actionable) + Data Health (pipeline
-  // integrity).  Aggregates severity across both.
+  const sections = [];      // expanded-body section HTML, in display order
+  const chips = [];         // summary-line chips
+  const sevRank = { info: 0, warn: 1, high: 2 };
+  let dominant = 'info';
+  const bump = s => { if (sevRank[s] > sevRank[dominant]) dominant = s; };
+
+  // ----- Attention + Data Health sections ------------------------------
   const haveAlerts = alerts.length > 0;
   const haveIssues = issues.length > 0;
   if (haveAlerts || haveIssues) {
     const counts = { high: 0, warn: 0, info: 0 };
     for (const a of alerts) counts[a.severity || 'info']++;
     for (const i of issues) counts[i.severity || 'info']++;
-    const total = counts.high + counts.warn + counts.info;
-    const dominant = counts.high > 0 ? 'high'
-      : counts.warn > 0 ? 'warn' : 'info';
-    const breakdown = ['high', 'warn', 'info']
-      .filter(s => counts[s])
-      .map(s => `<span class="dh-chip sev-${s}">${counts[s]} ${s}</span>`)
-      .join(' ');
-
-    const sections = [];
+    bump(counts.high > 0 ? 'high' : counts.warn > 0 ? 'warn' : 'info');
+    for (const s of ['high', 'warn', 'info']) {
+      if (counts[s]) chips.push(`<span class="dh-chip sev-${s}">${counts[s]} ${s}</span>`);
+    }
     if (haveAlerts) {
       const alertRows = alerts.map(a => {
         const sev = a.severity || 'info';
@@ -599,28 +594,9 @@ function renderOverviewStatus() {
         ${issueParts.join('')}
       </div>`);
     }
-
-    parts.push(`<details class="feedback-panel feedback-collapsible">
-      <summary class="dh-summary dh-${dominant}">
-        <span class="dh-label">Status</span>
-        <span class="dh-status">${total} item${total === 1 ? '' : 's'}</span>
-        ${breakdown}
-        <span class="dh-hint">click to expand</span>
-      </summary>
-      <div class="dh-body">${sections.join('')}</div>
-    </details>`);
-  } else {
-    // Nothing flagged on either side → tiny "all clear" line so
-    // the user can see the dashboard ran clean.
-    parts.push(`<details class="feedback-panel feedback-collapsible" open style="opacity:0.55;">
-      <summary class="dh-summary dh-clean">
-        <span class="dh-label">Status</span>
-        <span class="dh-status">all clear · no alerts, no integrity issues</span>
-      </summary>
-    </details>`);
   }
 
-  // ----- What's Changed card ------------------------------------------
+  // ----- What's Changed section ----------------------------------------
   if (changes && !changes.first_run && Object.keys(changes).length) {
     const fmt = n => n == null ? '—' : (n >= 0 ? '+' : '') + fmtMoney(n, 0);
     const cls = n => (n > 0 ? 'positive' : n < 0 ? 'negative' : '');
@@ -628,9 +604,10 @@ function renderOverviewStatus() {
     if (changes.txn_count_delta != null && changes.txn_count_delta !== 0) {
       rows.push(['New Transactions', (changes.txn_count_delta >= 0 ? '+' : '') + changes.txn_count_delta, cls(changes.txn_count_delta)]);
     }
-    if (changes.value_delta != null) rows.push(['Portfolio Value', fmt(changes.value_delta), cls(changes.value_delta)]);
-    if (changes.basis_delta != null) rows.push(['Cost Basis', fmt(changes.basis_delta), cls(changes.basis_delta)]);
-    if (changes.realized_delta != null) rows.push(['Realized P&L', fmt(changes.realized_delta), cls(changes.realized_delta)]);
+    // Zero deltas are noise — only surface figures that actually moved.
+    if (changes.value_delta) rows.push(['Portfolio Value', fmt(changes.value_delta), cls(changes.value_delta)]);
+    if (changes.basis_delta) rows.push(['Cost Basis', fmt(changes.basis_delta), cls(changes.basis_delta)]);
+    if (changes.realized_delta) rows.push(['Realized P&L', fmt(changes.realized_delta), cls(changes.realized_delta)]);
 
     const moverRows = [
       ...(changes.top_gainers || []).slice(0, 3),
@@ -653,30 +630,22 @@ function renderOverviewStatus() {
     const prevRun = (changes.prev_run_at || '').slice(0, 10);
     const sinceLabel = prevRun ? `since ${_htmlEsc(prevRun)}` : 'since last run';
     if (rows.length || moverRows || newClosed.length) {
-      let valueChip = '';
-      if (changes.value_delta != null) {
+      if (changes.value_delta) {
         const vc = cls(changes.value_delta);
-        valueChip = `<span class="dh-chip ${vc}" style="background:transparent;border:1px solid currentColor;">${fmt(changes.value_delta)}</span>`;
+        chips.push(`<span class="dh-chip ${vc}" style="background:transparent;border:1px solid currentColor;">${fmt(changes.value_delta)}</span>`);
       }
-      parts.push(`<details class="feedback-panel feedback-collapsible">
-        <summary class="dh-summary dh-info">
-          <span class="dh-label">What's Changed</span>
-          <span class="dh-status">${sinceLabel}</span>
-          ${valueChip}
-          <span class="dh-hint">click to expand</span>
-        </summary>
-        <div class="dh-body">
-          <div class="changes-list">
-            ${rows.map(([l, v, c]) => `<div class="change-row"><span class="ch-label">${l}</span><span class="ch-val ${c}">${v}</span></div>`).join('')}
-          </div>
-          ${moverRows ? `<div class="changes-movers"><h4>Top Movers</h4>${moverRows}</div>` : ''}
-          ${newClosed.length ? `<div class="changes-movers"><h4>Positions</h4>${newClosed.join('')}</div>` : ''}
+      sections.push(`<div class="dh-category">
+        <h4>What's Changed <span style="color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:0;">— ${sinceLabel}</span></h4>
+        <div class="changes-list">
+          ${rows.map(([l, v, c]) => `<div class="change-row"><span class="ch-label">${l}</span><span class="ch-val ${c}">${v}</span></div>`).join('')}
         </div>
-      </details>`);
+        ${moverRows ? `<div class="changes-movers"><h4>Top Movers</h4>${moverRows}</div>` : ''}
+        ${newClosed.length ? `<div class="changes-movers"><h4>Positions</h4>${newClosed.join('')}</div>` : ''}
+      </div>`);
     }
   }
 
-  // ----- Reconciliation card ------------------------------------------
+  // ----- Reconciliation section -----------------------------------------
   // fin's computed figures vs broker-reported ground truth (statement
   // balances, 1099-B realized / §1256, 1099-DIV+INT income) supplied via
   // `Reconcile *` rows in metadata.csv.  Surfaces drift rather than
@@ -687,7 +656,7 @@ function renderOverviewStatus() {
   if (recon && recon.rows && recon.rows.length) {
     const sevOf = { ok: 'info', warn: 'warn', off: 'high', nodata: 'info' };
     const s = recon.summary || {};
-    const dominant = s.off ? 'high' : s.warn ? 'warn' : 'info';
+    bump(s.off ? 'high' : s.warn ? 'warn' : 'info');
     const fmtN = v => v == null ? '—' : fmtMoney(v, 2);
     const fmtD = v => v == null ? '—' : (v >= 0 ? '+' : '') + fmtMoney(v, 2);
     const bodyRows = recon.rows.map(r => `<tr>
@@ -698,39 +667,51 @@ function renderOverviewStatus() {
         <td style="text-align:right;" class="${r.delta > 0 ? 'positive' : r.delta < 0 ? 'negative' : ''}">${fmtD(r.delta)}</td>
         <td><span class="dh-chip sev-${sevOf[r.status] || 'info'}">${_htmlEsc(r.status)}</span>${r.detail ? ` <span style="color:var(--text-dim);font-size:0.85em;">${_htmlEsc(r.detail)}</span>` : ''}</td>
       </tr>`).join('');
-    const breakdown = ['off', 'warn', 'ok']
-      .filter(k => s[k])
-      .map(k => `<span class="dh-chip sev-${sevOf[k]}">${s[k]} ${k}</span>`)
-      .join(' ');
     const total = s.total || recon.rows.length;
-    parts.push(`<details class="feedback-panel feedback-collapsible">
-      <summary class="dh-summary dh-${dominant}">
-        <span class="dh-label">Reconciliation</span>
-        <span class="dh-status">${total} check${total === 1 ? '' : 's'} vs broker docs</span>
-        ${breakdown}
-        <span class="dh-hint">click to expand</span>
-      </summary>
-      <div class="dh-body">
-        <table>
-          <thead><tr>
-            <th>Account</th><th>Check</th>
-            <th style="text-align:right;">Reported</th>
-            <th style="text-align:right;">fin</th>
-            <th style="text-align:right;">Δ</th>
-            <th>Status</th>
-          </tr></thead>
-          <tbody>${bodyRows}</tbody>
-        </table>
-        <div style="color:var(--text-dim);font-size:0.8rem;margin-top:8px;">
-          Add <code>Reconcile Balance/Realized/Income/Section 1256</code> rows to
-          <code>metadata.csv</code> (Symbol = account group, Date = as-of date or year)
-          to check more accounts.
-        </div>
+    for (const k of ['off', 'warn']) {
+      if (s[k]) chips.push(`<span class="dh-chip sev-${sevOf[k]}">${s[k]} ${k}</span>`);
+    }
+    chips.push(`<span class="dh-chip sev-info">${s.ok || 0}/${total} reconcile</span>`);
+    sections.push(`<div class="dh-category">
+      <h4>Reconciliation <span style="color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:0;">— ${total} check${total === 1 ? '' : 's'} vs broker docs</span></h4>
+      <table>
+        <thead><tr>
+          <th>Account</th><th>Check</th>
+          <th style="text-align:right;">Reported</th>
+          <th style="text-align:right;">fin</th>
+          <th style="text-align:right;">Δ</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+      <div style="color:var(--text-dim);font-size:0.8rem;margin-top:8px;">
+        Add <code>Reconcile Balance/Realized/Income/Section 1256</code> rows to
+        <code>metadata.csv</code> (Symbol = account group, Date = as-of date or year)
+        to check more accounts.
       </div>
-    </details>`);
+    </div>`);
   }
 
-  host.innerHTML = parts.join('');
+  // ----- Assemble the single card ---------------------------------------
+  if (!sections.length) {
+    // Nothing flagged anywhere → tiny "all clear" line so the user can
+    // see the dashboard ran clean.
+    host.innerHTML = `<details class="feedback-panel feedback-collapsible" open style="opacity:0.55;">
+      <summary class="dh-summary dh-clean">
+        <span class="dh-label">Status</span>
+        <span class="dh-status">all clear · no alerts, no integrity issues</span>
+      </summary>
+    </details>`;
+    return;
+  }
+  host.innerHTML = `<details class="feedback-panel feedback-collapsible">
+    <summary class="dh-summary dh-${dominant}">
+      <span class="dh-label">Status</span>
+      ${chips.join(' ')}
+      <span class="dh-hint">click to expand</span>
+    </summary>
+    <div class="dh-body">${sections.join('')}</div>
+  </details>`;
 }
 
 // Backward-compat shim — older call sites kept invoking the old name.

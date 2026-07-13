@@ -949,6 +949,23 @@
     }
   }
 
+  /* Fixed-height scroll region for the Overview's side-by-side
+     mini-tables (Top Holdings / Recent Transactions).  Both panels cap
+     at the same height (~8 visible rows) and scroll for the rest, so
+     one is never twice as tall as its neighbor.  Sticky header keeps
+     the columns labeled while scrolling. */
+  .mini-scroll {
+    max-height: 305px;
+    overflow-y: auto;
+  }
+
+  .mini-scroll thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    z-index: 1;
+  }
+
   .panel {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -1028,18 +1045,28 @@
     margin-bottom: 4px;
   }
 
+  /* Donut LEFT, legend RIGHT — stacking the legend below squeezed the
+     donut to ~1/3 of the card width.  Side-by-side lets the donut use
+     the card's full height and keeps the legend vertically centered
+     beside it. */
   .allocation-wrap {
     display: flex;
-    flex-direction: column;
-    gap: 8px;
-    align-items: stretch;
+    flex-direction: row;
+    gap: 14px;
+    align-items: center;
   }
 
   .allocation-svg {
-    width: 100%;
-    height: 180px;
-    max-width: 200px;
-    margin: 0 auto;
+    flex: 0 0 46%;
+    width: 46%;
+    max-width: 220px;
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
+
+  .allocation-legend {
+    flex: 1;
+    min-width: 0;
   }
 
   .alloc-slice {
@@ -1464,30 +1491,18 @@
     background: var(--bg);
   }
 
-  /* ========== Overview status panels (combined Attention+DataHealth +
-     What's Changed).  Side-by-side when both have content; single
-     column when only one renders. ========== */
+  /* ========== Overview status panel — ONE collapsible card combining
+     Attention + Data Health + What's Changed + Reconciliation.  The
+     previous 2-column grid stretched a collapsed card to its expanded
+     neighbor's height (a big blank panel); a single full-width card
+     sidesteps grid row coupling entirely. ========== */
   .overview-status-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    display: block;
     margin-bottom: 16px;
   }
 
   .overview-status-grid:empty {
     display: none;
-  }
-
-  /* Single-child case: span full width instead of leaving an awkward
-     empty column on the right. */
-  .overview-status-grid> :only-child {
-    grid-column: 1 / -1;
-  }
-
-  @media (max-width: 760px) {
-    .overview-status-grid {
-      grid-template-columns: 1fr;
-    }
   }
 
   /* Sub-category headers used inside the combined Status card's body
@@ -2544,8 +2559,7 @@
     }
 
     .allocation-wrap {
-      grid-template-columns: 1fr;
-      gap: 12px;
+      gap: 10px;
     }
 
     .table-wrap {

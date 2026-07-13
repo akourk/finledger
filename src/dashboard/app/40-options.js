@@ -468,6 +468,14 @@ function renderOptions() {
 
     ${callPutPanel}
 
+    <div class="section-header" style="margin-top:24px;">
+      <h2><span style="color:var(--accent);">Open Contracts (${open.length})</span></h2>
+      <span class="as-of-hint" style="margin-left:auto;">Current positions — window filter doesn't apply${_optAccountFilter ? ` · filtered to ${_htmlEsc(_optAccountFilter)}` : ''}</span>
+    </div>
+    <div class="table-wrap">
+      <table class="mini-table"><thead>${openHead}</thead><tbody>${openRows}</tbody></table>
+    </div>
+
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Cumulative Realized P&amp;L</span></h2><span class="as-of-hint" style="margin-left:auto;">${winLabel}</span></div>
     ${chartHtml}
 
@@ -489,14 +497,6 @@ function renderOptions() {
           </tr></thead><tbody>${yearOptRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody></table>
         </div>
       </div>
-    </div>
-
-    <div class="section-header" style="margin-top:24px;">
-      <h2><span style="color:var(--accent);">Open Contracts (${open.length})</span></h2>
-      <span class="as-of-hint" style="margin-left:auto;">Current positions — window filter doesn't apply${_optAccountFilter ? ` · filtered to ${_htmlEsc(_optAccountFilter)}` : ''}</span>
-    </div>
-    <div class="table-wrap">
-      <table class="mini-table"><thead>${openHead}</thead><tbody>${openRows}</tbody></table>
     </div>
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Closed Trades</span></h2></div>
