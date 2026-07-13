@@ -482,7 +482,7 @@ function renderOptions() {
     <div class="overview-split">
       <div class="panel">
         <h3>P&amp;L by Underlying</h3>
-        <div class="table-wrap">
+        <div class="mini-scroll">
           <table class="mini-table"><thead><tr>
             <th>Underlying</th><th class="num">Trades</th><th class="num">Win %</th><th class="num">Realized</th>
           </tr></thead><tbody>${underRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody></table>
@@ -491,7 +491,7 @@ function renderOptions() {
       </div>
       <div class="panel">
         <h3>Annual Options Summary</h3>
-        <div class="table-wrap">
+        <div class="mini-scroll">
           <table class="mini-table"><thead><tr>
             <th>Year</th><th class="num">Trades</th><th class="num">Win %</th><th class="num">Realized</th>
           </tr></thead><tbody>${yearOptRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody></table>

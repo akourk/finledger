@@ -949,14 +949,20 @@
     }
   }
 
-  /* Fixed-height scroll region for the Overview's side-by-side
-     mini-tables (Top Holdings / Recent Transactions).  Both panels cap
-     at the same height (~8 visible rows) and scroll for the rest, so
-     one is never twice as tall as its neighbor.  Sticky header keeps
-     the columns labeled while scrolling. */
+  /* Fixed-height scroll region for side-by-side mini-tables (Overview's
+     Top Holdings / Recent Transactions, Options' P&L by Underlying /
+     Annual Summary).  Both panels cap at the same height (~8 visible
+     rows) and scroll for the rest, so one is never twice as tall as
+     its neighbor.  Sticky header keeps the columns labeled while
+     scrolling.  `.tall` variant for full-width tables (Holdings by
+     Asset) that want a larger window before scrolling. */
   .mini-scroll {
     max-height: 305px;
     overflow-y: auto;
+  }
+
+  .mini-scroll.tall {
+    max-height: 560px;
   }
 
   .mini-scroll thead th {
@@ -964,6 +970,13 @@
     top: 0;
     background: var(--surface);
     z-index: 1;
+  }
+
+  /* Overlay scrollbars sit ON TOP of the content — reserve a gutter on
+     the last column so the thumb never covers the final digit. */
+  .mini-scroll table td:last-child,
+  .mini-scroll table th:last-child {
+    padding-right: 18px;
   }
 
   .panel {
@@ -1503,6 +1516,30 @@
 
   .overview-status-grid:empty {
     display: none;
+  }
+
+  /* Expanded status-card body: Attention + Data Health + What's
+     Changed stack in the left half; the table-heavy Reconciliation
+     takes the right half.  Keeps the expanded card compact at desktop
+     widths; single column when narrow. */
+  .dh-body-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0 28px;
+    align-items: start;
+  }
+
+  /* A wide table (Reconciliation) must scroll inside its half-column
+     rather than clip at the card edge. */
+  .dh-body-cols > div {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  @media (max-width: 1100px) {
+    .dh-body-cols {
+      grid-template-columns: 1fr;
+    }
   }
 
   /* Sub-category headers used inside the combined Status card's body

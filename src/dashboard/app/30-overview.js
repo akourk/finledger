@@ -469,8 +469,10 @@ function _renderOneAllocationDonut(svgEl, legendEl, field, palette) {
   svgEl.setAttribute('viewBox', '0 0 200 200');
   svgEl.innerHTML = parts.join('');
 
-  // Compact legend — top 5 entries inline; "+N more" if the rest spill.
-  const TOP_N = 5;
+  // Compact legend — top 8 entries inline; "+N more" if the rest spill.
+  // 8 rows ≈ the side-by-side donut's height, so the legend fills the
+  // card instead of leaving dead space under 5 rows.
+  const TOP_N = 8;
   const top = entries.slice(0, TOP_N);
   const rest = entries.slice(TOP_N);
   const restTotal = rest.reduce((s, [, v]) => s + v, 0);
@@ -538,7 +540,8 @@ function renderOverviewStatus() {
   const issues = ANALYTICS.data_health || [];
   const changes = ANALYTICS.changes || {};
 
-  const sections = [];      // expanded-body section HTML, in display order
+  const sections = [];      // left column: Attention / Data Health / What's Changed
+  let reconSection = '';    // right column: Reconciliation (table-heavy)
   const chips = [];         // summary-line chips
   const sevRank = { info: 0, warn: 1, high: 2 };
   let dominant = 'info';
@@ -672,7 +675,7 @@ function renderOverviewStatus() {
       if (s[k]) chips.push(`<span class="dh-chip sev-${sevOf[k]}">${s[k]} ${k}</span>`);
     }
     chips.push(`<span class="dh-chip sev-info">${s.ok || 0}/${total} reconcile</span>`);
-    sections.push(`<div class="dh-category">
+    reconSection = `<div class="dh-category">
       <h4>Reconciliation <span style="color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:0;">— ${total} check${total === 1 ? '' : 's'} vs broker docs</span></h4>
       <table>
         <thead><tr>
@@ -689,11 +692,11 @@ function renderOverviewStatus() {
         <code>metadata.csv</code> (Symbol = account group, Date = as-of date or year)
         to check more accounts.
       </div>
-    </div>`);
+    </div>`;
   }
 
   // ----- Assemble the single card ---------------------------------------
-  if (!sections.length) {
+  if (!sections.length && !reconSection) {
     // Nothing flagged anywhere → tiny "all clear" line so the user can
     // see the dashboard ran clean.
     host.innerHTML = `<details class="feedback-panel feedback-collapsible" open style="opacity:0.55;">
@@ -704,13 +707,21 @@ function renderOverviewStatus() {
     </details>`;
     return;
   }
+  // Two-column body at wide widths: Attention + Data Health + What's
+  // Changed stack in the left half; the (table-heavy) Reconciliation
+  // takes the right half — keeps the expanded card compact.  Collapses
+  // to one column when either side is absent or the window is narrow
+  // (media query in styles.css).
+  const body = (sections.length && reconSection)
+    ? `<div class="dh-body-cols"><div>${sections.join('')}</div><div>${reconSection}</div></div>`
+    : (sections.join('') + reconSection);
   host.innerHTML = `<details class="feedback-panel feedback-collapsible">
     <summary class="dh-summary dh-${dominant}">
       <span class="dh-label">Status</span>
       ${chips.join(' ')}
       <span class="dh-hint">click to expand</span>
     </summary>
-    <div class="dh-body">${sections.join('')}</div>
+    <div class="dh-body">${body}</div>
   </details>`;
 }
 
