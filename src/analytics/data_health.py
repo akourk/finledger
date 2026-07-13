@@ -369,16 +369,23 @@ def _check_value_qty_price_consistency(holdings_by_account: list[dict]) -> list[
     total drift — that's not a bug, just display rounding.  Tolerance
     needs to absorb that PLUS a small absolute floor; real value
     mismatches would be way larger.
+
+    Option rows value at qty × price × 100 (quantity is CONTRACTS,
+    price the per-share premium — config.contract_multiplier), so the
+    expectation is scaled the same way the holdings builder scales it.
     """
+    from ..config import contract_multiplier
     bad = []
     for h in holdings_by_account:
         qty = h.get("quantity", 0) or 0
         val = h.get("value", 0) or 0
         pr = h.get("price", 0) or 0
         if qty > 0 and pr > 0:
-            expected = qty * pr
-            # 0.5¢/share rounding × qty + 1‰ relative + 10¢ floor.
-            tolerance = max(0.10, expected * 0.001, abs(qty) * 0.006)
+            mult = contract_multiplier(h.get("symbol", ""))
+            expected = qty * pr * mult
+            # 0.5¢/share rounding × qty (×100 for contracts) + 1‰
+            # relative + 10¢ floor.
+            tolerance = max(0.10, expected * 0.001, abs(qty) * 0.006 * mult)
             if abs(val - expected) > tolerance:
                 bad.append((h.get("account_group", ""), h.get("symbol", ""),
                             qty, pr, val, expected))

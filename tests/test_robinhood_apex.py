@@ -152,3 +152,20 @@ def test_option_holdings_value_uses_contract_multiplier():
                "cost_basis": 4000.0, "unrealized_gain": -3980.0}]
     flags = _check_per_position_basis_sanity(broken)
     assert flags and flags[0]["kind"] == "basis_price_magnitude_mismatch"
+
+
+def test_value_qty_price_check_understands_contract_multiplier():
+    """The high-severity value≠qty×price integrity check must expect
+    qty × price × 100 for option rows (it flagged every open option
+    after the multiplier fix), while still catching a genuinely wrong
+    option value."""
+    from src.analytics.data_health import _check_value_qty_price_consistency
+    ok = [{"account_group": "Robinhood", "symbol": "MSTR 8/7/2026 Put $86.00",
+           "quantity": 1.0, "price": 10.65, "value": 1065.0,
+           "cost_basis": 1065.04}]
+    assert _check_value_qty_price_consistency(ok) == []
+    wrong = [{"account_group": "Robinhood", "symbol": "MSTR 8/7/2026 Put $86.00",
+              "quantity": 1.0, "price": 10.65, "value": 10.65,
+              "cost_basis": 1065.04}]
+    flags = _check_value_qty_price_consistency(wrong)
+    assert flags and flags[0]["kind"] == "value_qty_price_mismatch"
