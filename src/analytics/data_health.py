@@ -811,6 +811,7 @@ def _check_per_position_basis_sanity(holdings_by_account: list[dict]) -> list[di
     output without telling us anything actionable.  At >$1k of basis,
     a 100x mismatch is almost always a split bug worth investigating.
     """
+    from ..config import contract_multiplier
     bad = []
     for h in holdings_by_account:
         qty = h.get("quantity", 0) or 0
@@ -820,7 +821,11 @@ def _check_per_position_basis_sanity(holdings_by_account: list[dict]) -> list[di
             continue
         if cb < 1000:
             continue   # tiny positions: bankruptcy / penny-stock crashes are real
-        bps = cb / qty   # cost-basis per share
+        # Option rows: quantity is CONTRACTS and price is the per-share
+        # premium, so basis-per-unit must be normalized by the ×100
+        # contract multiplier before comparing — otherwise every option
+        # holding false-positives at exactly 100x.
+        bps = cb / (qty * contract_multiplier(h.get("symbol", "")))
         ratio = max(bps, pr) / min(bps, pr)
         if ratio > 100:
             bad.append((h.get("account_group", ""), h.get("symbol", ""),

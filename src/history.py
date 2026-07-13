@@ -20,7 +20,7 @@ from .basis import (
 )
 from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
                           take_wrap_demand, wrap_next_dates)
-from .config import ACCOUNT_TYPES, CASH_SYMBOLS
+from .config import ACCOUNT_TYPES, CASH_SYMBOLS, contract_multiplier
 from .prices import get_price, split_factor_since
 
 # Sourced from src/actions.py — single source of truth for the action
@@ -544,7 +544,10 @@ def compute_history(txns: list[dict],
                 pos_basis = sum(lot["qty"] * lot["basis_per_share"]
                                 for lot in lots.get((acct, sym), []))
 
-            val = (adj_qty * price) if (price is not None and price > 0) else None
+            # Option contracts value at premium × 100 (quantity is in
+            # contracts, price per-share — see config.contract_multiplier).
+            val = (adj_qty * price * contract_multiplier(sym)
+                   if (price is not None and price > 0) else None)
 
             attempted += abs(qty)
             if val is not None:

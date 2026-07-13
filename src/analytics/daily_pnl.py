@@ -89,7 +89,8 @@ def compute_daily_pnl(history: list[dict],
                 fb = last_txn_price.get(sym)
                 if fb is None:
                     continue
-                total += qty * fb
+                from ..config import contract_multiplier
+                total += qty * fb * contract_multiplier(sym)
             else:
                 # No split_factor_since: `qty` is TODAY's position (already
                 # today-basis) and cached prices are today-basis, so qty × px

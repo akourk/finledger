@@ -284,12 +284,14 @@ def _refresh_prices_only(args) -> None:
 
     # Stage: rebuild basis_methods totals from per-method holdings (with
     # fresh prices) + fold cash.  Mirrors the full pipeline exactly.
+    from .config import contract_multiplier as _cmult
     basis_methods = data.get("basis_methods", {}) or {}
     for m, block in basis_methods.items():
         for r in block.get("holdings", []):
             px = last_prices.get(r.get("symbol", ""), 0.0)
             r["price"] = round(px, 2)
-            r["value"] = round(r["quantity"] * px, 2) if px else None
+            r["value"] = (round(r["quantity"] * px * _cmult(r.get("symbol", "")), 2)
+                          if px else None)
             r["unrealized_gain"] = (
                 round(r["value"] - r["cost_basis"], 2)
                 if (r.get("value") is not None and r.get("cost_basis") is not None) else None
@@ -765,9 +767,11 @@ def main():
     for m, st in method_states.items():
         rows = state_to_holdings(st, m)
         # Per-holding unrealized using today's cache price
+        from .config import contract_multiplier as _cmult
         for r in rows:
             px = last_prices.get(r["symbol"], 0.0)
-            value = round(r["quantity"] * px, 2) if px else None
+            value = (round(r["quantity"] * px * _cmult(r["symbol"]), 2)
+                     if px else None)
             r["price"] = round(px, 2)
             r["value"] = value
             r["account_type"] = ACCOUNT_TYPES.get(r["account_group"], "Taxable")

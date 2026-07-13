@@ -86,7 +86,10 @@ def compute_header_summary(txns: list[dict], history: list[dict],
         else:
             fb = last_txn_price.get(sym)
             if fb is not None:
-                yest_total += qty * fb
+                # Contracts × per-share premium need the ×100 multiplier
+                # (matches the snapshot valuation in history.py).
+                from ..config import contract_multiplier
+                yest_total += qty * fb * contract_multiplier(sym)
             else:
                 # Couldn't price yesterday — fall back to today's value
                 # so this position contributes 0 to the 1d delta rather

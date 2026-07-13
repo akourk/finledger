@@ -802,7 +802,8 @@ def _value_at_date(txns_sorted: list[dict], target: str,
         else:
             fb = last_txn_price.get(sym)
             if fb is not None:
-                total += qty * fb
+                from ..config import contract_multiplier
+                total += qty * fb * contract_multiplier(sym)
     total += bridge_adjustment(target, filter_groups, bridges)
     return total
 

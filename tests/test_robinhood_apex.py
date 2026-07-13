@@ -119,3 +119,36 @@ def test_apex_covered_conv_is_neutralized():
     assert out[1]["action"] == "Neutral"
     assert "Apex-era" in out[1]["description"]
     assert out[2]["action"] == "CONV"   # no apex coverage — untouched
+
+
+def test_option_holdings_value_uses_contract_multiplier():
+    """Open option contracts value at premium × 100 × contracts —
+    quantity is CONTRACTS, price is the per-share premium.  Without the
+    multiplier a $1,065 contract showed $10.65 of value against $1,065
+    of basis (phantom unrealized loss), and the basis-sanity data-health
+    check false-positived at exactly 100x on every option holding."""
+    from src.pipeline_stages import build_holdings
+    sym = "MSTR 8/7/2026 Put $86.00"
+    holdings, by_account = build_holdings(
+        balances={("Robinhood", sym): 1.0, ("Robinhood", "VOO"): 2.0},
+        last_prices={sym: 10.65, "VOO": 500.0},
+        fifo_basis_by_key={("Robinhood", sym): 1065.04,
+                           ("Robinhood", "VOO"): 900.0},
+        cash_principal_by_key={},
+    )
+    opt = next(h for h in by_account if h["symbol"] == sym)
+    assert opt["price"] == 10.65            # per-share premium, as quoted
+    assert opt["value"] == 1065.0           # 1 contract × 10.65 × 100
+    assert abs(opt["unrealized_gain"]) < 1.0  # ~breakeven, not −$1,054
+    voo = next(h for h in by_account if h["symbol"] == "VOO")
+    assert voo["value"] == 1000.0           # stocks unchanged (×1)
+
+    # Data-health basis-sanity check: the option must NOT flag; a real
+    # 100x stock mismatch still must.
+    from src.analytics.data_health import _check_per_position_basis_sanity
+    assert _check_per_position_basis_sanity(by_account) == []
+    broken = [{"account_group": "Robinhood", "symbol": "AAPL",
+               "quantity": 10.0, "price": 2.0, "value": 20.0,
+               "cost_basis": 4000.0, "unrealized_gain": -3980.0}]
+    flags = _check_per_position_basis_sanity(broken)
+    assert flags and flags[0]["kind"] == "basis_price_magnitude_mismatch"

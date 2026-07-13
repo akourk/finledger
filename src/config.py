@@ -47,6 +47,22 @@ CANONICAL_PREFIXES = {
 # Files that should never be renamed
 SKIP_RENAME = {"manual-adjustments.csv", "metadata.csv", "retirement-data.csv"}
 
+
+def contract_multiplier(symbol: str) -> float:
+    """Valuation multiplier for a symbol's quantity × price product.
+
+    Equity option contracts control 100 shares: fin stores quantity in
+    CONTRACTS and price as the PER-SHARE premium (matching broker CSVs
+    and how brokers quote), so valuing a position needs the ×100
+    contract multiplier.  Cost basis is unaffected — it comes from the
+    txn ``amount``, which is already the full cash paid.  Without this,
+    every open option was valued 100x low (a $1,065 contract showed as
+    $10.65 of value against $1,065 of basis — a phantom unrealized
+    loss).  Everything else is ×1.
+    """
+    s = symbol or ""
+    return 100.0 if (" Call " in s or " Put " in s) else 1.0
+
 # ---------------------------------------------------------------------------
 # Account grouping & typing — populated by data/metadata.csv
 # ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ from collections import defaultdict
 from typing import Iterable
 
 from .actions import NEUTRAL_ACTIONS, SUBTRACT_ACTIONS
-from .config import ACCOUNT_TYPES, CASH_SYMBOLS
+from .config import ACCOUNT_TYPES, CASH_SYMBOLS, contract_multiplier
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +260,12 @@ def build_holdings(
         price = last_prices.get(sym, 0.0)
         if is_dust(qty, price):
             continue
-        value = round(qty * price, 2) if price else None
+        # Option quantities are CONTRACTS; price is the per-share
+        # premium — valuation needs the ×100 contract multiplier
+        # (see config.contract_multiplier).  price stays per-share
+        # in the row, matching how brokers quote.
+        value = (round(qty * price * contract_multiplier(sym), 2)
+                 if price else None)
         if sym in CASH_SYMBOLS and ACCOUNT_TYPES.get(acct) == "Savings":
             cost_basis = round(cash_principal_by_key.get((acct, sym), 0.0), 2)
         else:
@@ -298,7 +303,8 @@ def build_holdings(
         if is_dust(qty, price):
             continue
         cost_basis = round(asset_basis[sym], 2) if asset_has_basis[sym] else None
-        value = round(qty * price, 2) if price else None
+        value = (round(qty * price * contract_multiplier(sym), 2)
+                 if price else None)
         unrealized = (round(value - cost_basis, 2)
                       if (value is not None and cost_basis is not None) else None)
         holdings.append({
