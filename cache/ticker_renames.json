@@ -1,19 +1,48 @@
 {
-  "_comment_1": "Hand-curated ticker renames for cases where brokers retroactively relabel old transactions after corporate actions.  Applied at PARSE time, before dedup — so the same physical event (same date/action/amount) showing up with different symbols in different CSV exports gets collapsed to one txn via the normal dedup pass.",
+  "_comment_1": "Hand-curated ticker renames for cases where brokers retroactively relabel old transactions after corporate actions.  Applied at PARSE time, before dedup \u2014 so the same physical event (same date/action/amount) showing up with different symbols in different CSV exports gets collapsed to one txn via the normal dedup pass.",
   "_comment_2": "Schema per entry: { from, to, before_date?, after_date?, note }.  before_date means 'apply the rename ONLY when txn date < before_date'; after_date = '... only when txn date >= after_date'.  Leave both off to apply unconditionally.  Both can be set together to apply only within a window.",
-  "_comment_3": "Keyed by the `account` value the parser emits (e.g. 'Robinhood').  Not account_group — this runs before normalization.",
-
+  "_comment_3": "Keyed by the `account` value the parser emits (e.g. 'Robinhood').  Not account_group \u2014 this runs before normalization.",
   "Robinhood": [
     {
       "from": "RNA",
       "to": "RNAM",
       "before_date": "2026-02-27",
-      "note": "Avidity Biosciences (originally ticker RNA) was renamed to RNAM mid-2025 when Novartis announced the acquisition.  Robinhood retroactively relabeled the post-rename stock-lending rows as RNAM in newer CSV exports but left them as RNA in older exports, which created duplicate SLIP rows after dedup.  A separate spun-off entity, Atrium Therapeutics, took over the RNA ticker on 2026-02-27 — those events MUST stay as RNA (different company).  Cutoff = the Atrium spinoff date."
+      "note": "Avidity Biosciences (originally ticker RNA) was renamed to RNAM mid-2025 when Novartis announced the acquisition.  Robinhood retroactively relabeled the post-rename stock-lending rows as RNAM in newer CSV exports but left them as RNA in older exports, which created duplicate SLIP rows after dedup.  A separate spun-off entity, Atrium Therapeutics, took over the RNA ticker on 2026-02-27 \u2014 those events MUST stay as RNA (different company).  Cutoff = the Atrium spinoff date."
     },
     {
       "from": "COMM",
       "to": "VISN",
-      "note": "CommScope changed its ticker symbol to VISN.  Shared CUSIP 20337X109 confirms one continuous security; same (date, action, amount) appears under both tickers across robinhood-5/-6/-7 exports, which the CUSIP-collision diagnostic surfaced.  Applied unconditionally — no known reuse of the COMM ticker by a different entity.  If COMM ever becomes a new entity later, add a before_date here."
+      "note": "CommScope changed its ticker symbol to VISN.  Shared CUSIP 20337X109 confirms one continuous security; same (date, action, amount) appears under both tickers across robinhood-5/-6/-7 exports, which the CUSIP-collision diagnostic surfaced.  Applied unconditionally \u2014 no known reuse of the COMM ticker by a different entity.  If COMM ever becomes a new entity later, add a before_date here."
+    },
+    {
+      "from": "CHIPOTLE MEXICAN GRILL INC COMMON STOCK",
+      "to": "CMG",
+      "note": "Apex-era hand-entered file uses the 1099 PDF's security name; map to the ticker so the position keys align with the modern exports."
+    },
+    {
+      "from": "MICRON TECHNOLOGY INC",
+      "to": "MU",
+      "note": "Apex-era security name -> ticker (see CMG note)."
+    },
+    {
+      "from": "MICROSOFT CORP",
+      "to": "MSFT",
+      "note": "Apex-era security name -> ticker (see CMG note)."
+    },
+    {
+      "from": "NETFLIX COM INC",
+      "to": "NFLX",
+      "note": "Apex-era security name -> ticker (see CMG note)."
+    },
+    {
+      "from": "SANGAMO THERAPEUTICS INC COMMON STOCK",
+      "to": "SGMO",
+      "note": "Apex-era security name -> ticker (see CMG note)."
+    },
+    {
+      "from": "MPW",
+      "to": "MPT",
+      "note": "Medical Properties Trust changed its ticker MPW -> MPT (user-reported 2026).  Applied unconditionally; add a before_date if MPW is ever reused by a different entity."
     }
   ]
 }
