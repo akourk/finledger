@@ -169,3 +169,28 @@ def test_value_qty_price_check_understands_contract_multiplier():
               "cost_basis": 1065.04}]
     flags = _check_value_qty_price_consistency(wrong)
     assert flags and flags[0]["kind"] == "value_qty_price_mismatch"
+
+
+def test_zero_basis_lot_honours_cost_basis_override():
+    """A Cost Basis metadata row must be stampable onto a zero-basis lot
+    creator (Conversion — e.g. a referral free share whose grant-FMV
+    basis exists only on the 1099) and the walker must book it."""
+    from src.cost_basis_overrides import match_and_stamp
+    from src.basis import compute_basis_default
+    txns = [
+        {"date": "2018-11-12", "account_group": "Robinhood",
+         "account_type": "Taxable", "symbol": "S", "action": "Conversion",
+         "quantity": 1.0, "price": 0.0, "fees": 0.0, "amount": 0.0,
+         "description": "", "source": "robinhood-12.csv"},
+        {"date": "2019-06-18", "account_group": "Robinhood",
+         "account_type": "Taxable", "symbol": "S", "action": "Sell",
+         "quantity": 1.0, "price": 7.22, "fees": 0.0, "amount": 7.22,
+         "description": "", "source": "robinhood-12.csv"},
+    ]
+    applied, warns = match_and_stamp(txns, [
+        {"date": "2018-11-12", "amount": 5.51, "account_group": "Robinhood",
+         "asset": "S", "qty": 1.0}])
+    assert applied == 1 and not warns
+    compute_basis_default(txns)
+    assert txns[0]["cost_basis"] == 5.51
+    assert txns[1]["realized_gain"] == 1.71   # 7.22 − 5.51, matches the 1099

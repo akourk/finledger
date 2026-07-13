@@ -405,7 +405,12 @@ def compute_history(txns: list[dict],
                 _push(key, qty, dollars, t.get("date", ""))
             elif effect == "zero_basis":
                 # FMV-at-receipt when the broker recorded a price, else $0.
-                _push(key, qty, qty * p if p > 0 else 0.0, t.get("date", ""))
+                # Override wins — mirrors basis._walk's zero_basis branch.
+                bo = t.get("basis_override")
+                _push(key, qty,
+                      float(bo) if bo is not None
+                      else (qty * p if p > 0 else 0.0),
+                      t.get("date", ""))
             elif effect == "remove":
                 _consume(key, qty,
                          hints=hints_for(_disposal_lots, acct, sym,

@@ -723,9 +723,10 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
 
         elif effect == "zero_basis":
             # Rewards / spinoffs / mergers: FMV-at-receipt if price known,
-            # else zero.
+            # else zero.  A user Cost Basis override wins (e.g. a free
+            # share's grant-FMV basis that exists only on the 1099).
             price = float(t.get("price", 0) or 0)
-            basis = qty * price if price > 0 else 0.0
+            basis = _ov(t, qty * price if price > 0 else 0.0)
             _push_lot(state, method, key, qty, basis, t.get("date", ""))
             if qty > 0:
                 cost_basis_value = basis

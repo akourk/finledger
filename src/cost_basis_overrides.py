@@ -33,7 +33,12 @@ from __future__ import annotations
 from datetime import date as _date
 
 _ADD_ACTIONS = {"Buy", "Transfer In", "Deposit", "Wrap Asset In",
-                "Convert In", "Reinvest"}
+                "Convert In", "Reinvest",
+                # zero-basis lot creators whose true basis fin can't see:
+                # a clearing-migration Conversion (e.g. a referral free
+                # share whose grant-FMV basis exists only on the 1099)
+                # or an award/reward the broker re-based.
+                "Conversion", "Reward"}
 _DATE_TOL_DAYS = 2
 
 
