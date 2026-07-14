@@ -478,6 +478,60 @@ def copy_disposal_lots(disposal_lots: dict | None) -> dict | None:
     return {k: [dict(h) for h in v] for k, v in disposal_lots.items()}
 
 
+def reserved_future_demand(disposal_lots: dict | None, account_group: str,
+                           date: str, symbols: set[str] | None = None
+                           ) -> dict[str, float] | None:
+    """``{acquired_date: qty}`` of this account's report lots still to be
+    disposed strictly AFTER ``date`` — the units the broker's inventory
+    is holding for a later sale.
+
+    Undirected fallback consumption (a sale remainder the hints don't
+    cover, a wrap remainder past the demand window, a rebase) must avoid
+    these lots or it destroys per-unit flavors the report's later
+    disposals name (observed: HIFO fallbacks ate the customer-provided
+    2021 lot years before the report's 2026 sale relieved it, producing
+    offsetting multi-$k per-year realized drift).
+
+    ``symbols`` restricts the demand to those disposal symbols — pass
+    the consuming pool's wrap FAMILY (``wrap_symbol_families``): wraps
+    relocate lots across symbols with acquired dates preserved, so
+    demand for the wrapped symbol must reserve lots still sitting in
+    the source pool, but demand for an UNRELATED symbol must not (a
+    same-date buy of another ticker would spuriously deflect this
+    pool's consumption).  Qty is a per-date budget — a date's surplus
+    above it stays freely consumable."""
+    if not disposal_lots:
+        return None
+    cutoff = (date or "")[:10]
+    out: dict[str, float] = {}
+    for (a, sym, sold), hints in disposal_lots.items():
+        if a != account_group or sold <= cutoff:
+            continue
+        if symbols is not None and sym not in symbols:
+            continue
+        for h in hints:
+            acq = h.get("acquired") or ""
+            ql = float(h.get("qty_left", 0) or 0)
+            if acq and ql > 0:
+                out[acq] = out.get(acq, 0.0) + ql
+    return out or None
+
+
+def wrap_symbol_families(wrap_groups: dict | None) -> dict[str, set[str]]:
+    """``{symbol: {family symbols}}`` — symbols connected by wrap/unwrap
+    groups (ETH↔CBETH) share one family; everything else is alone.
+    Takes the ``_pair_wraps`` group dict (both walkers build it)."""
+    fam: dict[str, set[str]] = {}
+    for (_a, _d, _k), g in (wrap_groups or {}).items():
+        s, d = g.get("src"), g.get("dst")
+        if not s or not d:
+            continue
+        union = fam.get(s, {s}) | fam.get(d, {d})
+        for x in union:
+            fam[x] = union
+    return fam
+
+
 # ---------------------------------------------------------------------------
 # Wrap demand — which lots should a basis-carrying wrap move?
 # ---------------------------------------------------------------------------
@@ -706,25 +760,30 @@ def stamp_acquisition_basis(txns: list[dict],
             return None
 
     claimed: set[int] = set()
+    row_used = [False] * len(acq_rows)
     stamped = 0
-    unmatched = 0
-    for row in acq_rows:
+
+    def _candidate(t, sym, rd):
+        if id(t) in claimed or t.get("basis_override") is not None:
+            return False
+        if t.get("account_group") != _REPORT_ACCOUNT_GROUP:
+            return False
+        if t.get("symbol") != sym:
+            return False
+        act = t.get("action") or ""
+        if act not in _LOT_ADD_ACTIONS and act != "Neutral":
+            return False
+        td = _pd(t.get("date", ""))
+        return td is not None and abs((td - rd).days) <= 2
+
+    # ----- Pass 1: exact 1:1 matches (row qty ≈ txn qty) -----------------
+    for i, row in enumerate(acq_rows):
         rd = _pd(row["date"])
         if rd is None:
             continue
         pick = None
         for t in txns:
-            if id(t) in claimed or t.get("basis_override") is not None:
-                continue
-            if t.get("account_group") != _REPORT_ACCOUNT_GROUP:
-                continue
-            if t.get("symbol") != row["symbol"]:
-                continue
-            act = t.get("action") or ""
-            if act not in _LOT_ADD_ACTIONS and act != "Neutral":
-                continue
-            td = _pd(t.get("date", ""))
-            if td is None or abs((td - rd).days) > 2:
+            if not _candidate(t, row["symbol"], rd):
                 continue
             tq = float(t.get("quantity", 0) or 0)
             if abs(tq - row["qty"]) > max(1e-6, row["qty"] * 0.02):
@@ -732,9 +791,98 @@ def stamp_acquisition_basis(txns: list[dict],
             pick = t
             break
         if pick is None:
-            unmatched += 1
             continue
         claimed.add(id(pick))
+        row_used[i] = True
         pick["basis_override"] = float(row["basis"])
         stamped += 1
+
+    # ----- Pass 2: GROUP matches — several report rows sum to one txn ----
+    # Coinbase's inventory keeps per-lot granularity (e.g. a 25-unit
+    # arrival is several receive lots at different per-unit basis) while
+    # fin records one transaction.  A blended single lot loses the
+    # per-unit flavors that the report's later disposals name, which is
+    # the root of the per-year realized timing drift.  When a subset of
+    # unclaimed rows (same symbol, date ±2d) sums to a txn's quantity,
+    # stamp the total AND attach ``basis_override_lots`` — a per-piece
+    # breakdown both walkers push as separate lots.  Piece quantities
+    # are normalized to sum EXACTLY to the txn quantity so the
+    # balance↔lot-queue parity invariant holds.
+    for t in txns:
+        if id(t) in claimed or t.get("basis_override") is not None:
+            continue
+        if t.get("account_group") != _REPORT_ACCOUNT_GROUP:
+            continue
+        act = t.get("action") or ""
+        if act not in _LOT_ADD_ACTIONS and act != "Neutral":
+            continue
+        td = _pd(t.get("date", ""))
+        tq = float(t.get("quantity", 0) or 0)
+        if td is None or tq <= 0:
+            continue
+        sym = t.get("symbol")
+        cand = [i for i, row in enumerate(acq_rows)
+                if not row_used[i] and row["symbol"] == sym
+                and _pd(row["date"]) is not None
+                and abs((_pd(row["date"]) - td).days) <= 2
+                and row["qty"] > 0]
+        if len(cand) < 2:
+            continue
+        tol = max(1e-6, tq * 0.02)
+        subset = _subset_summing_to(
+            [(i, acq_rows[i]["qty"]) for i in cand], tq, tol)
+        if subset is None:
+            continue
+        pieces_qty = sum(acq_rows[i]["qty"] for i in subset)
+        scale = tq / pieces_qty if pieces_qty > 0 else 1.0
+        claimed.add(id(t))
+        t["basis_override"] = float(sum(acq_rows[i]["basis"] for i in subset))
+        t["basis_override_lots"] = [
+            {"qty": acq_rows[i]["qty"] * scale,
+             "basis": float(acq_rows[i]["basis"])}
+            for i in subset
+        ]
+        for i in subset:
+            row_used[i] = True
+        stamped += 1
+
+    unmatched = sum(1 for u in row_used if not u)
     return stamped, unmatched
+
+
+def _subset_summing_to(items: list[tuple[int, float]], target: float,
+                       tol: float, node_cap: int = 50000) -> list[int] | None:
+    """Find a subset of ``items`` (id, qty) whose qtys sum to
+    ``target ± tol``.  Prefers the FULL set (the common case: every
+    unclaimed report row on the date belongs to the one fin arrival),
+    then backtracks largest-first with a sum bound.  ``node_cap``
+    bounds the search so a pathological row set can't hang the
+    pipeline; returns None when nothing fits."""
+    total = sum(q for _, q in items)
+    if abs(total - target) <= tol:
+        return [i for i, _ in items]
+    ordered = sorted(items, key=lambda x: -x[1])
+    n = len(ordered)
+    nodes = 0
+
+    def _walk(idx: int, acc: float, chosen: list[int]) -> list[int] | None:
+        nonlocal nodes
+        nodes += 1
+        if nodes > node_cap:
+            return None
+        if abs(acc - target) <= tol and chosen:
+            return list(chosen)
+        if idx >= n or acc - target > tol:
+            return None
+        # Remaining mass can't reach the target → prune.
+        if acc + sum(q for _, q in ordered[idx:]) < target - tol:
+            return None
+        i, q = ordered[idx]
+        chosen.append(i)
+        got = _walk(idx + 1, acc + q, chosen)
+        if got is not None:
+            return got
+        chosen.pop()
+        return _walk(idx + 1, acc, chosen)
+
+    return _walk(0, 0.0, [])

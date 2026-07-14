@@ -14,12 +14,14 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 from .basis import (
-    BASIS_EFFECTS, _basis_dollars, _basis_effect, _consume_lots,
-    _consume_lots_directed, _pair_transfers, _pair_wraps, _rescale_lots,
+    BASIS_EFFECTS, _basis_dollars, _basis_effect, _consume_for_rebase,
+    _consume_lots, _consume_lots_directed, _consume_lots_reserving,
+    _pair_transfers, _pair_wraps, _rebase_is_move, _rescale_lots,
     _sort_key as _basis_sort_key,
 )
 from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
-                          take_wrap_demand, wrap_next_dates)
+                          reserved_future_demand, take_wrap_demand,
+                          wrap_next_dates, wrap_symbol_families)
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS, contract_multiplier
 from .prices import get_price, split_factor_since
 
@@ -306,6 +308,7 @@ def compute_history(txns: list[dict],
     # atomically the first time any leg is met, exactly like basis.py.
     wrap_groups = _pair_wraps(txns)
     wrap_until = wrap_next_dates(wrap_groups)
+    _sym_families = wrap_symbol_families(wrap_groups)
     wrap_done: set[tuple] = set()
 
     def _method_for(acct: str) -> str:
@@ -334,16 +337,24 @@ def compute_history(txns: list[dict],
     _disposal_lots = copy_disposal_lots(disposal_lots)
     _wrap_demand = build_wrap_demand(_disposal_lots)
 
-    def _consume(key, qty_to_remove, hints=None):
+    def _reserved_for(acct, date, sym):
+        """Acquired-date reservation for undirected consumption —
+        mirrors basis._walk's _reserved_for."""
+        return reserved_future_demand(_disposal_lots, acct, date,
+                                      symbols=_sym_families.get(sym, {sym}))
+
+    def _consume(key, qty_to_remove, hints=None, reserved=None):
         """Remove qty_to_remove from lots[key] using the owning account's
         lot-relief method; return (basis_removed, carried).  Delegates to
-        basis._consume_lots (or the report-directed variant when the
-        broker's gain/loss report covers this disposal) so consume order
-        matches the annotated basis walk exactly."""
+        basis._consume_lots_reserving (or the report-directed variant when
+        the broker's gain/loss report covers this disposal) so consume
+        order matches the annotated basis walk exactly."""
         if hints:
             return _consume_lots_directed(lots[key], qty_to_remove,
-                                          _method_for(key[0]), hints)
-        return _consume_lots(lots[key], qty_to_remove, _method_for(key[0]))
+                                          _method_for(key[0]), hints,
+                                          reserved=reserved)
+        return _consume_lots_reserving(lots[key], qty_to_remove,
+                                       _method_for(key[0]), reserved)
 
     def _push(key, qty_add, basis_dollars, date):
         if qty_add > 0:
@@ -352,6 +363,20 @@ def compute_history(txns: list[dict],
                 "qty": qty_add,
                 "basis_per_share": basis_dollars / qty_add,
             })
+
+    def _push_txn(key, t, qty_add, basis_dollars, date):
+        """Multi-lot mirror of basis._push_txn_lots: when the txn
+        carries a per-lot ``basis_override_lots`` breakdown (several
+        broker-report rows grouped onto one fin txn), push one lot per
+        piece so per-unit flavors match the annotated walk exactly."""
+        pieces = t.get("basis_override_lots")
+        if pieces and t.get("basis_override") is not None:
+            for piece in pieces:
+                pq = float(piece.get("qty", 0) or 0)
+                if pq > 0:
+                    _push(key, pq, float(piece.get("basis", 0) or 0), date)
+            return
+        _push(key, qty_add, basis_dollars, date)
 
     history: list[dict] = []
     for sample_date in samples:
@@ -388,9 +413,21 @@ def compute_history(txns: list[dict],
                         r_qty = float(tin.get("quantity", 0) or 0)
                         r_key = (tin.get("account_group", "") or "",
                                  tin.get("symbol", "") or "")
-                        _consume(r_key, r_qty)
-                        _push(r_key, r_qty, float(tin["basis_override"]),
-                              tin.get("date", ""))
+                        new_basis = float(tin["basis_override"])
+                        consumed, carried = _consume_for_rebase(
+                            lots[r_key], r_qty, _method_for(r_key[0]),
+                            tin.get("date", ""), new_basis,
+                            reserved=_reserved_for(r_key[0],
+                                                   tin.get("date", ""),
+                                                   r_key[1]))
+                        if _rebase_is_move(consumed, new_basis):
+                            # Wallet move of broker-tracked lots: keep
+                            # them verbatim — mirrors basis._walk.
+                            for lot in carried:
+                                lots[r_key].append(dict(lot))
+                        else:
+                            _push_txn(r_key, tin, r_qty, new_basis,
+                                      tin.get("date", ""))
                 continue
 
             # Cost-basis walk — rules mirror basis._walk (see docstring
@@ -402,19 +439,21 @@ def compute_history(txns: list[dict],
             if effect == "add":
                 bo = t.get("basis_override")
                 dollars = float(bo) if bo is not None else _basis_dollars(t)
-                _push(key, qty, dollars, t.get("date", ""))
+                _push_txn(key, t, qty, dollars, t.get("date", ""))
             elif effect == "zero_basis":
                 # FMV-at-receipt when the broker recorded a price, else $0.
                 # Override wins — mirrors basis._walk's zero_basis branch.
                 bo = t.get("basis_override")
-                _push(key, qty,
-                      float(bo) if bo is not None
-                      else (qty * p if p > 0 else 0.0),
-                      t.get("date", ""))
+                _push_txn(key, t, qty,
+                          float(bo) if bo is not None
+                          else (qty * p if p > 0 else 0.0),
+                          t.get("date", ""))
             elif effect == "remove":
                 _consume(key, qty,
                          hints=hints_for(_disposal_lots, acct, sym,
-                                         t.get("date", "")))
+                                         t.get("date", "")),
+                         reserved=_reserved_for(acct, t.get("date", ""),
+                                                sym))
             elif effect == "transfer_out":
                 if id(t) in tout_handled:
                     pass  # already moved eagerly by same-day paired TIN
@@ -432,7 +471,7 @@ def compute_history(txns: list[dict],
                     bo = t.get("basis_override")
                     basis = (float(bo) if bo is not None
                              else (qty * p if p > 0 else 0.0))
-                    _push(key, qty, basis, t.get("date", ""))
+                    _push_txn(key, t, qty, basis, t.get("date", ""))
                 elif id(paired) in stashed_tout_lots:
                     for lot in stashed_tout_lots.pop(id(paired)):
                         lots[key].append(dict(lot))
@@ -463,11 +502,15 @@ def compute_history(txns: list[dict],
                                                until=wrap_until.get(
                                                    (acct, g["dst"],
                                                     t.get("date", "") or "")))
+                        _wrsv = _reserved_for(acct, t.get("date", ""),
+                                              g["src"])
                         if _wh:
                             _b, carried = _consume((acct, g["src"]),
-                                                   g["q_out"], hints=_wh)
+                                                   g["q_out"], hints=_wh,
+                                                   reserved=_wrsv)
                         else:
-                            _b, carried = _consume((acct, g["src"]), g["q_out"])
+                            _b, carried = _consume((acct, g["src"]),
+                                                   g["q_out"], reserved=_wrsv)
                         for lot in _rescale_lots(carried, g["q_in"]):
                             lots[(acct, g["dst"])].append(lot)
                     elif g:
@@ -483,8 +526,8 @@ def compute_history(txns: list[dict],
                             bo = il.get("basis_override")
                             b = (float(bo) if bo is not None
                                  else (iq * px if px > 0 else 0.0))
-                            _push((acct, il.get("symbol", "")), iq, b,
-                                  il.get("date", ""))
+                            _push_txn((acct, il.get("symbol", "")), il,
+                                      iq, b, il.get("date", ""))
             elif effect == "split":
                 lq = lots[key]
                 old_total = sum(lot["qty"] for lot in lq)
@@ -498,9 +541,11 @@ def compute_history(txns: list[dict],
                 # Neutral same-pool conversion with broker-reported
                 # basis (ETH2 deprecation etc.) — zero-gain rebase.
                 # Mirrors basis._walk's rebase_neutral branch.
-                _consume(key, qty)
-                _push(key, qty, float(t["basis_override"]),
-                      t.get("date", ""))
+                _consume(key, qty,
+                         reserved=_reserved_for(acct, t.get("date", ""),
+                                                sym))
+                _push_txn(key, t, qty, float(t["basis_override"]),
+                          t.get("date", ""))
             # else: ignore / unknown → no-op
 
         by_group:       dict[str, float] = defaultdict(float)

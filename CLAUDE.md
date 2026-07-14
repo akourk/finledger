@@ -865,12 +865,43 @@ threads through every consumer.
   carry the same customer-provided figures).  Same-symbol conversions
   (ETH2→ETH deprecation) are excluded from stamping — their basis
   arrives via the Receive rows; a Neutral txn stamped with an override
-  still rebases the pool at zero gain (`rebase_neutral`).  KNOWN
-  LIMIT: Coinbase dates convert-carried lots by ORIGINAL acquisition
-  while fin's convert legs are dated at the convert — per-year realized
-  still shows offsetting timing drift vs the report in convert-heavy
-  years (net lifetime delta is small; `Reconcile Realized` rows keep
-  tax figures broker-authoritative).  **Robinhood** consolidated 1099
+  still rebases the pool at zero gain (`rebase_neutral`).  Stamping is
+  two-pass: exact 1:1 row↔txn matches first, then GROUP matches where
+  several unclaimed rows (same symbol, date ±2d) sum to one txn's
+  quantity — those stamp `basis_override` (the total) PLUS
+  `basis_override_lots` (a per-piece breakdown both walkers push as
+  separate lots via `_push_txn_lots` / history's `_push_txn`), so the
+  report's per-unit flavors survive in the pool for directed
+  consumption.  **Reservation** (`reserved_future_demand` +
+  `basis._consume_lots_reserving`): every UNDIRECTED consume (sale
+  remainders the hints don't cover, wrap remainders past the demand
+  window, rebases) avoids lots whose acquired date a FUTURE report
+  disposal still names, dipping into them only on shortfall — HIFO
+  fallbacks otherwise destroy flavors the broker's inventory is
+  holding for a later sale.  Scoped per wrap family
+  (`wrap_symbol_families`: ETH↔CBETH share demand; unrelated tickers
+  never deflect each other — unscoped reservation shifted Robinhood
+  stock realized).  **Rebase consume preference**
+  (`_consume_for_rebase`): an intra-group transfer rebase consumes
+  (1) lots whose per-unit ≈ the override's — the moved units — then
+  (2) pre-move-date lots, then the rest (each tier free-then-reserved);
+  and when the consumed basis ≈ the override total the rebase is a
+  **wallet-move no-op** (`_rebase_is_move`) that re-pushes the consumed
+  lots verbatim, preserving original acquired dates for later hints
+  (a genuine customer-provided receive still pushes a fresh lot dated
+  at the txn).  KNOWN LIMITS (both offsetting per-year TIMING drift,
+  small lifetime net; `Reconcile Realized` rows keep tax figures
+  broker-authoritative): (1) Coinbase dates convert-carried lots by
+  ORIGINAL acquisition while fin's convert legs are dated at the
+  convert; (2) **Coinbase's tax engine double-books the 2021 Pro→
+  regular arrival** (+25 units booked as a customer-provided receive
+  with no visible decrement of the Pro side), so its inventory exceeds
+  physical coins — its 2026 sale relieves a 2021 lot that fin's ledger
+  (correctly) shows sold years earlier; fin's ETH balance bottomed
+  near zero before the 2026 repurchases, so NO consume-order strategy
+  can reproduce that relief.  Do not attempt to close the offsetting
+  2024/2026 Coinbase deltas by consume ordering — it's a data limit,
+  not a bug.  **Robinhood** consolidated 1099
   CSVs (`robinhood-1099-{year}.csv`, scanner-`skip`) feed the same
   disposal-lot mechanism via `load_robinhood_1099_lots(data_dir, txns)`:
   a section-aware parse of the multi-section 1099 (switch on the

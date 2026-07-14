@@ -385,6 +385,88 @@ def _consume_lots(lots: list[dict], qty_to_remove: float, method: str) -> tuple[
     return basis_removed, carried
 
 
+def _free_after_reserve(lots: list[dict],
+                        reserved: dict[str, float]) -> dict[str, float]:
+    """Per-acquired-date surplus above the reserved budget — what an
+    undirected consume may take without touching lots the broker's
+    report disposes later."""
+    pool: dict[str, float] = {}
+    for l in lots:
+        d = (l.get("date") or "")[:10]
+        pool[d] = pool.get(d, 0.0) + l["qty"]
+    return {d: q - min(q, float(reserved.get(d, 0) or 0))
+            for d, q in pool.items()}
+
+
+def _consume_lots_capped(lots: list[dict], qty_to_remove: float, method: str,
+                         free: dict[str, float]) -> tuple[float, list[dict]]:
+    """``_consume_lots`` with a per-acquired-date consumption cap.
+
+    ``free`` (mutated as units are taken) is the per-date surplus from
+    ``_free_after_reserve``; lots on dates with no surplus are skipped.
+    May consume less than asked — the caller decides whether to dip
+    into reserved lots for the shortfall."""
+    if qty_to_remove <= 0 or not lots:
+        return 0.0, []
+    if method == "fifo":
+        order = list(range(len(lots)))
+    elif method == "lifo":
+        order = list(range(len(lots)))[::-1]
+    elif method == "hifo":
+        order = sorted(range(len(lots)),
+                       key=lambda i: -lots[i]["basis_per_share"])
+    else:
+        raise ValueError(f"_consume_lots_capped does not support method={method!r}")
+
+    remaining = qty_to_remove
+    basis_removed = 0.0
+    carried: list[dict] = []
+    consumed_fully: set[int] = set()
+    for idx in order:
+        if remaining <= 1e-12:
+            break
+        lot = lots[idx]
+        d = (lot.get("date") or "")[:10]
+        take = min(lot["qty"], remaining, free.get(d, 0.0))
+        if take <= 1e-12:
+            continue
+        basis_removed += take * lot["basis_per_share"]
+        carried.append({
+            "date": lot["date"],
+            "qty": take,
+            "basis_per_share": lot["basis_per_share"],
+        })
+        lot["qty"] -= take
+        remaining -= take
+        free[d] = free.get(d, 0.0) - take
+        if lot["qty"] <= 1e-12:
+            consumed_fully.add(idx)
+    for idx in sorted(consumed_fully, reverse=True):
+        lots.pop(idx)
+    return basis_removed, carried
+
+
+def _consume_lots_reserving(lots: list[dict], qty_to_remove: float,
+                            method: str, reserved: dict[str, float] | None
+                            ) -> tuple[float, list[dict]]:
+    """Consume in ``method`` order, but prefer lots the broker's report
+    does NOT dispose later (see ``broker_lots.reserved_future_demand``);
+    reserved lots are touched only for the shortfall."""
+    if qty_to_remove <= 0 or not lots:
+        return 0.0, []
+    if not reserved:
+        return _consume_lots(lots, qty_to_remove, method)
+    free = _free_after_reserve(lots, reserved)
+    basis_removed, carried = _consume_lots_capped(
+        lots, qty_to_remove, method, free)
+    got = sum(c["qty"] for c in carried)
+    if qty_to_remove - got > 1e-12:
+        b2, c2 = _consume_lots(lots, qty_to_remove - got, method)
+        basis_removed += b2
+        carried.extend(c2)
+    return basis_removed, carried
+
+
 # ---------------------------------------------------------------------------
 # The walker
 # ---------------------------------------------------------------------------
@@ -437,11 +519,16 @@ def _apply_split_to_lots(lots: list[dict], old_total_qty: float, added_qty: floa
         lot["basis_per_share"] /= ratio
 
 
-def _consume_from_key(state: dict, method: str, key: tuple, qty: float) -> tuple[float, list[dict]]:
+def _consume_from_key(state: dict, method: str, key: tuple, qty: float,
+                      reserved: dict[str, float] | None = None
+                      ) -> tuple[float, list[dict]]:
     """Dispatch lot-consumption to avg or FIFO-family helper.
 
     Returns `(basis_removed, carried_lots)` — `carried_lots` is useful
     when we need to re-push the same lots into a transfer destination.
+    ``reserved`` (broker-report future demand) steers the lot-list
+    methods away from lots a later report disposal names; avg has no
+    discrete lots so it ignores the hint.
     """
     if qty <= 0:
         return 0.0, []
@@ -456,11 +543,12 @@ def _consume_from_key(state: dict, method: str, key: tuple, qty: float) -> tuple
         t_state[0] = total_qty - take
         t_state[1] = total_basis - basis_removed
         return basis_removed, [{"date": "", "qty": take, "basis_per_share": per_share}]
-    return _consume_lots(state["lots"][key], qty, method)
+    return _consume_lots_reserving(state["lots"][key], qty, method, reserved)
 
 
 def _consume_lots_directed(lots: list[dict], qty_to_remove: float,
-                           method: str, hints: list[dict] | None
+                           method: str, hints: list[dict] | None,
+                           reserved: dict[str, float] | None = None
                            ) -> tuple[float, list[dict]]:
     """Consume ``qty_to_remove`` following broker-report lot hints.
 
@@ -544,10 +632,94 @@ def _consume_lots_directed(lots: list[dict], qty_to_remove: float,
             h["qty_left"] = float(h.get("qty_left", 0) or 0) - take
 
     if remaining > 1e-12:
-        b2, c2 = _consume_lots(lots, remaining, method)
+        # The hints didn't cover the remainder — fall back to method
+        # order, steering clear of lots a FUTURE report disposal names.
+        b2, c2 = _consume_lots_reserving(lots, remaining, method, reserved)
         basis_removed += b2
         carried.extend(c2)
     return basis_removed, carried
+
+
+def _consume_for_rebase(lots: list[dict], qty: float, method: str,
+                        txn_date: str, override_total: float,
+                        reserved: dict[str, float] | None = None
+                        ) -> tuple[float, list[dict]]:
+    """Consume ``qty`` for an intra-group transfer REBASE (a wallet move
+    whose arrival the broker books at customer-provided basis).
+
+    A move relocates SPECIFIC units, so plain method-order consumption
+    picks wrong lots two ways (both observed against the Coinbase
+    gain/loss report):
+
+      - the moved units' own lot — whose per-unit matches the arriving
+        customer-provided figure — is exactly the one that should leave;
+      - HIFO happily ate a lot pushed the same day by ANOTHER rebase
+        (the ETH2-deprecation lot), destroying a per-unit flavor the
+        broker's inventory keeps and desyncing every later directed
+        disposal.
+
+    Preference tiers, each consumed in ``method`` order:
+      1. lots whose per-unit ≈ the override per-unit (±0.5%);
+      2. lots dated strictly before the move (a move can't relocate
+         units created later that day);
+      3. anything left.
+
+    ``reserved`` (broker-report future demand) additionally splits
+    tiers 2 and 3 into a free pass and a reserved pass — the rebase
+    dips into lots a later report disposal names only when nothing
+    else covers the quantity.  Tier 1 ignores reservation: those ARE
+    the moved units, and the move re-books them (usually verbatim, via
+    the wallet-move no-op) rather than destroying them.
+    """
+    if qty <= 0 or not lots:
+        return 0.0, []
+    ov_pu = override_total / qty
+    def _tier(lot: dict) -> int:
+        pu = float(lot.get("basis_per_share", 0) or 0)
+        if ov_pu > 0 and abs(pu - ov_pu) <= ov_pu * 0.005:
+            return 0
+        if (lot.get("date") or "") < (txn_date or ""):
+            return 1
+        return 2
+    tiers: list[list[dict]] = [[], [], []]
+    for lot in lots:
+        tiers[_tier(lot)].append(lot)
+    free = (_free_after_reserve(lots, reserved) if reserved else None)
+    if free is None:
+        passes = [(tiers[0], None), (tiers[1], None), (tiers[2], None)]
+    else:
+        passes = [(tiers[0], None), (tiers[1], free), (tiers[2], free),
+                  (tiers[1], None), (tiers[2], None)]
+    remaining = qty
+    basis_removed = 0.0
+    carried: list[dict] = []
+    for tl, f in passes:
+        if remaining <= 1e-12:
+            break
+        if f is None:
+            b, c = _consume_lots(tl, remaining, method)
+        else:
+            b, c = _consume_lots_capped(tl, remaining, method, f)
+        basis_removed += b
+        carried.extend(c)
+        remaining -= sum(l["qty"] for l in c)
+    # The consume helpers mutated the shared lot dicts and dropped
+    # emptied ones from each tier list; rebuild the pool in original
+    # order from the survivors.
+    survivors = {id(l) for tl in tiers for l in tl}
+    lots[:] = [l for l in lots if id(l) in survivors]
+    return basis_removed, carried
+
+
+def _rebase_is_move(consumed: float, override_total: float) -> bool:
+    """True when a rebase's consumed basis already equals the broker's
+    customer-provided figure — i.e. the broker tracked these lots and
+    the 'rebase' is really a wallet move.  The walker then keeps the
+    consumed lots verbatim (original acquired dates included) so later
+    report hints naming those dates still find them; a genuine
+    customer-provided receive instead pushes a fresh lot dated at the
+    txn (matching how the broker's engine dates it)."""
+    return abs(consumed - override_total) <= max(5.0, abs(override_total) * 0.005)
 
 
 def _push_lot(state: dict, method: str, key: tuple, qty: float, basis_dollars: float, date: str) -> None:
@@ -561,6 +733,33 @@ def _push_lot(state: dict, method: str, key: tuple, qty: float, basis_dollars: f
             "qty": qty,
             "basis_per_share": basis_dollars / qty,
         })
+
+
+def _push_txn_lots(state: dict, method: str, key: tuple, t: dict,
+                   qty: float, total_basis: float, date: str) -> None:
+    """Push the lot(s) created by txn ``t``.
+
+    When the txn carries a ``basis_override_lots`` breakdown (several
+    broker-report acquisition rows grouped onto one fin txn — see
+    ``broker_lots.stamp_acquisition_basis`` pass 2), push one lot per
+    piece so the report's per-unit flavors survive in the pool and
+    directed consumption can pick the exact lot a later disposal names.
+    A single blended lot loses those flavors — the root cause of the
+    Coinbase per-year realized timing drift.  Piece quantities were
+    normalized at stamp time to sum exactly to the txn quantity, so
+    balance↔lot-queue parity is unaffected; the txn-level ``cost_basis``
+    annotation stays the TOTAL, so ``derive_basis_by_key_from_txns``
+    needs no change.  Without a breakdown: one lot, as before.
+    """
+    pieces = t.get("basis_override_lots")
+    if pieces and t.get("basis_override") is not None:
+        for p in pieces:
+            pq = float(p.get("qty", 0) or 0)
+            if pq > 0:
+                _push_lot(state, method, key, pq,
+                          float(p.get("basis", 0) or 0), date)
+        return
+    _push_lot(state, method, key, qty, total_basis, date)
 
 
 def _push_carried_lots(state: dict, method: str, key: tuple, carried: list[dict]) -> float:
@@ -603,11 +802,21 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
     state = _empty_state(method)
 
     from .broker_lots import (build_wrap_demand, copy_disposal_lots,
-                              hints_for, take_wrap_demand, wrap_next_dates)
+                              hints_for, reserved_future_demand,
+                              take_wrap_demand, wrap_next_dates,
+                              wrap_symbol_families)
     disposal_lots = copy_disposal_lots(disposal_lots)
     # Per-walk future-demand pool for wrap direction (independent
     # qty budget from the sale hints above — see broker_lots).
     wrap_demand = build_wrap_demand(disposal_lots)
+
+    def _reserved_for(acct: str, date: str,
+                      sym: str) -> dict[str, float] | None:
+        """Acquired-date reservation for undirected consumption — the
+        lots this account's report disposes after ``date`` in ``sym``'s
+        wrap family (see broker_lots.reserved_future_demand)."""
+        return reserved_future_demand(disposal_lots, acct, date,
+                                      symbols=_sym_families.get(sym, {sym}))
 
     def _method_for(acct: str) -> str:
         if not account_methods:
@@ -645,6 +854,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
     # atomically the first time any leg is met.
     wrap_groups = _pair_wraps(txns)
     wrap_until = wrap_next_dates(wrap_groups)
+    _sym_families = wrap_symbol_families(wrap_groups)
     wrap_done: set[tuple] = set()
     # Per-leg annotations (effect, cost_basis, realized) computed when a
     # wrap group is processed atomically, applied as each leg is reached.
@@ -697,13 +907,30 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                     r_qty = float(tin.get("quantity", 0) or 0)
                     r_key = (tin.get("account_group", "") or "",
                              tin.get("symbol", "") or "")
-                    consumed, _carried = _consume_from_key(
-                        state, _method_for(r_key[0]), r_key, r_qty)
                     new_basis = float(tin["basis_override"])
-                    _push_lot(state, method, r_key, r_qty, new_basis,
-                              tin.get("date", ""))
-                    rebase_ann[id(tin)]  = ("rebase_in",  new_basis)
-                    rebase_ann[id(tout)] = ("rebase_out", consumed)
+                    r_m = _method_for(r_key[0])
+                    if method == "avg" or r_m == "avg":
+                        consumed, carried = _consume_from_key(
+                            state, r_m, r_key, r_qty)
+                    else:
+                        consumed, carried = _consume_for_rebase(
+                            state["lots"][r_key], r_qty, r_m,
+                            tin.get("date", ""), new_basis,
+                            reserved=_reserved_for(r_key[0],
+                                                   tin.get("date", ""),
+                                                   r_key[1]))
+                    if method != "avg" and _rebase_is_move(consumed, new_basis):
+                        # Wallet move of broker-tracked lots: keep them
+                        # verbatim (dates + per-units) — see _rebase_is_move.
+                        pushed = _push_carried_lots(state, method, r_key,
+                                                    carried)
+                        rebase_ann[id(tin)]  = ("rebase_in",  pushed)
+                        rebase_ann[id(tout)] = ("rebase_out", consumed)
+                    else:
+                        _push_txn_lots(state, method, r_key, tin, r_qty,
+                                       new_basis, tin.get("date", ""))
+                        rebase_ann[id(tin)]  = ("rebase_in",  new_basis)
+                        rebase_ann[id(tout)] = ("rebase_out", consumed)
                 final_effect, cb = rebase_ann[id(t)]
                 cost_basis_value = cb
                 if annotate:
@@ -717,7 +944,8 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
 
         if effect == "add":
             basis = _ov(t, _basis_dollars(t))
-            _push_lot(state, method, key, qty, basis, t.get("date", ""))
+            _push_txn_lots(state, method, key, t, qty, basis,
+                           t.get("date", ""))
             if qty > 0:
                 cost_basis_value = basis
 
@@ -727,7 +955,8 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             # share's grant-FMV basis that exists only on the 1099).
             price = float(t.get("price", 0) or 0)
             basis = _ov(t, qty * price if price > 0 else 0.0)
-            _push_lot(state, method, key, qty, basis, t.get("date", ""))
+            _push_txn_lots(state, method, key, t, qty, basis,
+                           t.get("date", ""))
             if qty > 0:
                 cost_basis_value = basis
 
@@ -740,11 +969,14 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             # lot-list methods.
             _hints = hints_for(disposal_lots, acct, sym, t.get("date", ""))
             _m = _method_for(acct)
+            _rsv = (_reserved_for(acct, t.get("date", ""), sym)
+                    if _m != "avg" and method != "avg" else None)
             if _hints and _m != "avg" and method != "avg":
                 basis_removed, carried = _consume_lots_directed(
-                    state["lots"][key], qty, _m, _hints)
+                    state["lots"][key], qty, _m, _hints, reserved=_rsv)
             else:
-                basis_removed, carried = _consume_from_key(state, _m, key, qty)
+                basis_removed, carried = _consume_from_key(state, _m, key, qty,
+                                                           reserved=_rsv)
             cost_basis_value = basis_removed
             # A fee paid by redeeming shares (e.g. a fund maintenance fee)
             # removes the shares + their basis from the lot queue — so
@@ -820,7 +1052,8 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 # over the FMV guess.
                 price = float(t.get("price", 0) or 0)
                 basis = _ov(t, qty * price if price > 0 else 0.0)
-                _push_lot(state, method, key, qty, basis, t.get("date", ""))
+                _push_txn_lots(state, method, key, t, qty, basis,
+                               t.get("date", ""))
                 cost_basis_value = basis
             elif id(paired) in stashed_tout_lots:
                 carried = stashed_tout_lots.pop(id(paired))
@@ -870,13 +1103,17 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                                            until=wrap_until.get(
                                                (acct, g["dst"],
                                                 t.get("date", "") or "")))
+                    _wrsv = (_reserved_for(acct, t.get("date", ""), g["src"])
+                             if method != "avg" and _method_for(acct) != "avg"
+                             else None)
                     if _wh and method != "avg" and _method_for(acct) != "avg":
                         B, carried = _consume_lots_directed(
                             state["lots"][(acct, g["src"])], g["q_out"],
-                            _method_for(acct), _wh)
+                            _method_for(acct), _wh, reserved=_wrsv)
                     else:
                         B, carried = _consume_from_key(
-                            state, _method_for(acct), (acct, g["src"]), g["q_out"])
+                            state, _method_for(acct), (acct, g["src"]),
+                            g["q_out"], reserved=_wrsv)
                     _push_carried_lots(state, method, (acct, g["dst"]),
                                        _rescale_lots(carried, g["q_in"]))
                     for ol in g["out"]:
@@ -902,8 +1139,9 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                         iq = float(il.get("quantity", 0) or 0)
                         px = float(il.get("price", 0) or 0)
                         b = _ov(il, iq * px if px > 0 else 0.0)
-                        _push_lot(state, method, (acct, il.get("symbol", "")),
-                                  iq, b, il.get("date", ""))
+                        _push_txn_lots(state, method,
+                                       (acct, il.get("symbol", "")),
+                                       il, iq, b, il.get("date", ""))
                         wrap_leg_ann[id(il)] = ("wrap_in_unpaired", b, None)
             ann = wrap_leg_ann.get(id(t))
             if ann:
@@ -928,9 +1166,14 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             # then +qty); no realized gain.  Annotated with the NET
             # basis delta so derive_basis_by_key_from_txns reconstructs
             # the pool change from this single txn.
-            consumed, _c = _consume_from_key(state, _method_for(acct), key, qty)
+            consumed, _c = _consume_from_key(
+                state, _method_for(acct), key, qty,
+                reserved=(_reserved_for(acct, t.get("date", ""), sym)
+                          if method != "avg" and _method_for(acct) != "avg"
+                          else None))
             new_basis = float(t["basis_override"])
-            _push_lot(state, method, key, qty, new_basis, t.get("date", ""))
+            _push_txn_lots(state, method, key, t, qty, new_basis,
+                           t.get("date", ""))
             final_effect = "rebase_neutral"
             cost_basis_value = new_basis - consumed
 
