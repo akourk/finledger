@@ -41,6 +41,7 @@ from .header import compute_header_summary
 from .paycheck import compute_paycheck
 from .income import compute_income_analytics
 from .income_calendar import compute_income_calendar
+from .lots import compute_open_lots
 from .monthly_pnl import compute_monthly_pnl
 from .monte_carlo import compute_monte_carlo
 from .options import compute_options_analytics
@@ -302,6 +303,9 @@ def build_analytics(txns: list[dict], history: list[dict],
         "crypto": compute_crypto_analytics(txns, holdings),
         "income": compute_income_analytics(txns),
         "tax": tax,
+        # Per-lot inventory for the Holdings tab's expandable lot view.
+        # tax.lt_horizon is a filtered view of the same rows.
+        "lots": compute_open_lots(fifo_state, holdings_by_account),
         "positions": compute_position_returns(txns, holdings),
         "header_summary": compute_header_summary(txns, history, bridges,
                                                  cash_summary=cash_summary),

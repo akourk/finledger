@@ -586,6 +586,67 @@ byAssetSectorSelect.addEventListener('change', () => {
   renderByAssetTable();
 });
 
+// =========================================================================
+// Per-lot inventory (ANALYTICS.lots) — expandable lot detail under each
+// Holdings-by-Asset row.  Computed by src/analytics/lots.py from the
+// same walker state as the cost-basis figures; the JS only renders.
+// Rows expand only at the LATEST as-of date — the lot export describes
+// today's pool, not a historical snapshot.
+// =========================================================================
+const LOTS_BY_KEY = {};
+for (const p of ((ANALYTICS.lots || {}).positions || [])) {
+  LOTS_BY_KEY[(p.account_group || '') + '||' + (p.symbol || '')] = p;
+}
+const lotsExpanded = new Set();
+
+function lotTermCell(p, l) {
+  if (!p.lt_relevant) {
+    return '<span style="color:var(--text-dim);" title="No short/long-term distinction (retirement account or option contract)">—</span>';
+  }
+  if (l.is_long_term) return '<span class="positive" title="Long-term (held > 1 year)">LT</span>';
+  if (l.days_to_lt == null) return '—';
+  const imminent = l.days_to_lt <= 60;
+  return `<span${imminent ? ' style="color:var(--yellow);"' : ''} title="Long-term on ${l.lt_eligible_date}">${l.days_to_lt}d → LT</span>`;
+}
+
+function lotDetailHtml(p, colspan) {
+  const fmtQty = q => q.toLocaleString(undefined, { maximumFractionDigits: 8 });
+  const rows = (p.lots || []).map(l => `<tr>
+      <td>${l.date || '—'}</td>
+      <td class="num">${fmtQty(l.qty)}</td>
+      <td class="num">${l.basis_per_share != null ? fmtMoney(l.basis_per_share, 2) : '—'}</td>
+      <td class="num">${fmtMoney(l.cost_basis)}</td>
+      <td class="num">${l.value != null ? fmtMoney(l.value) : '—'}</td>
+      <td class="num">${l.unrealized_gain != null ? `<span class="${l.unrealized_gain < 0 ? 'negative' : 'positive'}">${fmtSigned(l.unrealized_gain)}</span>` : '—'}</td>
+      <td class="num">${l.unrealized_pct != null ? fmtPct(l.unrealized_pct) : '—'}</td>
+      <td class="num">${l.days_held != null ? l.days_held + 'd' : '—'}</td>
+      <td>${lotTermCell(p, l)}</td>
+    </tr>`);
+  if (p.micro) {
+    rows.push(`<tr>
+      <td style="color:var(--text-dim);" title="Lots under $1 (reward/interest dust) folded into one row.  Totals include them.">··· ${p.micro.count} micro lot(s)</td>
+      <td class="num" style="color:var(--text-dim);">${fmtQty(p.micro.qty)}</td>
+      <td></td>
+      <td class="num" style="color:var(--text-dim);">${fmtMoney(p.micro.cost_basis)}</td>
+      <td class="num" style="color:var(--text-dim);">${p.micro.value != null ? fmtMoney(p.micro.value) : '—'}</td>
+      <td colspan="4"></td>
+    </tr>`);
+  }
+  return `<tr class="lot-detail"><td colspan="${colspan}">
+    <div class="lot-detail-inner">
+      <table class="lots-table">
+        <thead><tr>
+          <th>acquired</th><th class="num">qty</th><th class="num">basis/share</th>
+          <th class="num">cost basis</th><th class="num">value</th>
+          <th class="num">unrealized</th><th class="num">%</th>
+          <th class="num">held</th><th>term</th>
+        </tr></thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>
+    </div>
+  </td></tr>`;
+}
+
 function renderByAssetTable() {
   const rows = asOfHoldingsByAccount().map(r => {
     const realized = REALIZED_BY_ACCT_SYM[(r.account_group || '') + '||' + (r.symbol || '')] || 0;
@@ -651,7 +712,12 @@ function renderByAssetTable() {
 
   const tbody = document.getElementById('byAssetTbody');
   tbody.innerHTML = filtered.map(row => {
-    return '<tr>' + cols.map(col => {
+    // Expandable per-lot detail — latest as-of only (see LOTS_BY_KEY).
+    const lotKey = (row.account_group || '') + '||' + (row.symbol || '');
+    const lp = isAsOfLatest() ? LOTS_BY_KEY[lotKey] : null;
+    const expandable = !!(lp && ((lp.lots && lp.lots.length) || lp.micro));
+    const expanded = expandable && lotsExpanded.has(lotKey);
+    let rowHtml = `<tr${expandable ? ` class="lot-toggle" data-lotkey="${lotKey}"` : ''}>` + cols.map(col => {
       const cls = numCols.has(col) ? ' class="num"' : '';
       const val = row[col];
       let html = '';
@@ -669,7 +735,9 @@ function renderByAssetTable() {
           html = `<span class="${c}">${fmt}</span>`;
         }
       } else if (col === 'symbol') {
-        html = symLabel(val);
+        const chev = expandable
+          ? `<span class="lot-chev">${expanded ? '▾' : '▸'}</span>` : '';
+        html = chev + symLabel(val);
       } else if (col === 'account_group' && ACCOUNT_COLORS[val]) {
         html = `<span style="color:${ACCOUNT_COLORS[val]}">${val}</span>`;
       } else if (col === 'sector' && SECTOR_COLORS[val]) {
@@ -679,6 +747,8 @@ function renderByAssetTable() {
       }
       return `<td${cls}>${html}</td>`;
     }).join('') + '</tr>';
+    if (expanded) rowHtml += lotDetailHtml(lp, cols.length);
+    return rowHtml;
   }).join('');
 
   // Totals + count
@@ -694,6 +764,17 @@ document.getElementById('byAssetHeaderRow').addEventListener('click', e => {
   const col = th.dataset.bcol;
   if (byAssetSortCol === col) byAssetSortAsc = !byAssetSortAsc;
   else { byAssetSortCol = col; byAssetSortAsc = false; }  // numeric cols default desc
+  renderByAssetTable();
+});
+
+// Toggle a row's per-lot detail.  Delegated — rows re-render on every
+// sort/filter change, so per-row listeners wouldn't survive.
+document.getElementById('byAssetTbody').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-lotkey]');
+  if (!tr) return;
+  const k = tr.dataset.lotkey;
+  if (lotsExpanded.has(k)) lotsExpanded.delete(k);
+  else lotsExpanded.add(k);
   renderByAssetTable();
 });
 

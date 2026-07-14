@@ -104,47 +104,35 @@ def compute_alerts(txns: list[dict],
                          f"cache/ticker_renames.json if confirmed."),
         })
 
-    # 7. Long-term threshold crossings: positions held 11-12 months
-    #    where selling now = ST tax, selling in <31 days = LT.  Worth
-    #    flagging if the unrealized gain is meaningful.
-    today = datetime.now().date()
-    soon = []
-    for h in holdings_by_account:
-        # We don't have first-buy date in holdings_by_account, but we
-        # can scan txns for the symbol's earliest active lot.  Cheap
-        # for a few dozen holdings.
-        sym = h.get("symbol", "")
-        if not sym or sym == "USD":
+    # 7. Long-term threshold crossings: LOTS within 60 days of long-term
+    #    eligibility with a meaningful unrealized gain — selling now =
+    #    ST tax, waiting = LT.  Reads tax.lt_horizon (the per-lot
+    #    inventory, calendar-correct anniversary rule) instead of the
+    #    old first-buy txn scan, which used naive 365-day math and
+    #    assumed the earliest buy was still the open lot (wrong after
+    #    any FIFO sale).
+    soon: dict[str, dict] = {}
+    for r in (tax_analytics or {}).get("lt_horizon") or []:
+        if r.get("is_long_term"):
             continue
-        ug = h.get("unrealized_gain")
-        if not isinstance(ug, (int, float)) or ug < 100:
+        days = r.get("days_to_lt")
+        gain = r.get("unrealized_gain")
+        if not isinstance(days, (int, float)) or days > 60:
             continue
-        # Find earliest non-zero balance date for this (account, sym)
-        first_buy = None
-        for t in sorted([t for t in txns if t.get("symbol") == sym
-                         and t.get("account_group") == h.get("account_group")
-                         and t.get("action") in ("Buy", "Reinvest", "Contribution")],
-                        key=lambda x: x.get("date", "")):
-            if t.get("date"):
-                first_buy = t["date"]
-                break
-        if not first_buy:
+        if not isinstance(gain, (int, float)) or gain < 100:
             continue
-        try:
-            buy_d = datetime.strptime(first_buy, "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        days_held = (today - buy_d).days
-        if 305 <= days_held < 365:
-            days_to_lt = 365 - days_held
-            soon.append({"sym": sym, "days": days_to_lt, "gain": ug})
-    for s in sorted(soon, key=lambda r: r["days"])[:3]:
+        sym = r.get("symbol", "")
+        # One alert per symbol — soonest lot wins, gains accumulate.
+        e = soon.setdefault(sym, {"sym": sym, "days": days, "gain": 0.0})
+        e["days"] = min(e["days"], days)
+        e["gain"] += gain
+    for s in sorted(soon.values(), key=lambda r: r["days"])[:3]:
         alerts.append({
             "kind":     "long_term_soon",
             "severity": "info",
-            "message":  (f"{s['sym']}: {s['days']} day(s) until long-term "
-                         f"capital gains treatment "
-                         f"(unrealized ${s['gain']:.0f})."),
+            "message":  (f"{s['sym']}: {s['days']:.0f} day(s) until "
+                         f"long-term capital gains treatment "
+                         f"(unrealized ${s['gain']:.0f} across lots)."),
         })
 
     return alerts

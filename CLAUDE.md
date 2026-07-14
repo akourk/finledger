@@ -221,6 +221,19 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       the Overview tab.  Deltas are expected & explainable in known
       cases (wash-sale deferral, broker non-FIFO lot relief, broker
       cash-sweep interest absent from the activity CSV).
+    - `lots` — per-lot open inventory for every Holdings position
+      (`analytics/lots.py`): acquired date, qty, per-unit basis,
+      value (options ×100 via `contract_multiplier`), unrealized,
+      days-held, LT-eligibility date, plus a per-position
+      `lt_relevant` flag (Taxable + non-option).  Sub-$1 lots fold
+      into one `micro` aggregate per position (real pools carry 100+
+      reward-dust lots); position totals still include them, pinned
+      to the Holdings table by the `lots_holdings_basis_parity`
+      data-health check (high severity).  Single per-lot source:
+      `tax.lt_horizon` (the Tax tab's Approaching-Long-Term section)
+      is a filtered reshape of the same rows, and the
+      `long_term_soon` alert reads lt_horizon rather than scanning
+      txns.  Drives the Holdings tab's expandable per-lot detail.
     - `positions` — per-symbol realized+unrealized rollup with
       pct_return, plus top-10 winners/losers.
     - `header_summary` — persistent top-bar (1-day change, etc.).
@@ -367,6 +380,9 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       accounts; one global HHI on the positions card only), and the
       lot-method comparison table (collapsed `<details>` — the
       summary line carries the FIFO-vs-alternative realized delta).
+      Each Holdings-by-Asset row expands (click, latest as-of only)
+      into its per-lot detail — acquired date, per-unit basis, value,
+      unrealized, days-held, ST/LT term — from `analytics.lots`.
     - **Transactions** — full ledger with filters, search, column toggle.
     - **Options** — lifetime P&L, win rate, cumulative P&L chart, open
       contracts, closed trades, per-underlying breakdown (with cross-

@@ -89,6 +89,44 @@ def _check_snapshot_rollup(history: list[dict]) -> list[dict]:
     }]
 
 
+def _check_lots_holdings_basis_parity(analytics: dict,
+                                      holdings_by_account: list[dict]) -> list[dict]:
+    """Every exported lot-inventory position's cost basis (visible lots
+    + folded micro lots) must equal the Holdings row it anchors to —
+    ties ``analytics.lots`` to the basis walker and catches dust-folding
+    or grouping bugs in the per-lot export."""
+    lots = (analytics.get("lots") or {}).get("positions") or []
+    if not lots:
+        return []
+    holding_basis = {(h.get("account_group", ""), h.get("symbol", "")):
+                     h.get("cost_basis")
+                     for h in holdings_by_account}
+    bad = []
+    for p in lots:
+        key = (p.get("account_group", ""), p.get("symbol", ""))
+        hb = holding_basis.get(key)
+        if not isinstance(hb, (int, float)):
+            continue
+        diff = abs(float(p.get("cost_basis", 0) or 0) - hb)
+        if diff > 0.05:
+            bad.append((key, p.get("cost_basis"), hb, diff))
+    if not bad:
+        return []
+    bad.sort(key=lambda r: -r[3])
+    samples = [f"{a} {s}: lots=${lb:,.2f} vs holdings=${hb:,.2f}"
+               for (a, s), lb, hb, _d in bad[:5]]
+    return [{
+        "kind": "lots_holdings_basis_parity",
+        "severity": "high",
+        "category": "Integrity",
+        "message": f"{len(bad)} position(s) where the exported lot "
+                   "inventory's cost basis disagrees with the Holdings "
+                   "table — per-lot export drifted from the basis walker.",
+        "details": samples,
+        "count": len(bad),
+    }]
+
+
 def _check_open_options_past_expiration(analytics: dict) -> list[dict]:
     today = datetime.now().date().isoformat()
     opts = (analytics.get("options") or {}).get("open_contracts", []) or []
@@ -923,6 +961,7 @@ def compute_data_health(txns: list[dict],
     issues.extend(_check_action_catalog_coverage(txns))
     issues.extend(_check_holding_days_non_negative(txns))
     issues.extend(_check_per_position_basis_sanity(holdings_by_account))
+    issues.extend(_check_lots_holdings_basis_parity(analytics, holdings_by_account))
     issues.extend(_check_open_options_past_expiration(analytics))
     issues.extend(_check_held_symbol_price_health(holdings_by_account, cache_dir))
     issues.extend(_check_priced_coverage(history))
