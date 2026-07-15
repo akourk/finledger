@@ -218,3 +218,96 @@ def test_open_lots_empty_state(isolated_workdir):
     assert compute_open_lots({}, []) is None
     out = compute_open_lots({"lots": {}}, [])
     assert out["positions"] == [] and out["total_lots"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Per-lot harvest candidates (tax.harvest_lots)
+# ---------------------------------------------------------------------------
+
+def test_harvest_lots_taxable_only_and_split(isolated_workdir):
+    from src.config import ACCOUNT_TYPES
+    ACCOUNT_TYPES["MyIRA"] = "Retirement"
+    from src.analytics.tax import _compute_harvest_lots
+    state = {"lots": {
+        # Taxable: one deep ST loss lot + one LT loss lot + one winner.
+        ("Broker", "AAA"): [
+            {"date": _iso_days_ago(100), "qty": 2.0, "basis_per_share": 100.0},
+            {"date": _iso_days_ago(500), "qty": 1.0, "basis_per_share": 90.0},
+            {"date": _iso_days_ago(50), "qty": 1.0, "basis_per_share": 10.0},
+        ],
+        # Same symbol inside an IRA — must NOT appear.
+        ("MyIRA", "AAA"): [
+            {"date": _iso_days_ago(300), "qty": 5.0, "basis_per_share": 100.0}],
+    }}
+    holdings = [{"symbol": "AAA", "price": 50.0}]
+    out = _compute_harvest_lots(state, holdings, txns=[])
+    assert len(out) == 1
+    g = out[0]
+    assert g["account_group"] == "Broker"
+    # Loss lots only: 2 @ (50-100) = -100 ST, 1 @ (50-90) = -40 LT.
+    # The winner lot (+40) is excluded from the loss rollup but counts
+    # in position_unrealized.
+    assert g["loss"] == pytest.approx(-140.0)
+    assert g["st_loss"] == pytest.approx(-100.0)
+    assert g["lt_loss"] == pytest.approx(-40.0)
+    assert g["qty"] == pytest.approx(3.0)
+    assert g["position_unrealized"] == pytest.approx(-100.0)
+    assert len(g["lots"]) == 2
+    assert g["lots"][0]["loss"] == pytest.approx(-100.0)   # deepest first
+    assert g["wash_risk"] is False
+
+
+def test_harvest_lots_wash_risk_any_account(isolated_workdir):
+    from src.config import ACCOUNT_TYPES
+    ACCOUNT_TYPES["MyIRA"] = "Retirement"
+    from src.analytics.tax import _compute_harvest_lots
+    state = {"lots": {
+        ("Broker", "AAA"): [
+            {"date": _iso_days_ago(100), "qty": 2.0, "basis_per_share": 100.0}],
+    }}
+    holdings = [{"symbol": "AAA", "price": 50.0}]
+    # Recent buy in a DIFFERENT (retirement) account still trips the
+    # wash-risk flag — the IRS rule applies across accounts.
+    txns = [{"date": _iso_days_ago(5), "action": "Buy", "symbol": "AAA",
+             "account_group": "MyIRA", "quantity": 1.0, "price": 50.0,
+             "amount": 50.0}]
+    out = _compute_harvest_lots(state, holdings, txns=txns)
+    assert out[0]["wash_risk"] is True
+    assert out[0]["last_buy_date"] == _iso_days_ago(5)
+    # An old buy does not.
+    txns_old = [{"date": _iso_days_ago(45), "action": "Buy", "symbol": "AAA",
+                 "account_group": "Broker", "quantity": 1.0, "price": 50.0,
+                 "amount": 50.0}]
+    out2 = _compute_harvest_lots(state, holdings, txns=txns_old)
+    assert out2[0]["wash_risk"] is False
+
+
+def test_harvest_lots_net_green_position_included(isolated_workdir):
+    """A position that's UP overall but holds a deep red lot is still a
+    candidate — that's the per-lot upgrade's whole point."""
+    from src.analytics.tax import _compute_harvest_lots
+    state = {"lots": {
+        ("Broker", "AAA"): [
+            {"date": _iso_days_ago(400), "qty": 10.0, "basis_per_share": 10.0},
+            {"date": _iso_days_ago(30), "qty": 1.0, "basis_per_share": 100.0},
+        ],
+    }}
+    holdings = [{"symbol": "AAA", "price": 50.0}]
+    out = _compute_harvest_lots(state, holdings, txns=[])
+    assert len(out) == 1
+    g = out[0]
+    assert g["position_unrealized"] == pytest.approx(350.0)   # net green
+    assert g["loss"] == pytest.approx(-50.0)                  # the red lot
+    assert len(g["lots"]) == 1
+
+
+def test_harvest_lots_threshold_and_empty(isolated_workdir):
+    from src.analytics.tax import _compute_harvest_lots
+    state = {"lots": {
+        ("Broker", "AAA"): [
+            {"date": _iso_days_ago(10), "qty": 1.0, "basis_per_share": 55.0}],
+    }}
+    holdings = [{"symbol": "AAA", "price": 50.0}]
+    # -$5 total loss: below the $10 floor.
+    assert _compute_harvest_lots(state, holdings, txns=[]) == []
+    assert _compute_harvest_lots(None, holdings, txns=[]) == []

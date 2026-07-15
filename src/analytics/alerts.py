@@ -40,15 +40,31 @@ def compute_alerts(txns: list[dict],
             "message":  f.get("message", ""),
         })
 
-    # 2. Top 3 tax-loss harvest candidates (most-negative unrealized)
-    for c in (tax_analytics.get("harvest_candidates") or [])[:3]:
-        alerts.append({
-            "kind":     "harvest",
-            "severity": "info",
-            "message":  (f"{c.get('symbol')} has an unrealized loss of "
-                         f"${abs(c.get('unrealized_gain', 0)):.0f} — "
-                         f"potential tax-loss harvest candidate."),
-        })
+    # 2. Top 3 tax-loss harvest candidates (most-negative loss).
+    #    Prefer the per-lot taxable-only list — the position-level
+    #    harvest_candidates has no account filter, so a loss inside an
+    #    IRA (never deductible) could be flagged.
+    hl = tax_analytics.get("harvest_lots") or []
+    if hl:
+        for c in hl[:3]:
+            wash = (" (wash-sale risk: bought within the last 30 days)"
+                    if c.get("wash_risk") else "")
+            alerts.append({
+                "kind":     "harvest",
+                "severity": "info",
+                "message":  (f"{c.get('symbol')} has ${abs(c.get('loss', 0)):.0f} "
+                             f"of harvestable loss lots in "
+                             f"{c.get('account_group')}.{wash}"),
+            })
+    else:
+        for c in (tax_analytics.get("harvest_candidates") or [])[:3]:
+            alerts.append({
+                "kind":     "harvest",
+                "severity": "info",
+                "message":  (f"{c.get('symbol')} has an unrealized loss of "
+                             f"${abs(c.get('unrealized_gain', 0)):.0f} — "
+                             f"potential tax-loss harvest candidate."),
+            })
 
     # 3. Stale data: latest txn vs today
     if txns:

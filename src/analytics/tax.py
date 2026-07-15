@@ -896,6 +896,10 @@ def compute_tax_analytics(txns: list[dict], holdings: list[dict],
         "realized_by_symbol": realized_by_symbol,
         "realized_by_underlying": realized_by_underlying,
         "harvest_candidates": harvest,
+        # Per-lot, taxable-only upgrade of harvest_candidates — see
+        # _compute_harvest_lots.  The Tax tab renders this one.
+        "harvest_lots": (_compute_harvest_lots(fifo_state, holdings, txns)
+                         if fifo_state else []),
         "wash_sales": wash_sales,
         "rate_estimates_by_year": rate_estimates,
         "section_1256_underlyings": sorted(SECTION_1256_UNDERLYINGS),
@@ -972,6 +976,108 @@ def _build_form_8949(realized: list[dict]) -> list[dict]:
         })
     rows.sort(key=lambda r: (r["date_sold"], r["description"]))
     return rows
+
+
+def _compute_harvest_lots(fifo_state: dict, holdings: list[dict],
+                          txns: list[dict], today=None) -> list[dict]:
+    """Per-lot tax-loss harvest candidates — TAXABLE accounts only.
+
+    The position-level ``harvest_candidates`` list filters the
+    symbol-level holdings rollup with no account filter, so it can
+    flag a loss sitting inside an IRA (never deductible) and it hides
+    deep-red lots inside net-green positions.  This per-lot version
+    (from :func:`analytics.lots.open_lot_rows` — the single per-lot
+    source) fixes both:
+
+    - only Taxable-account lots are considered;
+    - a position is a candidate when its LOSS LOTS total < −$10, even
+      if the position overall is up (``position_unrealized`` carries
+      the net so the UI can badge those);
+    - losses split ST/LT (they offset same-character gains first, and
+      the ST/LT marginal rates differ — the tax-save estimate needs
+      the split);
+    - ``wash_risk`` flags symbols bought within the last 30 days in
+      ANY account (the IRS wash rule applies across accounts):
+      selling at a loss now would disallow it.
+
+    One entry per (account_group, symbol), sorted most-negative first,
+    capped at 25.  ``lots`` lists the loss lots deepest-first.
+    """
+    from .lots import open_lot_rows, price_lookup
+    if not fifo_state or "lots" not in fifo_state:
+        return []
+    if today is None:
+        today = datetime.now().date()
+
+    # Most-recent buy per symbol in the trailing 30 days (any account).
+    cutoff = (today - timedelta(days=30)).isoformat()
+    today_iso = today.isoformat()
+    recent_buy: dict[str, str] = {}
+    for t in txns:
+        if t.get("action") not in ("Buy", "Reinvest", "Contribution"):
+            continue
+        sym = t.get("symbol", "")
+        d = t.get("date", "")
+        if sym and cutoff <= d <= today_iso and d > recent_buy.get(sym, ""):
+            recent_buy[sym] = d
+
+    groups: dict[tuple[str, str], dict] = {}
+    for r in open_lot_rows(fifo_state, price_lookup(holdings), today=today):
+        acct, sym = r["account_group"], r["symbol"]
+        # Losses inside IRA / 401K / HYSA are never deductible.
+        if ACCOUNT_TYPES.get(acct, "Taxable") != "Taxable":
+            continue
+        g = groups.setdefault((acct, sym), {
+            "account_group": acct, "symbol": sym,
+            "position_unrealized": 0.0, "qty": 0.0, "cost_basis": 0.0,
+            "value": 0.0, "loss": 0.0, "st_loss": 0.0, "lt_loss": 0.0,
+            "lots": [],
+        })
+        ug = r["unrealized_gain"]
+        if isinstance(ug, (int, float)):
+            g["position_unrealized"] += ug
+        if not isinstance(ug, (int, float)) or ug >= -1.0:
+            continue                      # not a meaningful loss lot
+        g["qty"] += r["qty"]
+        g["cost_basis"] += r["cost_basis"]
+        g["value"] += r["value"] or 0.0
+        g["loss"] += ug
+        if r["is_long_term"]:
+            g["lt_loss"] += ug
+        else:
+            g["st_loss"] += ug            # undated lots conservatively ST
+        g["lots"].append({
+            "date": r["date"],
+            "qty": r["qty"],
+            "cost_basis": r["cost_basis"],
+            "value": r["value"],
+            "loss": round(ug, 2),
+            "is_long_term": bool(r["is_long_term"]),
+            "days_held": r["days_held"],
+        })
+
+    out: list[dict] = []
+    for g in groups.values():
+        if g["loss"] >= -10.0 or not g["lots"]:
+            continue
+        g["lots"].sort(key=lambda l: l["loss"])       # deepest loss first
+        lb = recent_buy.get(g["symbol"])
+        out.append({
+            "account_group": g["account_group"],
+            "symbol": g["symbol"],
+            "qty": round(g["qty"], 8),
+            "cost_basis": round(g["cost_basis"], 2),
+            "value": round(g["value"], 2),
+            "loss": round(g["loss"], 2),
+            "st_loss": round(g["st_loss"], 2),
+            "lt_loss": round(g["lt_loss"], 2),
+            "position_unrealized": round(g["position_unrealized"], 2),
+            "wash_risk": bool(lb),
+            "last_buy_date": lb,
+            "lots": g["lots"],
+        })
+    out.sort(key=lambda g: g["loss"])
+    return out[:25]
 
 
 def _compute_lt_horizon(fifo_state: dict, holdings: list[dict]) -> list[dict]:

@@ -235,6 +235,15 @@ function _toggleLtAsset(key) {
   renderTax();
 }
 
+// Harvest Candidates — which rows are showing per-lot detail
+// (keyed by "account_group|symbol", same convention as _ltExpanded).
+const _harvestExpanded = new Set();
+function _toggleHarvest(key) {
+  if (_harvestExpanded.has(key)) _harvestExpanded.delete(key);
+  else _harvestExpanded.add(key);
+  renderTax();
+}
+
 // Classify a closing txn into short-term / long-term / Section 1256.
 // Returns { st: dollars_short, lt: dollars_long, kind: 'normal' | '1256' }.
 function classifyRealized(t) {
@@ -579,21 +588,54 @@ function renderTax() {
   // the per-symbol "By Asset" table further down already shows ST/LT/§1256
   // per option contract for tax purposes.)
 
-  // Harvest candidates: current holdings with unrealized loss
-  const harvestCandidates = holdingsByAsset
-    .filter(h => typeof h.unrealized_gain === 'number' && h.unrealized_gain < -10)
-    .sort((a, b) => a.unrealized_gain - b.unrealized_gain);   // most-negative first
-  const harvestRows = harvestCandidates.slice(0, 25).map(h => {
-    const potentialSave = Math.abs(h.unrealized_gain) * taxShortRate;
-    return `<tr>
-      <td><b>${symLabel(h.symbol)}</b></td>
-      <td>${h.sector || ''}</td>
-      <td class="num">${(h.quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
-      <td class="num">${fmtMoney(h.value)}</td>
-      <td class="num">${fmtMoney(h.cost_basis)}</td>
-      <td class="num"><span class="negative">${fmtSigned(h.unrealized_gain)}</span></td>
-      <td class="num">${fmtMoney(potentialSave)}</td>
-    </tr>`;
+  // Harvest candidates — per-lot, TAXABLE-only, from ANALYTICS.tax
+  // (compute-once).  The old holdingsByAsset recompute had no account
+  // filter (an IRA loss could appear — never deductible) and hid red
+  // lots inside net-green positions.  Tax-save estimate splits ST/LT
+  // losses across the two marginal rates.
+  const harvestLots = (ANALYTICS.tax || {}).harvest_lots || [];
+  const fmtHQty = q => (q || 0).toLocaleString(undefined, { maximumFractionDigits: 8 });
+  const harvestRows = harvestLots.map(g => {
+    const key = (g.account_group || '') + '|' + (g.symbol || '');
+    const expanded = _harvestExpanded.has(key);
+    const arrow = expanded ? '▾' : '▸';
+    const save = Math.abs(g.st_loss || 0) * (taxShortRate || 0)
+               + Math.abs(g.lt_loss || 0) * (taxLongRate || 0);
+    const splitNote = `<div style="color:var(--text-dim);font-size:0.75rem;">ST ${fmtMoney(g.st_loss)} · LT ${fmtMoney(g.lt_loss)}</div>`;
+    const washCell = g.wash_risk
+      ? `<span style="color:var(--yellow);" title="Bought within the last 30 days (${g.last_buy_date}) — selling at a loss now would be disallowed as a wash sale.">⚠ bought ${g.last_buy_date}</span>`
+      : '<span style="color:var(--text-dim);">—</span>';
+    const netGreen = (g.position_unrealized || 0) > 0
+      ? ` <span style="color:var(--text-dim);font-size:0.75rem;" title="The position overall is UP ${fmtMoney(g.position_unrealized)} — only the lots below are down.  Specific-lot harvesting still works.">net +</span>` : '';
+    let expansion = '';
+    if (expanded) {
+      const lotRows = (g.lots || []).map(l => `<tr>
+        <td style="padding-left:24px;color:var(--text-dim);">↳ ${l.date || '—'}</td>
+        <td class="num">${fmtHQty(l.qty)}</td>
+        <td class="num">${fmtMoney(l.cost_basis)}</td>
+        <td class="num">${l.value != null ? fmtMoney(l.value) : '—'}</td>
+        <td class="num"><span class="negative">${fmtSigned(l.loss)}</span></td>
+        <td>${l.is_long_term ? 'LT' : 'ST'}${l.days_held != null ? ` <span style="color:var(--text-dim);font-size:0.78rem;">· held ${l.days_held}d</span>` : ''}</td>
+      </tr>`).join('');
+      expansion = `<tr class="lt-expansion"><td colspan="7" style="padding:8px 24px 12px;background:rgba(167,139,250,0.03);border-top:0;">
+        <table class="mini-table" style="font-size:0.82rem;">
+          <thead><tr>
+            <th>Acquired</th><th class="num">Qty</th><th class="num">Basis</th>
+            <th class="num">Value</th><th class="num">Loss</th><th>Term</th>
+          </tr></thead>
+          <tbody>${lotRows}</tbody>
+        </table>
+      </td></tr>`;
+    }
+    return `<tr class="lt-asset-row" onclick="_toggleHarvest('${key.replace(/'/g, "\\'")}')">
+      <td><span class="ab-acct-arrow">${arrow}</span> <b>${symLabel(g.symbol)}</b>${netGreen}</td>
+      <td><span style="color:${ACCOUNT_COLORS[g.account_group] || ''};">${g.account_group}</span></td>
+      <td class="num">${fmtHQty(g.qty)}</td>
+      <td class="num">${fmtMoney(g.value)}</td>
+      <td class="num"><span class="negative">${fmtSigned(g.loss)}</span>${splitNote}</td>
+      <td class="num">${fmtMoney(save)}</td>
+      <td>${washCell}</td>
+    </tr>${expansion}`;
   }).join('');
 
   // Wash sale detection: find sells at a loss with a matching buy within 30 days.
@@ -920,20 +962,25 @@ function renderTax() {
 
     <div class="section-header" style="margin-top:16px;">
       <h2><span style="color:var(--accent);">Tax-Loss Harvest Candidates</span></h2>
-      <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">current positions with unrealized loss &gt; $10</span>
+      <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">taxable positions with &gt; $10 of loss lots — click a row for the specific lots</span>
     </div>
     <div class="panel">
       <table class="mini-table">
         <thead><tr>
-          <th>Symbol</th><th>Sector</th>
-          <th class="num">Quantity</th><th class="num">Value</th><th class="num">Basis</th>
-          <th class="num">Unrealized Loss</th><th class="num">Tax Save (est)</th>
+          <th>Symbol</th><th>Account</th>
+          <th class="num">Loss Qty</th><th class="num">Loss Value</th>
+          <th class="num">Harvestable Loss</th><th class="num">Tax Save (est)</th>
+          <th>Wash Risk</th>
         </tr></thead>
-        <tbody>${harvestRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">No positions with unrealized loss &gt; $10.</td></tr>'}</tbody>
+        <tbody>${harvestRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">No taxable positions with loss lots &gt; $10.</td></tr>'}</tbody>
       </table>
       <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">
-        Note: selling these would realize losses that offset gains.  Avoid re-buying within 30 days
-        (wash-sale rule).
+        Per-LOT candidates from taxable accounts only (retirement losses are never deductible).
+        Qty / Value / Loss cover the LOSS lots — a "net +" position is up overall but holds
+        harvestable red lots (sell those specific lots).  Tax Save applies your ST rate to
+        short-term losses and LT rate to long-term ones.  ⚠ Wash Risk = bought within the
+        last 30 days in any account; selling at a loss now would be disallowed.  Avoid
+        re-buying within 30 days after harvesting, too.
       </div>
     </div>
 

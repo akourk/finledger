@@ -164,7 +164,12 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     - `crypto` — per_coin, recent_activity, conversions, stats.
     - `income` — by_year, by_month, by_source, total.
     - `tax` — realized_by_year / _by_symbol / _by_underlying,
-      harvest_candidates, wash_sales, rate_estimates_by_year,
+      harvest_candidates (position-level, legacy — kept for
+      back-compat), `harvest_lots` (per-lot, TAXABLE-only harvest
+      candidates with ST/LT loss split, net-green-position inclusion,
+      and a cross-account 30-day `wash_risk` flag; the Tax tab renders
+      THIS one, with expandable per-lot rows), wash_sales,
+      rate_estimates_by_year,
       section_1256_underlyings, `form_8949` (taxable-account
       disposals in IRS Form 8949 layout — description, acquired/sold
       dates, proceeds, basis, gain, term — for the Tax tab's CSV
