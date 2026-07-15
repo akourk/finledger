@@ -63,6 +63,27 @@ const historyOverlays = new Set();  // 'basis' / 'gain' / 'benchmark'
 // display label (e.g. "Robinhood" or "Robinhood Basis").
 const seriesHidden = new Set();
 
+// Chart mode.  'lines' = the multi-series line chart (default, with all
+// its overlays/benchmarks/per-series pills).  'composition' = a stacked
+// area of the portfolio broken down by a single dimension over time —
+// answers "how has my mix evolved", which no line overlay shows.  The
+// two modes have different interaction models, so composition renders
+// through its own path (_renderComposition) and reuses only the axis /
+// hover conventions.  Range filtering applies to both.
+let historyChartMode = 'lines';           // 'lines' | 'composition'
+let historyCompositionDim = 'account';    // 'account' | 'type' | 'sector'
+
+function setHistoryChartMode(m) {
+  historyChartMode = m;
+  renderHistControls();
+  renderHistory();
+}
+function setHistoryCompositionDim(d) {
+  historyCompositionDim = d;
+  renderHistControls();
+  renderHistory();
+}
+
 // Enumerate available groups for the pill bar, from the history data itself.
 function availableKeys(field) {
   const keys = new Set();
@@ -346,11 +367,28 @@ function renderHistControls() {
   const overlayContribCls = 'tbtn' + (historyOverlays.has('netcontrib') ? ' active' : '');
   const overlayYoyCls = 'tbtn' + (historyOverlays.has('yoy') ? ' active' : '');
 
-  el.innerHTML = `
+  // Chart-mode row (Lines / Composition).  In composition mode a
+  // dimension selector (Account / Type / Sector) replaces the
+  // per-series pills, and the line-only Overlay + series rows are
+  // hidden since they don't apply to a stacked area.
+  const composition = historyChartMode === 'composition';
+  const modeBtn = (m, label) =>
+    `<button class="tbtn${historyChartMode === m ? ' active' : ''}" onclick="setHistoryChartMode('${m}')">${label}</button>`;
+  const dimBtn = (d, label) =>
+    `<button class="tbtn${historyCompositionDim === d ? ' active' : ''}" onclick="setHistoryCompositionDim('${d}')">${label}</button>`;
+  const modeRow = `
     <div class="hist-row">
-      <span class="hist-label">Range:</span>
-      ${rangePills}
-      ${customRangeHtml}
+      <span class="hist-label">Chart:</span>
+      ${modeBtn('lines', 'Lines')}
+      ${modeBtn('composition', 'Composition')}
+      ${composition ? `
+        <span class="hist-label" style="margin-left:16px;">By:</span>
+        ${dimBtn('account', 'Account')}
+        ${dimBtn('type', 'Type')}
+        ${dimBtn('sector', 'Sector')}` : ''}
+    </div>`;
+
+  const overlayRow = composition ? '' : `
       <span class="hist-label" style="margin-left:16px;">Overlay:</span>
       <button class="${overlayBasisCls}" onclick="toggleHistoryOverlay('basis')">Cost Basis</button>
       <button class="${overlayGainCls}"  onclick="toggleHistoryOverlay('gain')">Unrealized Gain</button>
@@ -358,8 +396,9 @@ function renderHistControls() {
       <button class="${overlayBndCls}"  onclick="toggleHistoryOverlay('bnd')"  title="Same buy-and-hold simulation for BND (US aggregate bonds).  Filter-aware.">BND</button>
       <button class="${overlayVxusCls}" onclick="toggleHistoryOverlay('vxus')" title="Same buy-and-hold simulation for VXUS (international ex-US equities).  Filter-aware.">VXUS</button>
       <button class="${overlayContribCls}" onclick="toggleHistoryOverlay('netcontrib')">Net Contributed</button>
-      <button class="${overlayYoyCls}" onclick="toggleHistoryOverlay('yoy')" title="Overlay portfolio value from one year ago at the same calendar position">Year-over-Year</button>
-    </div>
+      <button class="${overlayYoyCls}" onclick="toggleHistoryOverlay('yoy')" title="Overlay portfolio value from one year ago at the same calendar position">Year-over-Year</button>`;
+
+  const seriesRows = composition ? '' : `
     <div class="hist-row">
       <span class="hist-label">Total:</span>
       ${totalPill}
@@ -375,13 +414,26 @@ function renderHistControls() {
     <div class="hist-row">
       <span class="hist-label">Sectors:</span>
       ${categoryPills('sector', SECTOR_OPTIONS)}
+    </div>`;
+
+  el.innerHTML = `
+    ${modeRow}
+    <div class="hist-row">
+      <span class="hist-label">Range:</span>
+      ${rangePills}
+      ${customRangeHtml}
+      ${overlayRow}
     </div>
+    ${seriesRows}
   `;
 
   // Update collapsed summary so the user can see what's selected without
   // expanding (e.g. "1Y · cost basis, SPY · 3 accounts").
   const status = document.getElementById('histControlsSummaryStatus');
-  if (status) {
+  if (status && historyChartMode === 'composition') {
+    const dimLabel = { account: 'accounts', type: 'types', sector: 'sectors' }[historyCompositionDim];
+    status.textContent = `${PERF_TWR_PRESET_LABEL[historyRange] || historyRange} · composition by ${dimLabel}`;
+  } else if (status) {
     const bits = [];
     bits.push(PERF_TWR_PRESET_LABEL[historyRange] || historyRange);
     const overlayLabels = [];
@@ -597,6 +649,14 @@ function renderHistory() {
     return;
   }
 
+  // Composition mode renders through its own path (stacked areas), then
+  // returns — the line-mode machinery below (series/overlays/benchmarks)
+  // doesn't apply to it.
+  if (historyChartMode === 'composition') {
+    _renderComposition(svg, tooltip, legend, filteredHistory());
+    return;
+  }
+
   const allSeries = buildHistorySeries();
   const series = allSeries.filter(s => !seriesHidden.has(s.key));
   const hist = filteredHistory();  // axis dates come from filtered slice
@@ -747,6 +807,136 @@ function renderHistory() {
   capture.addEventListener('mouseleave', () => {
     hoverV.style.display = 'none';
     dotsG.innerHTML = '';
+    tooltip.style.display = 'none';
+  });
+}
+
+// Stacked-area composition chart: the portfolio broken down by a single
+// dimension (account_group / account_type / sector) over time.  Reads
+// the history snapshots' by_* fields (each sums to the total), stacks
+// the categories bottom-to-top, and fills each band with its category
+// color.  Self-contained — own axes/legend/hover, no overlays.
+function _renderComposition(svg, tooltip, legend, hist) {
+  if (!hist.length) { svg.innerHTML = ''; legend.innerHTML = ''; return; }
+  const rect = svg.getBoundingClientRect();
+  const W = rect.width || 800;
+  const H = rect.height || 340;
+  const PAD = { l: 64, r: 16, t: 12, b: 28 };
+  const plotW = W - PAD.l - PAD.r;
+  const plotH = H - PAD.t - PAD.b;
+  const n = hist.length;
+  const xOf = i => PAD.l + (n === 1 ? plotW / 2 : (i * plotW) / (n - 1));
+
+  const dim = historyCompositionDim;
+  const field = dim === 'account' ? 'by_account_group'
+    : dim === 'type' ? 'by_account_type' : 'by_sector';
+  const colorMap = dim === 'account' ? ACCOUNT_COLORS
+    : dim === 'type' ? TYPE_COLORS : SECTOR_COLORS;
+
+  // Categories ordered by lifetime magnitude; fold the long tail (mostly
+  // relevant for sectors) into "Other" so the stack stays legible.
+  const totals = {};
+  hist.forEach(h => {
+    const m = h[field] || {};
+    for (const k in m) if (typeof m[k] === 'number') totals[k] = (totals[k] || 0) + m[k];
+  });
+  let cats = Object.keys(totals).sort((a, b) => (totals[b] || 0) - (totals[a] || 0));
+  const CAP = 8;
+  const folded = cats.length > CAP ? cats.slice(CAP) : [];
+  if (folded.length) cats = cats.slice(0, CAP);
+  const drawCats = folded.length ? [...cats, '__other__'] : cats;
+  const catLabel = c => c === '__other__' ? `Other (${folded.length})` : c;
+  const catColor = c => c === '__other__' ? '#6b7280' : (colorMap[c] || '#9ca3af');
+  const valAt = (h, c) => {
+    const m = h[field] || {};
+    if (c === '__other__') { let s = 0; for (const f of folded) s += (typeof m[f] === 'number' ? m[f] : 0); return s; }
+    return typeof m[c] === 'number' ? m[c] : 0;
+  };
+
+  let maxTotal = 0;
+  hist.forEach(h => { let s = 0; for (const c of drawCats) s += valAt(h, c); if (s > maxTotal) maxTotal = s; });
+  const maxY = (maxTotal > 0 ? maxTotal : 1) * 1.02;
+  const yOf = v => PAD.t + plotH - (v / maxY) * plotH;
+
+  const parts = [];
+  const yTicks = 5;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = (maxY * i) / yTicks;
+    const y = yOf(v);
+    parts.push(`<line class="grid-line" x1="${PAD.l}" y1="${y}" x2="${W - PAD.r}" y2="${y}"/>`);
+    parts.push(`<text class="axis-label" x="${PAD.l - 6}" y="${y + 3}" text-anchor="end">${formatAxisMoney(v)}</text>`);
+  }
+  const xTicks = Math.min(6, n);
+  for (let i = 0; i < xTicks; i++) {
+    const idx = Math.round((i * (n - 1)) / (xTicks - 1 || 1));
+    parts.push(`<text class="axis-label" x="${xOf(idx)}" y="${H - 8}" text-anchor="middle">${hist[idx].date.slice(0, 7)}</text>`);
+  }
+  parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + plotH}"/>`);
+  parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t + plotH}" x2="${W - PAD.r}" y2="${PAD.t + plotH}"/>`);
+
+  // Stack bottom-to-top: each band is a filled polygon between the
+  // running cumulative bottom and bottom+value.
+  const cum = new Array(n).fill(0);
+  for (const c of drawCats) {
+    const topPts = [];
+    const botPts = [];
+    for (let i = 0; i < n; i++) {
+      const bottom = cum[i];
+      const top = bottom + valAt(hist[i], c);
+      botPts.push([xOf(i), yOf(bottom)]);
+      topPts.push([xOf(i), yOf(top)]);
+      cum[i] = top;
+    }
+    let d = 'M' + topPts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' L');
+    d += ' L' + botPts.reverse().map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' L') + ' Z';
+    parts.push(`<path d="${d}" fill="${catColor(c)}" fill-opacity="0.72" stroke="${catColor(c)}" stroke-opacity="0.9" stroke-width="0.6"/>`);
+  }
+
+  parts.push(`<line id="chartHoverV" class="hover-v" x1="0" y1="${PAD.t}" x2="0" y2="${PAD.t + plotH}" style="display:none"/>`);
+  parts.push(`<rect id="chartCapture" x="${PAD.l}" y="${PAD.t}" width="${plotW}" height="${plotH}" fill="transparent"/>`);
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = parts.join('');
+
+  // Legend (top-of-stack category listed first).  No click-to-hide in
+  // composition mode — hiding a band would misrepresent the stack.
+  legend.innerHTML = [...drawCats].reverse().map(c =>
+    `<span class="legend-item"><span class="legend-swatch" style="background:${catColor(c)}"></span>${catLabel(c)}</span>`
+  ).join('');
+  legend.onclick = null;
+
+  const capture = document.getElementById('chartCapture');
+  const hoverV = document.getElementById('chartHoverV');
+  capture.addEventListener('mousemove', ev => {
+    const svgRect = svg.getBoundingClientRect();
+    const mx = (ev.clientX - svgRect.left) * (W / svgRect.width);
+    let idx = Math.round(((mx - PAD.l) / plotW) * (n - 1));
+    idx = Math.max(0, Math.min(n - 1, idx));
+    const x = xOf(idx);
+    hoverV.setAttribute('x1', x); hoverV.setAttribute('x2', x); hoverV.style.display = '';
+    const h = hist[idx];
+    let total = 0; for (const c of drawCats) total += valAt(h, c);
+    const rows = [...drawCats].reverse().map(c => {
+      const v = valAt(h, c);
+      const pct = total > 0 ? (v / total * 100) : 0;
+      return `<div class="tt-row">
+        <span class="tt-name"><span class="tt-swatch" style="background:${catColor(c)}"></span>${catLabel(c)}</span>
+        <span>${formatMoney(v)} <span style="color:var(--text-dim);">${pct.toFixed(0)}%</span></span>
+      </div>`;
+    }).join('');
+    tooltip.innerHTML = `<div class="tt-date">${h.date} · total ${formatMoney(total)}</div>${rows}`;
+    tooltip.style.display = 'block';
+    const wrapRect = document.getElementById('chartWrap').getBoundingClientRect();
+    let tx = ev.clientX - wrapRect.left + 12;
+    let ty = ev.clientY - wrapRect.top + 12;
+    const tRect = tooltip.getBoundingClientRect();
+    if (tx + tRect.width + 12 > wrapRect.width) tx = ev.clientX - wrapRect.left - tRect.width - 12;
+    if (ty + tRect.height + 12 > wrapRect.height) ty = ev.clientY - wrapRect.top - tRect.height - 12;
+    tooltip.style.left = tx + 'px';
+    tooltip.style.top = ty + 'px';
+  });
+  capture.addEventListener('mouseleave', () => {
+    hoverV.style.display = 'none';
     tooltip.style.display = 'none';
   });
 }
