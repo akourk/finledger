@@ -43,8 +43,14 @@ function renderStats() {
   // users default to).  0 means "at all-time high".
   const dd = (ANALYTICS.drawdown && ANALYTICS.drawdown.current_drawdown_pct) || 0;
   const ddPct = dd * 100;
-  const ddDisplay = ddPct >= -0.005 ? 'at ATH' : ddPct.toFixed(2) + '%';
-  const ddCls = ddPct < -0.005 ? 'negative' : 'positive';
+  const atAth = ddPct >= -0.005;
+  // At an all-time high there is no "peak" to be down from, so the
+  // "from peak" sub-label reads as nonsense — show a clean status
+  // instead.  Otherwise show the % decline with the sub-label.
+  const ddDisplay = atAth
+    ? '0% <span class="sub">at all-time high</span>'
+    : ddPct.toFixed(2) + '% <span class="sub">from peak</span>';
+  const ddCls = atAth ? 'positive' : 'negative';
 
   // Trimmed from the original 12-card row:
   //   - Value & Total Return are already in the Top bar (always visible)
@@ -62,7 +68,7 @@ function renderStats() {
     { label: 'Realized P&L', value: fmtSigned(realized) + lifeTag, cls: gainCls(realized) },
     { label: 'Net Contributed', value: fmtMoney(netContrib) },
     { label: 'Income', value: fmtMoney(income) + lifeTag },
-    { label: 'Current Drawdown', value: ddDisplay + ' <span class="sub">from peak</span>', cls: ddCls },
+    { label: 'Current Drawdown', value: ddDisplay, cls: ddCls },
   ];
   el.innerHTML = cards.map(c => {
     const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';

@@ -584,6 +584,12 @@ function renderRetirement() {
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Contributions by Year</span></h2></div>
     <div class="panel">
+      ${years.length ? `
+        ${renderContribBars(years, contribs, { id: 'contribBars' })}
+        <div style="display:flex;gap:24px;font-size:0.85rem;margin:4px 0 14px 10px;flex-wrap:wrap;">
+          ${_legendSwatch(ACCOUNT_COLORS['401K'] || '#f59e0b', '401K (incl. Rollover IRA)')}
+          ${_legendSwatch(ACCOUNT_COLORS['Roth IRA'] || '#a78bfa', 'Roth IRA')}
+        </div>` : ''}
       <table class="mini-table">
         <thead><tr>
           <th>Year</th>
@@ -613,6 +619,89 @@ function renderRetirement() {
       <a onclick="activateTab('planning')" style="color:var(--accent);cursor:pointer;">Planning</a> tab.
     </div>
   `;
+}
+
+// Round a value up to a "nice" axis maximum (1/2/5 × 10ⁿ).
+function _niceCeil(v) {
+  if (v <= 0) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / mag;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return step * mag;
+}
+
+// Stacked bar chart of contributions per year (401K + Roth IRA).  Shows
+// the trajectory a table can't: which years you front-loaded the Roth,
+// when the 401K ramped, whether totals are trending up.  Same measure-
+// then-rerender pattern as renderMiniLineChart so axis text stays crisp
+// at any container width.
+function renderContribBars(years, contribs, opts) {
+  opts = opts || {};
+  const id = opts.id || 'contribBars';
+  const H = opts.height || 240;
+  if (!years.length) return `<div class="chart-empty">No contributions yet.</div>`;
+  const build = (W) => _renderContribBarsContent(years, contribs, W, H);
+  queueMicrotask(() => {
+    const svg = document.getElementById(id);
+    if (!svg) return;
+    const W = Math.round(svg.getBoundingClientRect().width) || 800;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = build(W);
+  });
+  return `<div class="chart-wrap" style="padding:10px;">
+    <svg id="${id}" class="chart-svg" viewBox="0 0 800 ${H}"
+         style="width:100%;height:${H}px;display:block;"></svg>
+  </div>`;
+}
+
+function _renderContribBarsContent(years, contribs, W, H) {
+  const PAD = { l: 56, r: 16, t: 16, b: 28 };
+  const plotW = W - PAD.l - PAD.r;
+  const plotH = H - PAD.t - PAD.b;
+  const n = years.length;
+  const maxTotal = Math.max(...years.map(y => (contribs[y] || {}).total || 0), 1);
+  const maxY = _niceCeil(maxTotal * 1.08);
+  const yOf = v => PAD.t + plotH - (v / maxY) * plotH;
+  const bandW = plotW / n;
+  const barW = Math.min(52, bandW * 0.62);
+  const colors = {
+    '401K': ACCOUNT_COLORS['401K'] || '#f59e0b',
+    'Roth IRA': ACCOUNT_COLORS['Roth IRA'] || '#a78bfa',
+  };
+  const parts = [];
+  const yTicks = 4;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = (maxY * i) / yTicks;
+    const y = yOf(v);
+    parts.push(`<line class="grid-line" x1="${PAD.l}" y1="${y}" x2="${W - PAD.r}" y2="${y}"/>`);
+    parts.push(`<text class="axis-label" x="${PAD.l - 6}" y="${y + 3}" text-anchor="end">${fmtMoneyShort(v)}</text>`);
+  }
+  parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + plotH}"/>`);
+  parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t + plotH}" x2="${W - PAD.r}" y2="${PAD.t + plotH}"/>`);
+  years.forEach((y, i) => {
+    const cx = PAD.l + bandW * i + bandW / 2;
+    const x = cx - barW / 2;
+    const r = contribs[y] || {};
+    let cursor = yOf(0);
+    for (const key of ['401K', 'Roth IRA']) {
+      const val = r[key] || 0;
+      if (val <= 0) continue;
+      const h = (val / maxY) * plotH;
+      const top = cursor - h;
+      parts.push(`<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${colors[key]}" rx="1.5"><title>${y} ${key}: ${fmtMoney(val)}</title></rect>`);
+      cursor = top;
+    }
+    if ((r.total || 0) > 0) {
+      parts.push(`<text class="axis-label" x="${cx}" y="${(yOf(r.total) - 5).toFixed(1)}" text-anchor="middle" style="font-weight:600;">${fmtMoneyShort(r.total)}</text>`);
+    }
+    parts.push(`<text class="axis-label" x="${cx}" y="${H - 8}" text-anchor="middle">${y}</text>`);
+  });
+  return parts.join('');
+}
+
+// Small inline legend swatch + label (shared by the contrib bars).
+function _legendSwatch(color, label) {
+  return `<span><span style="display:inline-block;width:10px;height:10px;background:${color};margin-right:6px;border-radius:2px;vertical-align:middle;"></span>${label}</span>`;
 }
 
 // Inline horizontal stacked bar for the Roth/Trad split.  Cleaner than
