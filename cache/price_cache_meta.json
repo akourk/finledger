@@ -938,6 +938,12 @@
       "failure_count": 0,
       "last_fetch": "2026-07-15T07:35:19"
     },
+    "PYPL": {
+      "covered_end": "2026-07-15",
+      "covered_start": "2017-05-23",
+      "failure_count": 0,
+      "last_fetch": "2026-07-15T08:40:26"
+    },
     "QBTS": {
       "covered_end": "2026-07-15",
       "covered_start": "2017-05-23",
