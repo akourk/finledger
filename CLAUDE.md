@@ -374,12 +374,16 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       changing, is anything wrong."  Alerts/changes/reconciliation
       feedback panels (collapse if empty; reconciliation shows fin vs
       broker-reported figures with ok/warn/off status — see
-      `analytics.reconciliation`), stat cards, history chart with
-      overlay toggles (Cost Basis, Unrealized Gain, SPY Benchmark,
-      Net Contributed, Year-over-Year), top holdings, recent 8
-      transactions (+ view-all link), allocation donut (by account /
-      type / sector).  Concentration moved to Holdings; Year-by-Year
-      moved to Planning.
+      `analytics.reconciliation`), stat cards, history chart with a
+      **Lines ↔ Composition** mode toggle (`historyChartMode` in
+      `app/20-history.js`; Lines = the multi-series chart with overlay
+      toggles Cost Basis / Unrealized Gain / SPY-BND-VXUS benchmarks /
+      Net Contributed / Year-over-Year; Composition = a stacked area of
+      the portfolio by Account / Type / Sector over time, own render
+      path `_renderComposition`, top-8 + Other fold), top holdings,
+      recent 8 transactions (+ view-all link), allocation donut (by
+      account / type / sector).  Concentration moved to Holdings;
+      Year-by-Year moved to Planning.
     - **Holdings** — holdings table (by asset/account/type/sector),
       Target vs Actual, concentration grid (positions/sectors/
       accounts; one global HHI on the positions card only), and the
