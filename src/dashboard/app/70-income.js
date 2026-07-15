@@ -7,6 +7,100 @@
 const INCOME_ACTIONS = Object.fromEntries(
   _ACTION_CATALOG.filter(a => a.income).map(a => [a.name, a.income]));
 
+// Waterfall chart of the 12-month cash flow: inflows stack up, outflows
+// step down, ending at projected savings.  Makes the additive/subtractive
+// structure obvious — a grid of signed numbers hides which pieces move the
+// total.  `items` = [{short, amt}] in flow order (inflows first); the final
+// running total becomes the savings bar.  Same measure-then-rerender
+// pattern as the other charts; _niceCeil comes from 50-retirement.js
+// (concatenated earlier).
+function _renderCashFlowWaterfall(items, finalLabel, opts) {
+  opts = opts || {};
+  const id = opts.id || 'cashFlowWaterfall';
+  const H = opts.height || 280;
+  // Zero-amount flows (e.g. no bonus last year) are chart noise — a
+  // labeled tick with no bar.  Drop them from the waterfall; they stay
+  // in the detail table for completeness.  (Zeros don't move the
+  // running total, so the savings bar is unaffected.)
+  const flows = (items || []).filter(it => Math.round(it.amt) !== 0);
+  if (flows.length < 2) return '';
+  // Running totals → bar spans.  Flow bars float from prev total to new
+  // total; the final bar is the full 0→savings column.
+  let run = 0;
+  const bars = [];
+  for (const it of flows) {
+    const start = run, end = run + it.amt;
+    bars.push({ short: it.short, start, end, amt: it.amt, isTotal: false });
+    run = end;
+  }
+  bars.push({ short: finalLabel, start: 0, end: run, amt: run, isTotal: true });
+
+  const build = (W) => _renderWaterfallContent(bars, W, H);
+  queueMicrotask(() => {
+    const svg = document.getElementById(id);
+    if (!svg) return;
+    const W = Math.round(svg.getBoundingClientRect().width) || 800;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = build(W);
+  });
+  return `<div class="chart-wrap" style="padding:10px;">
+    <svg id="${id}" class="chart-svg" viewBox="0 0 800 ${H}"
+         style="width:100%;height:${H}px;display:block;"></svg>
+  </div>`;
+}
+
+function _renderWaterfallContent(bars, W, H) {
+  const PAD = { l: 56, r: 16, t: 22, b: 40 };
+  const plotW = W - PAD.l - PAD.r;
+  const plotH = H - PAD.t - PAD.b;
+  const n = bars.length;
+  let lo = 0, hi = 0;
+  bars.forEach(b => { lo = Math.min(lo, b.start, b.end); hi = Math.max(hi, b.start, b.end); });
+  const maxY = _niceCeil(hi * 1.08);
+  const minY = lo < 0 ? -_niceCeil(-lo * 1.08) : 0;
+  const span = (maxY - minY) || 1;
+  const yOf = v => PAD.t + plotH - ((v - minY) / span) * plotH;
+  const bandW = plotW / n;
+  const barW = Math.min(64, bandW * 0.6);
+
+  const parts = [];
+  const yTicks = 4;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = minY + (span * i) / yTicks;
+    const y = yOf(v);
+    parts.push(`<line class="grid-line" x1="${PAD.l}" y1="${y}" x2="${W - PAD.r}" y2="${y}"/>`);
+    parts.push(`<text class="axis-label" x="${PAD.l - 6}" y="${y + 3}" text-anchor="end">${fmtMoneyShort(v)}</text>`);
+  }
+  // Zero baseline (emphasised when the domain dips below zero).
+  const y0 = yOf(0);
+  parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${y0}" x2="${W - PAD.r}" y2="${y0}" stroke-opacity="0.6"/>`);
+  parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + plotH}"/>`);
+
+  bars.forEach((b, i) => {
+    const cx = PAD.l + bandW * i + bandW / 2;
+    const x = cx - barW / 2;
+    const yTop = yOf(Math.max(b.start, b.end));
+    const yBot = yOf(Math.min(b.start, b.end));
+    const h = Math.max(1, yBot - yTop);
+    const color = b.isTotal ? 'var(--accent)'
+      : (b.amt >= 0 ? 'var(--green)' : 'var(--red)');
+    parts.push(`<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}" fill-opacity="${b.isTotal ? 0.9 : 0.75}" rx="1.5"><title>${b.short}: ${fmtSigned(b.amt)}</title></rect>`);
+    // Connector from this bar's running total to the next bar (dashed).
+    if (i < n - 1) {
+      const yr = yOf(b.end);
+      const xr = cx + barW / 2;
+      const xn = PAD.l + bandW * (i + 1) + bandW / 2 - barW / 2;
+      parts.push(`<line x1="${xr.toFixed(1)}" y1="${yr.toFixed(1)}" x2="${xn.toFixed(1)}" y2="${yr.toFixed(1)}" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="3 2" stroke-opacity="0.5"/>`);
+    }
+    // Value label just above the bar top.
+    const amtStr = b.isTotal ? fmtMoneyShort(b.amt) : (b.amt >= 0 ? '+' : '−') + fmtMoneyShort(Math.abs(b.amt));
+    parts.push(`<text class="axis-label" x="${cx}" y="${(yTop - 5).toFixed(1)}" text-anchor="middle" style="font-weight:600;">${amtStr}</text>`);
+    // Short category label under the axis.
+    parts.push(`<text class="axis-label" x="${cx}" y="${H - 22}" text-anchor="middle">${b.short}</text>`);
+  });
+  return parts.join('');
+}
+
 // Build the 12-month total cash-flow forecast (Income tab).  Combines:
 //   - Passive investment income (already projected by analytics.income_calendar)
 //   - W-2 salary at current rate
@@ -68,21 +162,24 @@ function _buildCashFlowForecast(passiveProjected) {
       + (_pc.withholding_annual || 0))
     : 0;
 
-  const rowDefs = [
-    ['Salary (current rate × 12mo)', currentSalary, 'positive'],
-    ['Bonuses (last full-year actual)', lastYearBonuses, 'positive'],
-    ['Passive investment income (proj.)', passive, 'positive'],
-    ['Retirement contributions (proj.)', -projContribs, 'negative'],
+  // One ordered list of flow components (inflows first, then outflows) —
+  // drives BOTH the waterfall chart and the detail table so they can't
+  // disagree.  `short` labels the chart's x-axis; `label` the table.
+  const items = [
+    { short: 'Salary', label: 'Salary (current rate × 12mo)', amt: currentSalary, cls: 'positive' },
+    { short: 'Bonuses', label: 'Bonuses (last full-year actual)', amt: lastYearBonuses, cls: 'positive' },
+    { short: 'Passive', label: 'Passive investment income (proj.)', amt: passive, cls: 'positive' },
+    { short: '401k/IRA', label: 'Retirement contributions (proj.)', amt: -projContribs, cls: 'negative' },
   ];
   if (paycheckOutflows > 0) {
-    rowDefs.push(['Paycheck taxes & deductions (est.)', -paycheckOutflows, 'negative']);
+    items.push({ short: 'Taxes', label: 'Paycheck taxes & deductions (est.)', amt: -paycheckOutflows, cls: 'negative' });
   }
   if (budgetAnnual > 0) {
-    rowDefs.push(['Living expenses (budget)', -budgetAnnual, 'negative']);
+    items.push({ short: 'Budget', label: 'Living expenses (budget)', amt: -budgetAnnual, cls: 'negative' });
   }
-  const rows = rowDefs.map(([label, amt, cls]) => `<tr>
-    <td>${label}</td>
-    <td class="num"><span class="${cls}">${fmtSigned(amt)}</span></td>
+  const rows = items.map(it => `<tr>
+    <td>${it.label}</td>
+    <td class="num"><span class="${it.cls}">${fmtSigned(it.amt)}</span></td>
   </tr>`).join('');
   const savingsNet = totalNet - budgetAnnual - paycheckOutflows;
   const savingsLabel = paycheckOutflows > 0
@@ -91,6 +188,9 @@ function _buildCashFlowForecast(passiveProjected) {
   const savingsItem = (budgetAnnual > 0 || paycheckOutflows > 0)
     ? `<div class="item"><span class="label">${savingsLabel}</span><span class="value">${fmtMoney(savingsNet)}</span></div>`
     : '';
+  // Final waterfall bar label: "Savings" when outflows narrow it to a
+  // savings figure, else "Net cash".
+  const flowFinalLabel = (budgetAnnual > 0 || paycheckOutflows > 0) ? 'Savings' : 'Net cash';
 
   return `
     <div class="section-header" style="margin-top:24px;">
@@ -98,6 +198,7 @@ function _buildCashFlowForecast(passiveProjected) {
       <span class="as-of-hint" style="margin-left:auto;">Net income hitting your accounts over the next 12 months at current rates.</span>
     </div>
     <div class="income-forecast">
+      ${_renderCashFlowWaterfall(items, flowFinalLabel, { id: 'cashFlowWaterfall' })}
       <div class="if-totals">
         <div class="item"><span class="label">Gross inflows (proj.)</span><span class="value">${fmtMoney(grossIn)}</span></div>
         <div class="item"><span class="label">Net of retirement (proj.)</span><span class="value">${fmtMoney(totalNet)}</span></div>
