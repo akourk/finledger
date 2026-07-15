@@ -77,6 +77,39 @@ def test_parse_apex_rows(tmp_path):
     assert opt["amount"] == pytest.approx(171.0)
 
 
+def test_apex_option_price_derived_from_amount(tmp_path):
+    """An option leg's per-share premium is derived from
+    Amount / (qty × 100), so a 1099-style per-CONTRACT Price ($57)
+    isn't inflated 100× by the contract multiplier in the history
+    snapshot mark.  Regression: a hand-entered AMD Put with Price=57
+    showed the Robinhood account at $5,700 on the day it was held
+    instead of $57."""
+    from src.parsers import parse_robinhood_apex
+    f = tmp_path / "robinhood-apex.csv"
+    # Synthetic ticker + round figures (never the real portfolio's).
+    f.write_text(
+        _HEADER
+        + "10/30/2020,ZZZ 3/20/2020 Put $50.00,,PURCHASE,1,40.00,40.00\n"
+        + "10/31/2020,ZZZ 3/20/2020 Call $60.00,,PURCHASE,2,0.30,60.00\n",
+        encoding="utf-8")
+    put, call = parse_robinhood_apex(f)
+    assert put["action"] == "Option Buy"
+    assert put["amount"] == pytest.approx(40.0)     # total unchanged
+    assert put["price"] == pytest.approx(0.40)      # per-CONTRACT → per-share
+    # A correctly-entered per-share price is idempotent: 60/(2×100)=0.30.
+    assert call["price"] == pytest.approx(0.30)
+    assert call["amount"] == pytest.approx(60.0)
+
+    # The ×100 valuation now lands at the true premium, not 100×.
+    from src.pipeline_stages import build_holdings
+    _, by_acct = build_holdings(
+        balances={("Robinhood", put["symbol"]): 1.0},
+        last_prices={put["symbol"]: put["price"]},
+        fifo_basis_by_key={("Robinhood", put["symbol"]): 40.0},
+        cash_principal_by_key={})
+    assert by_acct[0]["value"] == pytest.approx(40.0)   # not 4,000
+
+
 def test_apex_option_buy_pairs_with_modern_sell():
     """The Apex-era BTO leg supplies basis for the STC recorded in the
     modern Robinhood CSVs — the original motivating case (an option

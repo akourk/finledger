@@ -18,6 +18,10 @@ Conventions (documented for future hand entry):
   close inside this file (net zero, realized computes locally).
 - ``Transaction Description`` PURCHASE / SELL map to Buy / Sell;
   anything else passes through to normalize.py title-cased.
+- For option legs the per-share premium is derived from ``Amount`` /
+  (``Quantity`` × 100), so it doesn't matter whether the ``Price`` cell
+  holds the per-share premium ($0.57) or the per-contract total ($57)
+  as a 1099 usually shows — just enter the correct total ``Amount``.
 - The CUSIP column is embedded into the description using Robinhood's
   own ``CUSIP: X`` marker, so ``cusips.py`` collision detection can
   suggest a name→ticker rename rule once the same security appears in
@@ -48,26 +52,41 @@ def parse_robinhood_apex(filepath: Path) -> list[Transaction]:
             except (ValueError, TypeError):
                 continue
             action = _ACTION_MAP.get(raw_action.upper(), raw_action.title())
+            is_option = " Call " in sec or " Put " in sec
             # Option legs (symbol in fin's "TICKER M/D/YYYY Call/Put $K"
             # format) use the option action names so the Options tab's
             # open/close pairing and the modern CSVs' STC/OEXP legs see
             # them — a plain Buy would add to the balance but never
             # register as the contract's opening leg.
-            if (" Call " in sec or " Put " in sec) and action in ("Buy", "Sell"):
+            if is_option and action in ("Buy", "Sell"):
                 action = f"Option {action}"
             cusip = (row.get("CUSIP") or "").strip()
             desc = f"{raw_action} {sec}"
             if cusip:
                 desc += f" CUSIP: {cusip}"
+            qty = abs(_num(row.get("Quantity", "")))
+            amount = abs(_num(row.get("Amount", "")))
+            price = abs(_num(row.get("Price", "")))
+            # Option premiums are quoted PER SHARE, and every qty×price
+            # valuation site scales options ×100 (config.contract_multiplier,
+            # since quantity is CONTRACTS).  But a 1099 / hand entry usually
+            # records the per-CONTRACT total in the Price column (e.g. $57,
+            # not $0.57), which the ×100 would then inflate 100× in the
+            # history-snapshot mark.  Derive the per-share premium from the
+            # unambiguous total ``amount`` instead — correct however the
+            # Price cell was transcribed.  Basis is amount-based and needs
+            # no adjustment; a $0-amount leg (expiration) keeps its 0 price.
+            if is_option and qty > 0 and amount > 0:
+                price = amount / (qty * 100.0)
             txns.append(_txn(
                 date=date,
                 account="Robinhood",
                 symbol=sec,
                 action=action,
-                quantity=abs(_num(row.get("Quantity", ""))),
-                price=abs(_num(row.get("Price", ""))),
+                quantity=qty,
+                price=price,
                 fees=0.0,
-                amount=abs(_num(row.get("Amount", ""))),
+                amount=amount,
                 description=desc,
                 source=filepath.name,
             ))
