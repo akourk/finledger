@@ -647,10 +647,12 @@ function renderContribBars(years, contribs, opts) {
     const W = Math.round(svg.getBoundingClientRect().width) || 800;
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     svg.innerHTML = build(W);
+    _bindBarTooltips(svg, document.getElementById(id + '_tip'), svg.closest('.chart-wrap'));
   });
-  return `<div class="chart-wrap" style="padding:10px;">
+  return `<div class="chart-wrap" style="padding:10px;position:relative;">
     <svg id="${id}" class="chart-svg" viewBox="0 0 800 ${H}"
          style="width:100%;height:${H}px;display:block;"></svg>
+    <div class="chart-tooltip" id="${id}_tip"></div>
   </div>`;
 }
 
@@ -682,13 +684,18 @@ function _renderContribBarsContent(years, contribs, W, H) {
     const cx = PAD.l + bandW * i + bandW / 2;
     const x = cx - barW / 2;
     const r = contribs[y] || {};
+    // One tooltip per year (full breakdown) shared by both segments.
+    const tip = `<div class='tt-date'>${y}</div>`
+      + ((r['401K'] || 0) > 0 ? _tipRow(colors['401K'], '401K', fmtMoney(r['401K'])) : '')
+      + ((r['Roth IRA'] || 0) > 0 ? _tipRow(colors['Roth IRA'], 'Roth IRA', fmtMoney(r['Roth IRA'])) : '')
+      + _tipRow('', 'Total', fmtMoney(r.total || 0), true);
     let cursor = yOf(0);
     for (const key of ['401K', 'Roth IRA']) {
       const val = r[key] || 0;
       if (val <= 0) continue;
       const h = (val / maxY) * plotH;
       const top = cursor - h;
-      parts.push(`<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${colors[key]}" rx="1.5"><title>${y} ${key}: ${fmtMoney(val)}</title></rect>`);
+      parts.push(`<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${colors[key]}" rx="1.5" data-tip="${tip}"/>`);
       cursor = top;
     }
     if ((r.total || 0) > 0) {

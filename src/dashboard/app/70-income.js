@@ -42,10 +42,12 @@ function _renderCashFlowWaterfall(items, finalLabel, opts) {
     const W = Math.round(svg.getBoundingClientRect().width) || 800;
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     svg.innerHTML = build(W);
+    _bindBarTooltips(svg, document.getElementById(id + '_tip'), svg.closest('.chart-wrap'));
   });
-  return `<div class="chart-wrap" style="padding:10px;">
+  return `<div class="chart-wrap" style="padding:10px;position:relative;">
     <svg id="${id}" class="chart-svg" viewBox="0 0 800 ${H}"
          style="width:100%;height:${H}px;display:block;"></svg>
+    <div class="chart-tooltip" id="${id}_tip"></div>
   </div>`;
 }
 
@@ -84,7 +86,11 @@ function _renderWaterfallContent(bars, W, H) {
     const h = Math.max(1, yBot - yTop);
     const color = b.isTotal ? 'var(--accent)'
       : (b.amt >= 0 ? 'var(--green)' : 'var(--red)');
-    parts.push(`<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}" fill-opacity="${b.isTotal ? 0.9 : 0.75}" rx="1.5"><title>${b.short}: ${fmtSigned(b.amt)}</title></rect>`);
+    const tipName = b.isTotal ? 'Projected savings' : (b.amt >= 0 ? 'Inflow' : 'Outflow');
+    const tip = `<div class='tt-date'>${b.short}</div>`
+      + _tipRow(color, tipName, (b.amt >= 0 ? '+' : '−') + fmtMoney(Math.abs(b.amt)))
+      + (b.isTotal ? '' : _tipRow('', 'Running total', fmtMoney(b.end), true));
+    parts.push(`<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}" fill-opacity="${b.isTotal ? 0.9 : 0.75}" rx="1.5" data-tip="${tip}"/>`);
     // Connector from this bar's running total to the next bar (dashed).
     if (i < n - 1) {
       const yr = yOf(b.end);

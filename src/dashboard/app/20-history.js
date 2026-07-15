@@ -70,7 +70,10 @@ const seriesHidden = new Set();
 // two modes have different interaction models, so composition renders
 // through its own path (_renderComposition) and reuses only the axis /
 // hover conventions.  Range filtering applies to both.
-let historyChartMode = 'lines';           // 'lines' | 'composition'
+// Default to Composition — "how is my portfolio built and how has that
+// evolved" is the more informative landing view for a buy-and-hold
+// tracker than a single total line (which the top bar already shows).
+let historyChartMode = 'composition';     // 'lines' | 'composition'
 let historyCompositionDim = 'account';    // 'account' | 'type' | 'sector'
 
 function setHistoryChartMode(m) {

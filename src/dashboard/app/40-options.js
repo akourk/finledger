@@ -514,6 +514,50 @@ function renderOptions() {
 // pixel width so text and shapes don't distort (like the main history
 // chart).  Uses queueMicrotask to measure the container after DOM
 // insert, then injects the SVG content with the measured width.
+// One tooltip row (swatch + name + value), styled with the shared
+// tt-* classes.  Inline styles use SINGLE quotes so the whole block can
+// live inside a double-quoted `data-tip="..."` attribute without any
+// escaping.  `color` empty → no swatch (e.g. a Total row).
+function _tipRow(color, name, value, bold) {
+  const sw = color ? `<span class='tt-swatch' style='background:${color}'></span>` : '';
+  const st = bold ? " style='font-weight:600;'" : '';
+  return `<div class='tt-row'${st}><span class='tt-name'>${sw}${name}</span><span>${value}</span></div>`;
+}
+
+// Attach the custom hover tooltip to discrete bars (contributions,
+// waterfall).  Each bar carries its tooltip HTML in a `data-tip`
+// attribute; on hover we show the shared `.chart-tooltip` div near the
+// cursor and brighten the bar.  Delegation-free (rects are recreated on
+// each build, so per-rect listeners never accumulate).  Continuous
+// charts keep their crosshair hover; this is for bar-at-a-time hover.
+function _bindBarTooltips(svg, tip, wrap) {
+  if (!svg || !tip || !wrap) return;
+  const place = (ev) => {
+    const wrapRect = wrap.getBoundingClientRect();
+    let tx = ev.clientX - wrapRect.left + 12;
+    let ty = ev.clientY - wrapRect.top + 12;
+    const tRect = tip.getBoundingClientRect();
+    if (tx + tRect.width + 12 > wrapRect.width) tx = ev.clientX - wrapRect.left - tRect.width - 12;
+    if (ty + tRect.height + 12 > wrapRect.height) ty = ev.clientY - wrapRect.top - tRect.height - 12;
+    tip.style.left = Math.max(0, tx) + 'px';
+    tip.style.top = Math.max(0, ty) + 'px';
+  };
+  svg.querySelectorAll('[data-tip]').forEach(el => {
+    el.style.cursor = 'default';
+    el.addEventListener('mouseenter', ev => {
+      tip.innerHTML = el.getAttribute('data-tip');
+      tip.style.display = 'block';
+      el.style.filter = 'brightness(1.18)';
+      place(ev);
+    });
+    el.addEventListener('mousemove', place);
+    el.addEventListener('mouseleave', () => {
+      tip.style.display = 'none';
+      el.style.filter = '';
+    });
+  });
+}
+
 function renderMiniLineChart(points, opts) {
   opts = opts || {};
   const id = opts.id || ('miniChart_' + Math.random().toString(36).slice(2, 7));
