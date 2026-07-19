@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 
 class TestWeekendClamp:
     def test_last_trading_day_weekday_unchanged(self, isolated_workdir):
@@ -56,66 +58,90 @@ class TestMissingRangesWeekendClamp:
             "trading day; asking for weekend data is pointless"
 
 
-class TestTotalReturnRefreshThrottle:
-    def test_first_run_does_full_fetch(self, isolated_workdir, stub_prices):
-        """The very first run for a total-return symbol has no
-        last_full_refresh stamp, so the full series is fetched."""
-        from src.prices import ensure_coverage, _load_meta
-        # Stub SPY data so the fetch returns something concrete
-        stub_prices.set("SPY", {"2024-01-02": 470.0, "2024-01-03": 472.0,
-                                 "2024-01-04": 474.0})
-        ensure_coverage(["SPY"], "2024-01-02", "2024-01-04", verbose=False)
-        meta = _load_meta()
-        assert meta["symbols"]["SPY"].get("last_full_refresh"), \
-            "first run should stamp last_full_refresh"
+class TestLocalTotalReturn:
+    """Total-return symbols store plain Close; the dividend adjustment
+    (suffix product of 1 − div/prev_close over ex-dates AFTER the queried
+    date) is applied at read time."""
 
-    def test_recent_full_refresh_skips_full_refetch(self, isolated_workdir, stub_prices):
-        """If last_full_refresh is recent (< 7 days old), don't
-        re-fetch the entire series — just append today's close via
-        the normal incremental gap path."""
-        from datetime import datetime, timedelta
-        from src.prices import ensure_coverage, _load_meta
+    def _seed(self, prices_by_date, dividends):
+        from src.prices import _load_dividends, _load_prices
+        _load_prices()["SPY"] = dict(prices_by_date)
+        _load_dividends()["SPY"] = [list(d) for d in dividends]
 
-        # Pre-populate cache: SPY covered through yesterday, full
-        # refresh stamped today.  A run today should NOT do another
-        # full fetch.
-        meta = _load_meta()
-        yesterday = (datetime.now().date() - timedelta(days=1)).isoformat()
-        today     = datetime.now().date().isoformat()
-        meta["symbols"]["SPY"] = {
-            "covered_start":     "2017-05-23",
-            "covered_end":       yesterday,
-            "last_full_refresh": today,
-        }
-        # Stub a fresh-day stub so any incremental fetch can complete
-        stub_prices.set("SPY", {today: 500.0})
+    def test_get_price_applies_dividend_adjustment(self, isolated_workdir):
+        from src.prices import get_price
+        # $1 dividend ex 03-15; prev close (03-14) = 100 → factor 0.99
+        self._seed({"2024-03-14": 100.0, "2024-03-15": 99.5},
+                   [["2024-03-15", 1.0]])
+        assert get_price("SPY", "2024-03-14") == pytest.approx(99.0)
+        # On/after the ex-date no factor applies (latest == raw close).
+        assert get_price("SPY", "2024-03-15") == pytest.approx(99.5)
 
-        ensure_coverage(["SPY"], "2017-05-23", today, verbose=False)
-        # The cache entry should still exist (a full refetch would have
-        # popped the meta entry and rebuilt it from scratch — losing
-        # the original `covered_start`)
-        meta_after = _load_meta()
-        assert meta_after["symbols"]["SPY"].get("covered_start") == "2017-05-23"
+    def test_multiple_dividends_compound(self, isolated_workdir):
+        from src.prices import get_price
+        self._seed({"2024-03-14": 100.0, "2024-03-15": 99.5,
+                    "2024-06-13": 200.0, "2024-06-14": 199.0},
+                   [["2024-03-15", 1.0], ["2024-06-14", 2.0]])
+        # 03-14 sits before BOTH ex-dates: 0.99 × (1 − 2/200) = 0.9801
+        assert get_price("SPY", "2024-03-14") == pytest.approx(100.0 * 0.99 * 0.99)
+        # 06-13 sits before only the June ex-date.
+        assert get_price("SPY", "2024-06-13") == pytest.approx(200.0 * 0.99)
 
-    def test_old_full_refresh_triggers_full_refetch(self, isolated_workdir, stub_prices):
-        """If last_full_refresh is older than the throttle window,
-        we DO refetch the full series (catches dividend
-        re-normalizations within the throttle period)."""
-        from src.prices import ensure_coverage, _load_meta
-        # Set last_full_refresh to ancient history → forces full refetch
-        stub_prices.set("SPY", {"2024-01-02": 470.0, "2024-01-03": 472.0})
-        meta = _load_meta()
-        meta["symbols"]["SPY"] = {
-            "covered_start":     "2024-01-02",
-            "covered_end":       "2024-01-03",
-            "last_full_refresh": "2020-01-01",
-        }
+    def test_non_tr_symbol_ignores_dividends(self, isolated_workdir):
+        from src.prices import _load_dividends, _load_prices, get_price
+        _load_prices()["AAPL"] = {"2024-03-14": 100.0}
+        _load_dividends()["AAPL"] = [["2024-03-15", 1.0]]
+        assert get_price("AAPL", "2024-03-14") == pytest.approx(100.0)
+
+    def test_missing_dividends_degrade_to_price_return(self, isolated_workdir):
+        from src.prices import get_price
+        self._seed({"2024-03-14": 100.0}, [])
+        assert get_price("SPY", "2024-03-14") == pytest.approx(100.0)
+
+    def test_get_series_applies_same_adjustment(self, isolated_workdir):
+        from src.prices import get_series
+        self._seed({"2024-03-14": 100.0, "2024-03-15": 99.5},
+                   [["2024-03-15", 1.0]])
+        out = get_series("SPY", "2024-03-01", "2024-03-31")
+        assert out["2024-03-14"] == pytest.approx(99.0)
+        assert out["2024-03-15"] == pytest.approx(99.5)
+
+    def test_fetch_refreshes_dividends_for_tr_symbols(self, isolated_workdir,
+                                                      monkeypatch):
+        monkeypatch.setattr("src.prices._fetch_range",
+                            lambda s, a, b: {"2024-01-03": 470.0})
+        monkeypatch.setattr("src.prices._fetch_splits", lambda s: [])
+        monkeypatch.setattr("src.prices._fetch_dividends",
+                            lambda s: [["2023-12-15", 1.75]])
+        from src.prices import _load_dividends, ensure_coverage
         ensure_coverage(["SPY"], "2024-01-02", "2024-01-03", verbose=False)
-        # Full refetch should re-stamp the date; check it's recent
-        from datetime import datetime
-        meta_after = _load_meta()
-        stamped = meta_after["symbols"]["SPY"].get("last_full_refresh")
-        assert stamped == datetime.now().date().isoformat()
+        assert _load_dividends()["SPY"] == [["2023-12-15", 1.75]]
+
+    def test_migration_wipes_adj_close_era_series(self, isolated_workdir):
+        """Cached TR series from before the local-TR feature hold Adj
+        Close values — the one-time migration must wipe them (and their
+        coverage meta) so they refetch as Close."""
+        import json as _json
+        from src.config import CACHE_DIR
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        with open(CACHE_DIR / "price_cache.json", "w", encoding="utf-8") as f:
+            _json.dump({"SPY": {"2024-01-02": 466.0},
+                        "AAPL": {"2024-01-02": 185.0}}, f)
+        with open(CACHE_DIR / "price_cache_meta.json", "w", encoding="utf-8") as f:
+            _json.dump({"version": 1, "auto_adjusted": False, "migrated_v1": True,
+                        "symbols": {"SPY": {"covered_start": "2024-01-02",
+                                            "covered_end": "2024-01-02",
+                                            "last_full_refresh": "2024-01-02"},
+                                    "AAPL": {"covered_start": "2024-01-02",
+                                             "covered_end": "2024-01-02"}}}, f)
+        from src.prices import _load_meta, _load_prices
+        prices = _load_prices()
+        assert "SPY" not in prices, "Adj Close era series must be wiped"
+        assert prices["AAPL"] == {"2024-01-02": 185.0}, "non-TR untouched"
+        meta = _load_meta()
+        assert "covered_start" not in meta["symbols"]["SPY"]
+        assert meta["symbols"]["AAPL"]["covered_start"] == "2024-01-02"
+        assert meta.get("migrated_tr_close_v2") is True
 
 
 class TestDeepCacheRefresh:
@@ -372,3 +398,234 @@ class TestEnsureCoverageEndOverrides:
         # gap.  Stubs swallow this (they return what's registered);
         # the real point of this test is just confirming no exception
         # / clamp triggers when override is absent.
+
+
+class TestBatchedCoverageFetch:
+    """ensure_coverage groups symbols by identical gap signature and
+    serves groups >= 2 with one batched download; symbols the batch
+    can't serve fall back to the per-symbol serial path, which owns
+    retry/failure bookkeeping."""
+
+    def _stub(self, monkeypatch, batch_fn, serial_fn=None, splits_fn=None):
+        monkeypatch.setattr("src.prices._batch_fetch_ranges", batch_fn)
+        monkeypatch.setattr("src.prices._fetch_range",
+                            serial_fn or (lambda s, a, b: {}))
+        monkeypatch.setattr("src.prices._fetch_splits",
+                            splits_fn or (lambda s: []))
+
+    def test_shared_gap_uses_one_batch_call(self, isolated_workdir, monkeypatch):
+        calls = {"batch": 0, "serial": 0}
+
+        def fake_batch(symbols, start, end):
+            calls["batch"] += 1
+            return {s: {"prices": {"2024-01-03": 10.0 + i}, "split_event": False}
+                    for i, s in enumerate(sorted(symbols))}
+
+        def fake_serial(symbol, start, end):
+            calls["serial"] += 1
+            return {"2024-01-03": 99.0}
+
+        self._stub(monkeypatch, fake_batch, fake_serial)
+        from src.prices import ensure_coverage, get_price
+        ensure_coverage(["AAA", "BBB", "CCC"], "2024-01-02", "2024-01-03",
+                        verbose=False)
+        assert calls["batch"] == 1
+        assert calls["serial"] == 0
+        assert get_price("AAA", "2024-01-03") == 10.0
+        assert get_price("CCC", "2024-01-03") == 12.0
+
+    def test_single_symbol_group_stays_serial(self, isolated_workdir, monkeypatch):
+        calls = {"batch": 0}
+
+        def fake_batch(symbols, start, end):
+            calls["batch"] += 1
+            return {}
+
+        self._stub(monkeypatch, fake_batch,
+                   lambda s, a, b: {"2024-01-03": 42.0})
+        from src.prices import ensure_coverage, get_price
+        ensure_coverage(["AAA"], "2024-01-02", "2024-01-03", verbose=False)
+        assert calls["batch"] == 0, "a group of one must not pay a batch call"
+        assert get_price("AAA", "2024-01-03") == 42.0
+
+    def test_batch_miss_long_range_falls_back_to_serial(self, isolated_workdir,
+                                                        monkeypatch):
+        """A symbol absent from the batch result over a long range goes
+        through the serial path so failure bookkeeping stays accurate."""
+        serial_calls = []
+
+        def fake_batch(symbols, start, end):
+            return {s: {"prices": {"2024-01-31": 5.0}, "split_event": False}
+                    for s in symbols if s != "MISS"}
+
+        def fake_serial(symbol, start, end):
+            serial_calls.append(symbol)
+            return {}
+
+        self._stub(monkeypatch, fake_batch, fake_serial)
+        from src.prices import ensure_coverage, _load_meta
+        ensure_coverage(["AAA", "MISS"], "2024-01-02", "2024-01-31",
+                        verbose=False)
+        assert serial_calls == ["MISS"]
+        meta = _load_meta()
+        assert meta["symbols"]["MISS"]["failure_count"] == 1
+        assert meta["symbols"]["AAA"]["failure_count"] == 0
+
+    def test_batch_empty_short_range_not_penalized(self, isolated_workdir,
+                                                   monkeypatch):
+        """Weekend/holiday: batch returns no rows over a short range —
+        no serial retry, no failure recorded (same free pass as serial)."""
+        serial_calls = []
+
+        def fake_serial(symbol, start, end):
+            serial_calls.append(symbol)
+            return {}
+
+        self._stub(monkeypatch, lambda s, a, b: {}, fake_serial)
+        from src.prices import ensure_coverage, _load_meta
+        ensure_coverage(["AAA", "BBB"], "2024-01-02", "2024-01-03",
+                        verbose=False)
+        assert serial_calls == []
+        meta = _load_meta()
+        assert not meta["symbols"].get("AAA", {}).get("failure_count")
+        assert not meta["symbols"].get("BBB", {}).get("failure_count")
+
+    def test_batch_unavailable_falls_back_for_whole_group(self, isolated_workdir,
+                                                          monkeypatch):
+        """_batch_fetch_ranges returning None (yfinance missing / download
+        threw) sends every group symbol through the serial path."""
+        serial_calls = []
+
+        def fake_serial(symbol, start, end):
+            serial_calls.append(symbol)
+            return {"2024-01-03": 7.0}
+
+        self._stub(monkeypatch, lambda s, a, b: None, fake_serial)
+        from src.prices import ensure_coverage, get_price
+        ensure_coverage(["AAA", "BBB"], "2024-01-02", "2024-01-03",
+                        verbose=False)
+        assert sorted(serial_calls) == ["AAA", "BBB"]
+        assert get_price("AAA", "2024-01-03") == 7.0
+
+    def test_clean_split_window_skips_splits_refetch(self, isolated_workdir,
+                                                     monkeypatch):
+        """split_event=False + existing splits entry -> no per-symbol
+        splits refetch (the weekly deep refresh catches revisions)."""
+        splits_calls = []
+
+        def fake_splits(symbol):
+            splits_calls.append(symbol)
+            return []
+
+        def fake_batch(symbols, start, end):
+            return {s: {"prices": {"2024-01-03": 5.0}, "split_event": False}
+                    for s in symbols}
+
+        self._stub(monkeypatch, fake_batch, splits_fn=fake_splits)
+        from src.prices import _load_splits, ensure_coverage
+        _load_splits()["AAA"] = []   # entry present -> skip is allowed
+        ensure_coverage(["AAA", "BBB"], "2024-01-02", "2024-01-03",
+                        verbose=False)
+        # AAA skipped (clean window + cached entry); BBB backfilled
+        # (no splits entry yet).
+        assert splits_calls == ["BBB"]
+
+
+class TestShardedPriceCache:
+    """Prices persist as one shard per symbol under cache/prices/; only
+    dirty symbols rewrite, deletions unlink, the legacy monolith
+    migrates on first load, and stored values round to 6 significant
+    digits."""
+
+    def _fetch_and_save(self, monkeypatch, sym, series):
+        monkeypatch.setattr("src.prices._fetch_range",
+                            lambda s, a, b: dict(series))
+        monkeypatch.setattr("src.prices._fetch_splits", lambda s: [])
+        from src.prices import ensure_coverage, save_caches
+        ensure_coverage([sym], min(series), max(series), verbose=False)
+        save_caches()
+
+    def test_roundtrip_through_shard(self, isolated_workdir, monkeypatch):
+        from src import prices
+        self._fetch_and_save(monkeypatch, "AAPL", {"2024-01-03": 185.0})
+        shard = isolated_workdir / "cache" / "prices" / "AAPL.json"
+        assert shard.exists()
+        prices.reset_caches()
+        assert prices.get_price("AAPL", "2024-01-03") == 185.0
+
+    def test_legacy_monolith_migrates_and_is_removed(self, isolated_workdir,
+                                                     monkeypatch):
+        import json as _json
+        from src.config import CACHE_DIR
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        legacy = CACHE_DIR / "price_cache.json"
+        legacy.write_text(_json.dumps({"AAPL": {"2024-01-03": 185.0},
+                                       "MSFT": {"2024-01-03": 370.0}}),
+                          encoding="utf-8")
+        from src.prices import get_price, save_caches
+        assert get_price("MSFT", "2024-01-03") == 370.0
+        save_caches()
+        assert not legacy.exists(), "monolith removed after shard write"
+        assert (CACHE_DIR / "prices" / "AAPL.json").exists()
+        assert (CACHE_DIR / "prices" / "MSFT.json").exists()
+        from src import prices
+        prices.reset_caches()
+        assert get_price("AAPL", "2024-01-03") == 185.0
+
+    def test_only_dirty_symbols_rewrite(self, isolated_workdir, monkeypatch):
+        """A shard deleted out-of-band must NOT reappear when a
+        different symbol is fetched — proof that clean symbols don't
+        rewrite."""
+        from src import prices
+        self._fetch_and_save(monkeypatch, "AAPL", {"2024-01-03": 185.0})
+        aapl_shard = isolated_workdir / "cache" / "prices" / "AAPL.json"
+        aapl_shard.unlink()
+        self._fetch_and_save(monkeypatch, "MSFT", {"2024-01-03": 370.0})
+        assert not aapl_shard.exists(), "clean symbol must not rewrite"
+        assert (isolated_workdir / "cache" / "prices" / "MSFT.json").exists()
+
+    def test_split_invalidation_unlinks_shard(self, isolated_workdir,
+                                              monkeypatch):
+        from src import prices
+        self._fetch_and_save(monkeypatch, "AAPL", {"2024-01-03": 185.0})
+        shard = isolated_workdir / "cache" / "prices" / "AAPL.json"
+        assert shard.exists()
+        changed = prices._invalidate_prices_for_split_change(
+            "AAPL", [["2020-08-31", 4.0]], [["2020-08-31", 4.0],
+                                            ["2024-06-10", 10.0]],
+            verbose=False)
+        assert changed
+        prices.save_caches()
+        assert not shard.exists()
+
+    def test_values_round_to_six_significant_digits(self, isolated_workdir,
+                                                    monkeypatch):
+        import json as _json
+        from src import prices
+        self._fetch_and_save(monkeypatch, "AAPL",
+                             {"2024-01-03": 185.12345678901})
+        shard = isolated_workdir / "cache" / "prices" / "AAPL.json"
+        doc = _json.loads(shard.read_text(encoding="utf-8"))
+        assert doc["symbol"] == "AAPL"
+        assert doc["prices"]["2024-01-03"] == 185.123
+        # Tiny prices keep 6 SIGNIFICANT digits, not 6 decimals.
+        prices.reset_caches()
+        self._fetch_and_save(monkeypatch, "SHIB-USD",
+                             {"2024-01-03": 0.0000102345678})
+        doc2 = _json.loads((isolated_workdir / "cache" / "prices" /
+                            "SHIB-USD.json").read_text(encoding="utf-8"))
+        assert doc2["prices"]["2024-01-03"] == 1.02346e-05
+
+    def test_windows_reserved_symbol_gets_safe_filename(self, isolated_workdir,
+                                                        monkeypatch):
+        """CON is a real NYSE ticker but a reserved device name on
+        Windows — the shard must land under a suffixed filename and
+        still round-trip via the in-file symbol."""
+        from src import prices
+        self._fetch_and_save(monkeypatch, "CON", {"2024-01-03": 20.0})
+        shard_dir = isolated_workdir / "cache" / "prices"
+        names = [p.name for p in shard_dir.glob("*.json")]
+        assert len(names) == 1
+        assert names[0] != "CON.json"
+        prices.reset_caches()
+        assert prices.get_price("CON", "2024-01-03") == 20.0

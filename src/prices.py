@@ -1,8 +1,17 @@
 """Historical price cache with yfinance fallback.
 
-Two-file cache design:
+Cache layout:
 
-- `cache/price_cache.json`      — `{symbol: {YYYY-MM-DD: close_price}}`
+- `cache/prices/{SYMBOL}.json`  — one shard per symbol:
+                                   `{"symbol": ..., "prices": {YYYY-MM-DD: close}}`.
+                                   Only symbols with new data are rewritten on
+                                   save; delete a shard to force a refetch (also
+                                   delete the symbol's meta entry).  The symbol
+                                   INSIDE the file is authoritative — filenames
+                                   are sanitized for Windows.  Values are stored
+                                   rounded to 6 significant digits.  The legacy
+                                   monolithic `cache/price_cache.json` is still
+                                   read (then replaced) on first load.
 - `cache/price_cache_meta.json` — per-symbol fetch state (covered range,
                                    last fetch time, failure count, retry-after,
                                    tombstone).
@@ -14,15 +23,23 @@ dividend adjustment.  We use `auto_adjust=False` so the stored price is
 the split-adjusted market close (matches what a chart would show), not a
 dividend-reinvestment-adjusted total-return number.
 
-**Benchmark exception.**  Symbols listed in `_TOTAL_RETURN_SYMBOLS` (only
-SPY as of now) are fetched as `Adj Close` — split AND dividend adjusted —
-so the benchmark reflects total return including reinvested dividends.
-Our portfolio positions capture reinvested dividends via the txn ledger
-(Dividend → Reinvest → higher share count), and the benchmark is a
-hypothetical with no ledger, so it needs dividend adjustment built in
-for an apples-to-apples comparison.  Because yfinance re-normalizes the
-whole Adj Close series every time a new dividend is announced, we
-force a full-range refetch for these symbols on every pipeline run.
+**Benchmark exception — total return, computed locally.**  Symbols in
+`_TOTAL_RETURN_SYMBOLS` (SPY/BND/VXUS) and scaled-proxy targets need
+DIVIDEND-adjusted values: the benchmark is a hypothetical with no txn
+ledger, so reinvested dividends must be baked into the price for an
+apples-to-apples comparison (real positions capture them via
+Dividend → Reinvest → higher share count).  We store plain `Close` for
+these symbols like everything else and cache their dividend events
+(`cache/dividends_cache.json`); `get_price` applies the adjustment at
+read time — close × ∏(1 − div/prev_close) over ex-dates AFTER the
+queried date (the standard CRSP suffix-product, normalized so the
+latest date equals the raw close).  This keeps the stored series
+stable and incremental.  The previous design fetched `Adj Close`,
+which yfinance re-normalizes whole-series whenever a new dividend is
+announced — forcing a weekly full-range refetch and drifting every
+historical benchmark value run-to-run.  If the dividends cache is
+missing (fetch failure), the factor product is 1.0 and the symbol
+degrades to price-return until the next successful refresh.
 
 Because yfinance's historical prices are in *today's share basis*, a raw
 balance multiplied by a historical price gives a wrong answer for any
@@ -43,15 +60,30 @@ day within a 7-day window.
 
 import json
 import math
+from bisect import bisect_right
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .config import CACHE_DIR, CRYPTO_SYMBOLS, SYMBOL_MAP
 
-PRICE_CACHE_FILE  = CACHE_DIR / "price_cache.json"
-PRICE_META_FILE   = CACHE_DIR / "price_cache_meta.json"
-SPLITS_CACHE_FILE = CACHE_DIR / "splits_cache.json"
-PROXY_MAP_FILE    = CACHE_DIR / "symbol_proxy_map.json"
+# Prices are sharded one JSON file per symbol under PRICES_DIR — only
+# symbols with new data get rewritten on save, git diffs scope to the
+# symbols that actually changed, and "delete to force a refetch" is a
+# single file.  PRICE_CACHE_FILE is the legacy pre-sharding monolith:
+# still read on load (shards override per symbol) and removed after the
+# first successful shard write.
+PRICES_DIR           = CACHE_DIR / "prices"
+PRICE_CACHE_FILE     = CACHE_DIR / "price_cache.json"
+PRICE_META_FILE      = CACHE_DIR / "price_cache_meta.json"
+SPLITS_CACHE_FILE    = CACHE_DIR / "splits_cache.json"
+DIVIDENDS_CACHE_FILE = CACHE_DIR / "dividends_cache.json"
+PROXY_MAP_FILE       = CACHE_DIR / "symbol_proxy_map.json"
+
+# Stored prices are rounded to this many significant digits on write —
+# full float reprs inflate the shards ~30-40% for precision no consumer
+# uses (sub-cent on a $100 stock; SHIB-scale prices keep 6 significant
+# digits regardless of magnitude).
+_PRICE_SIG_DIGITS = 6
 
 # Weekend / holiday lookback window for get_price.
 _LOOKBACK_DAYS = 7
@@ -71,7 +103,7 @@ _NO_DATA_MIN_RANGE_DAYS = 7
 # next load because the values would be incompatible with existing entries.
 _AUTO_ADJUST = False
 
-# Symbols to fetch as TOTAL RETURN (split + dividend adjusted).  Used for
+# Symbols valued as TOTAL RETURN (split + dividend adjusted).  Used for
 # benchmark comparisons where we don't have a txn ledger to handle
 # dividends (the benchmark is a hypothetical, not a real position) —
 # plus any symbol used as a SCALED proxy, since scaled proxies exist
@@ -79,23 +111,13 @@ _AUTO_ADJUST = False
 # those invariably reinvest distributions internally into NAV.  See
 # _is_total_return_symbol() for the dynamic lookup.
 #
-# Everything NOT treated as total-return is fetched as price-only
-# (Close) — dividends on real positions are tracked via the txn
-# ledger (Dividend → Reinvest → more shares).
-#
-# NOTE: yfinance's Adj Close is normalized to the most recent close, so
-# every historical value shifts slightly whenever a new dividend is
-# announced.  To keep the stored series internally consistent, we
-# force a full-range refetch for these symbols on every run (see
-# ensure_coverage).
+# The STORED series is plain Close for every symbol; total-return
+# symbols additionally cache their dividend events and get the
+# dividend adjustment applied at read time (see module docstring and
+# _tr_factor_after).  Everything NOT total-return stays price-only —
+# dividends on real positions are tracked via the txn ledger
+# (Dividend → Reinvest → more shares).
 _TOTAL_RETURN_SYMBOLS = frozenset({"SPY", "BND", "VXUS"})
-
-# How often (in days) to do a full re-fetch of total-return series.
-# Adj Close re-normalizes whenever a new dividend is announced; for
-# quarterly payers like SPY, weekly catches every dividend within a
-# few days of the ex-date.  Between full refreshes, the normal
-# missing-gap fetch path appends only the new days.
-_TOTAL_RETURN_REFRESH_DAYS = 7
 
 # How often (in days) to deep-refresh things that don't get caught
 # by the incremental daily fetch path:
@@ -106,14 +128,37 @@ _TOTAL_RETURN_REFRESH_DAYS = 7
 _DEEP_REFRESH_DAYS = 7
 
 # In-memory state.
-_prices: dict[str, dict[str, float]] | None    = None
-_meta:   dict | None                            = None
-_splits: dict[str, list[list]] | None           = None
-_proxy:  dict | None                            = None
-_prices_dirty = False
-_meta_dirty   = False
-_splits_dirty = False
-_proxy_dirty  = False
+_prices:    dict[str, dict[str, float]] | None  = None
+_meta:      dict | None                         = None
+_splits:    dict[str, list[list]] | None        = None
+_dividends: dict[str, list[list]] | None        = None
+_proxy:     dict | None                         = None
+# Per-symbol dirty tracking for the sharded price store: only symbols
+# in _prices_dirty_syms get their shard rewritten on save; symbols in
+# _prices_deleted_syms get their shard unlinked.  Mutually exclusive
+# (see _mark_prices_dirty / _mark_prices_deleted).
+_prices_dirty_syms:   set[str] = set()
+_prices_deleted_syms: set[str] = set()
+_legacy_prices_pending_delete = False
+_meta_dirty      = False
+_splits_dirty    = False
+_dividends_dirty = False
+_proxy_dirty     = False
+
+
+def _mark_prices_dirty(sym: str) -> None:
+    _prices_dirty_syms.add(sym)
+    _prices_deleted_syms.discard(sym)
+
+
+def _mark_prices_deleted(sym: str) -> None:
+    _prices_deleted_syms.add(sym)
+    _prices_dirty_syms.discard(sym)
+
+# Lazily-built per-symbol total-return factor tables:
+# {symbol: (sorted_ex_dates, suffix_products)}.  Derived from _prices +
+# _dividends; dropped whenever either changes for the symbol.
+_tr_factor_cache: dict[str, tuple[list[str], list[float]]] = {}
 
 
 def reset_caches() -> None:
@@ -122,16 +167,22 @@ def reset_caches() -> None:
     without this, state leaks between tests.  Production code never
     needs to call this; the caches are loaded once per process.
     """
-    global _prices, _meta, _splits, _proxy
-    global _prices_dirty, _meta_dirty, _splits_dirty, _proxy_dirty
+    global _prices, _meta, _splits, _dividends, _proxy
+    global _meta_dirty, _splits_dirty, _dividends_dirty, _proxy_dirty
+    global _legacy_prices_pending_delete
     _prices = None
     _meta = None
     _splits = None
+    _dividends = None
     _proxy = None
-    _prices_dirty = False
+    _prices_dirty_syms.clear()
+    _prices_deleted_syms.clear()
+    _legacy_prices_pending_delete = False
     _meta_dirty = False
     _splits_dirty = False
+    _dividends_dirty = False
     _proxy_dirty = False
+    _tr_factor_cache.clear()
 
 # yfinance is imported lazily so dry-runs don't pay the import cost.
 _yf = None
@@ -152,16 +203,71 @@ def _lazy_yf():
 # Load / save
 # ---------------------------------------------------------------------------
 
+# Windows reserved device names — a shard file literally named CON.json
+# is unwritable/hazardous on Windows, and real tickers can collide with
+# these (CON trades on the NYSE).
+_WINDOWS_RESERVED = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+
+def _shard_path(sym: str) -> Path:
+    """Filesystem path for a symbol's price shard.
+
+    The filename is best-effort readable; the symbol INSIDE the file is
+    authoritative on load, so the name only has to be safe and unique.
+    Symbols that sanitize lossily, aren't uppercase (case-insensitive
+    filesystems would collide FOO/foo), or hit a Windows reserved device
+    name get a crc32 suffix to guarantee uniqueness.
+    """
+    safe = "".join(c if (c.isalnum() or c in ".-_") else "_" for c in sym)
+    needs_suffix = (
+        not safe
+        or safe != sym
+        or sym != sym.upper()
+        or safe.split(".")[0].upper() in _WINDOWS_RESERVED
+    )
+    if needs_suffix:
+        import zlib
+        safe = f"{safe or 'SYM'}-{zlib.crc32(sym.encode('utf-8')):08x}"
+    return PRICES_DIR / f"{safe}.json"
+
+
 def _load_prices() -> dict[str, dict[str, float]]:
-    global _prices
+    global _prices, _legacy_prices_pending_delete
     if _prices is None:
+        _prices = {}
+        # Legacy pre-sharding monolith: read it first (shards override
+        # per symbol), mark everything dirty so the first save writes
+        # the full shard set, and remove the monolith after that write.
         if PRICE_CACHE_FILE.exists():
-            with open(PRICE_CACHE_FILE, "r", encoding="utf-8") as f:
-                _prices = json.load(f)
-        else:
-            _prices = {}
+            try:
+                with open(PRICE_CACHE_FILE, "r", encoding="utf-8") as f:
+                    legacy = json.load(f)
+                if isinstance(legacy, dict):
+                    _prices.update(legacy)
+            except (OSError, json.JSONDecodeError):
+                pass
+            for sym in _prices:
+                _mark_prices_dirty(sym)
+            _legacy_prices_pending_delete = True
+        if PRICES_DIR.exists():
+            for fp in sorted(PRICES_DIR.glob("*.json")):
+                try:
+                    with open(fp, "r", encoding="utf-8") as f:
+                        doc = json.load(f)
+                except (OSError, json.JSONDecodeError):
+                    print(f"  Note: unreadable price shard {fp.name} — skipped")
+                    continue
+                sym = doc.get("symbol") if isinstance(doc, dict) else None
+                series = doc.get("prices") if isinstance(doc, dict) else None
+                if isinstance(sym, str) and isinstance(series, dict):
+                    _prices[sym] = series
         _migrate_legacy_keys()
         _invalidate_if_policy_changed()
+        _migrate_tr_close_v2()
     return _prices
 
 
@@ -183,7 +289,7 @@ def _invalidate_if_policy_changed() -> None:
     refetched with the current policy.  Keeps the failure / backoff state
     (if a ticker was bad before, it's likely still bad).
     """
-    global _prices_dirty, _meta_dirty
+    global _meta_dirty
     meta = _load_meta()
     disk_adjusted = meta.get("auto_adjusted")
     if disk_adjusted is None:
@@ -198,11 +304,11 @@ def _invalidate_if_policy_changed() -> None:
           f" invalidating (code requires auto_adjust={_AUTO_ADJUST})")
     for sym in list(_prices):
         del _prices[sym]
+        _mark_prices_deleted(sym)
     for _sym, entry in meta["symbols"].items():
         entry.pop("covered_start", None)
         entry.pop("covered_end", None)
     meta["auto_adjusted"] = _AUTO_ADJUST
-    _prices_dirty = True
     _meta_dirty = True
 
 
@@ -215,6 +321,20 @@ def _load_splits() -> dict[str, list[list]]:
         else:
             _splits = {}
     return _splits
+
+
+def _load_dividends() -> dict[str, list[list]]:
+    """Dividend events per total-return symbol:
+    ``{symbol: [[ISO_ex_date, amount], ...]}``.  Only symbols that
+    `_is_total_return_symbol` classifies get entries."""
+    global _dividends
+    if _dividends is None:
+        if DIVIDENDS_CACHE_FILE.exists():
+            with open(DIVIDENDS_CACHE_FILE, "r", encoding="utf-8") as f:
+                _dividends = json.load(f)
+        else:
+            _dividends = {}
+    return _dividends
 
 
 def _load_proxy_map() -> dict:
@@ -296,14 +416,54 @@ def _is_total_return_symbol(sym: str) -> bool:
     return False
 
 
+def _round_price(v: float) -> float:
+    """Round to _PRICE_SIG_DIGITS significant digits for storage."""
+    try:
+        return float(f"{v:.{_PRICE_SIG_DIGITS}g}")
+    except (TypeError, ValueError):
+        return v
+
+
 def save_caches() -> None:
-    """Write all four caches back to disk (only if dirty)."""
-    global _prices_dirty, _meta_dirty, _splits_dirty, _proxy_dirty
-    if _prices_dirty and _prices is not None:
-        PRICE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(_prices, f, indent=2, sort_keys=True, ensure_ascii=False)
-        _prices_dirty = False
+    """Write all caches back to disk (only what's dirty).
+
+    Prices are sharded: only symbols marked dirty get their shard file
+    rewritten, and symbols marked deleted get theirs unlinked.  The
+    legacy monolithic ``price_cache.json`` (if it was read this process)
+    is removed after the first successful shard write.
+    """
+    global _meta_dirty, _splits_dirty, _dividends_dirty, _proxy_dirty
+    global _legacy_prices_pending_delete
+    if (_prices_dirty_syms or _prices_deleted_syms) and _prices is not None:
+        PRICES_DIR.mkdir(parents=True, exist_ok=True)
+        for sym in sorted(_prices_dirty_syms):
+            series = _prices.get(sym)
+            if series is None:
+                continue
+            doc = {
+                "symbol": sym,
+                "prices": {d: _round_price(p) for d, p in series.items()},
+            }
+            with open(_shard_path(sym), "w", encoding="utf-8") as f:
+                json.dump(doc, f, indent=1, sort_keys=True, ensure_ascii=False)
+        for sym in sorted(_prices_deleted_syms):
+            try:
+                _shard_path(sym).unlink()
+            except OSError:
+                pass
+        _prices_dirty_syms.clear()
+        _prices_deleted_syms.clear()
+        if _legacy_prices_pending_delete:
+            try:
+                PRICE_CACHE_FILE.unlink()
+            except OSError:
+                pass
+            _legacy_prices_pending_delete = False
+    if _dividends_dirty and _dividends is not None:
+        DIVIDENDS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(DIVIDENDS_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(_dividends, f, indent=2, sort_keys=True, ensure_ascii=False)
+        _dividends_dirty = False
     if _meta_dirty and _meta is not None:
         PRICE_META_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(PRICE_META_FILE, "w", encoding="utf-8") as f:
@@ -376,17 +536,17 @@ def _migrate_legacy_keys() -> None:
     Merge them so lookups against the post-normalization symbol hit the full
     history.  Also folds explicit `SYMBOL_MAP` remaps (e.g. `ETH2 → ETH-USD`).
     """
-    global _prices_dirty, _meta_dirty
+    global _meta_dirty
     meta = _load_meta()
     if meta.get("migrated_v1"):
         return
 
     def _merge(src_key: str, dst_key: str) -> None:
-        global _prices_dirty
         if src_key == dst_key or src_key not in _prices:
             return
         src = _prices.pop(src_key)
-        _prices_dirty = True
+        _mark_prices_deleted(src_key)
+        _mark_prices_dirty(dst_key)
         dst = _prices.setdefault(dst_key, {})
         # Richer source dominates collisions; otherwise fill only empty dates.
         # "Richer" = 10× more entries (catches single-date ghost rows).
@@ -403,6 +563,33 @@ def _migrate_legacy_keys() -> None:
         _merge(src, dst)
 
     meta["migrated_v1"] = True
+    _meta_dirty = True
+
+
+def _migrate_tr_close_v2() -> None:
+    """One-time wipe of total-return symbols' cached series.
+
+    Before the local total-return feature, SPY/BND/VXUS (and scaled-proxy
+    targets) were stored as yfinance ``Adj Close`` — split AND dividend
+    adjusted.  The store is now plain ``Close`` for every symbol with the
+    dividend adjustment applied at read time, so the old values are in
+    the wrong basis.  Wipe them (and their coverage meta) so the next
+    ``ensure_coverage`` refetches as Close.
+    """
+    global _meta_dirty
+    meta = _load_meta()
+    if meta.get("migrated_tr_close_v2"):
+        return
+    for sym in list(_prices):
+        if _is_total_return_symbol(sym):
+            del _prices[sym]
+            _mark_prices_deleted(sym)
+            entry = meta["symbols"].get(sym)
+            if entry:
+                entry.pop("covered_start", None)
+                entry.pop("covered_end", None)
+                entry.pop("last_full_refresh", None)
+    meta["migrated_tr_close_v2"] = True
     _meta_dirty = True
 
 
@@ -463,17 +650,28 @@ def get_price(symbol: str, on_date) -> float | None:
             # propagating NaN into value/unrealized everywhere.
             if isinstance(val, float) and math.isnan(val):
                 continue
+            if _is_total_return_symbol(symbol):
+                val *= _tr_factor_after(symbol, probe)
             return val
     return None
 
 
 def get_series(symbol: str, start, end) -> dict[str, float]:
-    """Return {date: price} entries within [start, end] (inclusive)."""
+    """Return {date: price} entries within [start, end] (inclusive).
+
+    Total-return symbols get the same dividend adjustment as get_price.
+    NOTE: unlike get_price, this does NOT route through the proxy map
+    or filter legacy NaN entries — its only consumer (daily_pnl) uses
+    it for trading-day detection.
+    """
     prices = _load_prices()
     series = prices.get(symbol, {})
     start_s = _parse_iso(start).isoformat()
     end_s   = _parse_iso(end).isoformat()
-    return {d: p for d, p in series.items() if start_s <= d <= end_s}
+    out = {d: p for d, p in series.items() if start_s <= d <= end_s}
+    if out and _is_total_return_symbol(symbol):
+        out = {d: p * _tr_factor_after(symbol, d) for d, p in out.items()}
+    return out
 
 
 _CORP_ACTION_SUFFIXES = ("^", "+", ".U", ".W", ".WS", "-W", "-WS")
@@ -574,6 +772,103 @@ def _fetch_splits(symbol: str) -> list[list]:
     return out
 
 
+def _fetch_dividends(symbol: str) -> list[list]:
+    """Fetch dividend history for `symbol`.  Returns
+    ``[[ISO_ex_date, amount], ...]``.  Raises on API error; returns []
+    on no-data."""
+    yf = _lazy_yf()
+    if yf is None:
+        raise RuntimeError("yfinance not installed — pip install yfinance")
+    ticker = yf.Ticker(symbol)
+    divs = ticker.dividends
+    if divs is None or divs.empty:
+        return []
+    out: list[list] = []
+    for idx, amount in divs.items():
+        try:
+            dt_str = idx.date().isoformat()
+        except AttributeError:
+            dt_str = str(idx)[:10]
+        try:
+            amt = float(amount)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(amt) or amt <= 0:
+            continue
+        out.append([dt_str, amt])
+    return out
+
+
+def _refresh_dividends(symbol: str, *, verbose: bool = True) -> None:
+    """Full-history dividend refresh for a total-return symbol.
+
+    Non-fatal on fetch failure (keeps prior cached events — the factor
+    table just stays slightly stale until the next successful refresh).
+    """
+    global _dividends_dirty
+    try:
+        new_divs = _fetch_dividends(symbol)
+    except Exception:
+        return
+    divs_cache = _load_dividends()
+    if divs_cache.get(symbol) != new_divs:
+        divs_cache[symbol] = new_divs
+        _dividends_dirty = True
+        _tr_factor_cache.pop(symbol, None)
+        if verbose:
+            print(f"    {symbol}: {len(new_divs)} dividend event(s) cached")
+
+
+def _prev_close(series: dict[str, float], ex_iso: str) -> float | None:
+    """Close on the trading day strictly BEFORE `ex_iso` (walks back up
+    to the usual lookback window)."""
+    d = _parse_iso(ex_iso)
+    for i in range(1, _LOOKBACK_DAYS + 2):
+        probe = (d - timedelta(days=i)).isoformat()
+        val = series.get(probe)
+        if val is None:
+            continue
+        if isinstance(val, float) and math.isnan(val):
+            continue
+        return val
+    return None
+
+
+def _tr_factor_after(symbol: str, iso_date: str) -> float:
+    """Total-return adjustment for `symbol` as of `iso_date`: the product
+    of ``1 − div/prev_close`` over dividend ex-dates strictly AFTER the
+    date.  The latest date's factor is 1.0 (adjusted == raw close), so
+    the series is normalized exactly like yfinance's Adj Close and
+    ratios between any two dates match it.
+
+    Missing pieces degrade gracefully: no dividends cached → 1.0
+    (price return); an ex-date whose prior close isn't in the price
+    series (before coverage starts) is skipped — those factors only
+    matter for dates we can't price anyway.
+    """
+    cached = _tr_factor_cache.get(symbol)
+    if cached is None:
+        series = _load_prices().get(symbol) or {}
+        factors: list[tuple[str, float]] = []
+        for ex_iso, amount in _load_dividends().get(symbol) or []:
+            prev = _prev_close(series, ex_iso)
+            if prev is None or prev <= 0:
+                continue
+            f = 1.0 - amount / prev
+            if f <= 0:   # defensive — a dividend >= the share price
+                continue
+            factors.append((ex_iso, f))
+        factors.sort()
+        ex_dates = [d for d, _ in factors]
+        suffix = [1.0] * (len(factors) + 1)
+        for i in range(len(factors) - 1, -1, -1):
+            suffix[i] = suffix[i + 1] * factors[i][1]
+        cached = (ex_dates, suffix)
+        _tr_factor_cache[symbol] = cached
+    ex_dates, suffix = cached
+    return suffix[bisect_right(ex_dates, iso_date)]
+
+
 def fetch_latest_close_batch(symbols: list[str], *,
                               verbose: bool = True) -> int:
     """One-shot batched yfinance fetch for the most recent close.
@@ -594,7 +889,7 @@ def fetch_latest_close_batch(symbols: list[str], *,
     for some tickers) just leaves those symbols' cached prices alone.
     The next full pipeline run will retry via ``ensure_coverage``.
     """
-    global _prices_dirty, _meta_dirty
+    global _meta_dirty
     yf = _lazy_yf()
     if yf is None:
         return 0
@@ -656,10 +951,9 @@ def fetch_latest_close_batch(symbols: list[str], *,
             continue
         if sub is None or sub.empty:
             continue
-        # Pick the column matching the symbol's price-flavor (Adj Close
-        # for total-return tickers, Close otherwise) and walk back to
-        # the most recent non-NaN row.
-        col = "Adj Close" if _is_total_return_symbol(sym) else "Close"
+        # Always Close (total-return adjustment happens at read time);
+        # walk back to the most recent non-NaN row.
+        col = "Close"
         if col not in sub.columns:
             continue
         series = sub[col].dropna()
@@ -675,7 +969,8 @@ def fetch_latest_close_batch(symbols: list[str], *,
         except (TypeError, ValueError):
             continue
         prices.setdefault(sym, {})[dt_str] = val
-        _prices_dirty = True
+        _mark_prices_dirty(sym)
+        _tr_factor_cache.pop(sym, None)
         # Bump covered_end forward if we have a fresher date
         meta = _load_meta()
         entry = meta["symbols"].setdefault(sym, {})
@@ -750,10 +1045,9 @@ def _fetch_range(symbol: str, start: date, end: date) -> dict[str, float]:
     )
     if hist is None or hist.empty:
         return {}
-    # Total-return benchmarks (and scaled-proxy targets) read "Adj Close"
-    # (split+dividend-adjusted); everything else reads raw "Close"
-    # (split-adjusted only).  See _is_total_return_symbol for why.
-    col = "Adj Close" if _is_total_return_symbol(symbol) else "Close"
+    # Always raw "Close" (split-adjusted only) — total-return symbols
+    # get their dividend adjustment applied at read time, never stored.
+    col = "Close"
     out: dict[str, float] = {}
     for idx, row in hist.iterrows():
         try:
@@ -774,6 +1068,135 @@ def _fetch_range(symbol: str, start: date, end: date) -> dict[str, float]:
             continue
         out[dt_str] = fval
     return out
+
+
+def _batch_fetch_ranges(symbols: list[str], start: date, end: date) -> dict | None:
+    """One batched ``yf.download`` over [start, end] for many symbols.
+
+    Returns ``{sym: {"prices": {ISO: close}, "split_event": bool|None}}``
+    containing ONLY symbols that returned at least one usable row.
+    ``split_event`` is True when a split posted inside the fetched window
+    (caller must do a full splits refresh + invalidation), False when the
+    window provably had none (the download's "Stock Splits" column was
+    all zero), None when the column wasn't available (caller treats as
+    unknown → full refresh, same as the serial path).
+
+    Returns ``None`` when batching is unavailable (yfinance missing) or
+    the download failed as a whole — the caller falls back to the
+    per-symbol serial path, which owns retry/failure bookkeeping.
+    """
+    yf = _lazy_yf()
+    if yf is None:
+        return None
+    try:
+        df = yf.download(
+            tickers=" ".join(symbols),
+            start=start.isoformat(),
+            end=(end + timedelta(days=1)).isoformat(),  # yf end is exclusive
+            auto_adjust=_AUTO_ADJUST,
+            actions=True,            # adds Dividends + Stock Splits columns
+            group_by="ticker",
+            progress=False,
+            threads=True,
+        )
+    except Exception:
+        return None
+    if df is None or df.empty:
+        # Download worked but no rows at all (weekend / holiday range).
+        return {}
+    out: dict[str, dict] = {}
+    for sym in symbols:
+        try:
+            sub = df[sym] if len(symbols) > 1 else df
+        except (KeyError, AttributeError):
+            continue
+        if sub is None or sub.empty:
+            continue
+        # Always Close — total-return adjustment happens at read time.
+        col = "Close"
+        if col not in sub.columns:
+            continue
+        data: dict[str, float] = {}
+        for idx, val in sub[col].items():
+            try:
+                fval = float(val)
+            except (TypeError, ValueError):
+                continue
+            if math.isnan(fval):
+                continue   # close not posted yet — same rule as _fetch_range
+            try:
+                dt_str = idx.date().isoformat()
+            except AttributeError:
+                dt_str = str(idx)[:10]
+            data[dt_str] = fval
+        if not data:
+            continue
+        if "Stock Splits" in sub.columns:
+            try:
+                split_event = bool((sub["Stock Splits"].fillna(0) != 0).any())
+            except Exception:
+                split_event = None
+        else:
+            split_event = None
+        out[sym] = {"prices": data, "split_event": split_event}
+    return out
+
+
+def _apply_fetch_success(sym: str, merged: dict[str, float],
+                         actual_start: date, actual_end: date,
+                         now: datetime, *, verbose: bool,
+                         splits_known_clean: bool = False) -> None:
+    """Merge fetched prices into the cache and update all bookkeeping.
+
+    Shared by the serial and batched paths of ``ensure_coverage``.
+    ``splits_known_clean=True`` means the fetched window provably had no
+    split event (batched downloads carry a Stock Splits column), so the
+    per-symbol full splits refetch is skipped when a splits entry already
+    exists.  New splits always coincide with new trading days, so the
+    window check is sufficient for catching them at fetch time;
+    historical split REVISIONS are caught by the weekly deep refresh
+    either way (``revalidate_stale_caches``).
+    """
+    global _meta_dirty, _splits_dirty
+    prices = _load_prices()
+    prices.setdefault(sym, {}).update(merged)
+    _mark_prices_dirty(sym)
+    _tr_factor_cache.pop(sym, None)
+    _record_success(sym, actual_start, actual_end, now)
+    # Total-return symbols: refresh dividend events alongside the price
+    # fetch.  New ex-dates always fall on new trading days, so extending
+    # price coverage is exactly when a new event can appear; the weekly
+    # deep refresh backstops revisions.
+    if _is_total_return_symbol(sym):
+        _refresh_dividends(sym, verbose=verbose)
+    # Refresh splits alongside the price fetch — new splits always
+    # coincide with new trading days, so whenever we extend price
+    # coverage we may have a new split to record.
+    splits_cache = _load_splits()
+    if not (splits_known_clean and sym in splits_cache):
+        try:
+            new_splits = _fetch_splits(sym)
+            old_splits = splits_cache.get(sym)
+            if old_splits != new_splits:
+                splits_cache[sym] = new_splits
+                _splits_dirty = True
+                # Split history changed under an existing cache: the
+                # previously-cached ranges are in the pre-split basis
+                # (only the gap we just fetched is post-split).  Wipe
+                # the symbol so the next run refetches the whole range
+                # in one consistent basis; until then get_price
+                # returns None and consumers fall back / report via
+                # priced_pct rather than being wrong by the ratio.
+                _invalidate_prices_for_split_change(
+                    sym, old_splits, new_splits, verbose=verbose)
+        except Exception:
+            # Splits fetch failures are non-fatal — keep prior cached
+            # splits (if any) and carry on.
+            pass
+    if verbose:
+        sp = _load_splits().get(sym, [])
+        sp_note = f", {len(sp)} split(s)" if sp else ""
+        print(f"    {sym}: +{len(merged)} days{sp_note}")
 
 
 def _last_trading_day(d: date) -> date:
@@ -832,16 +1255,16 @@ def _invalidate_prices_for_split_change(symbol: str, old_splits, new_splits,
     """
     if old_splits is None or old_splits == new_splits:
         return False
-    global _prices_dirty, _meta_dirty
+    global _meta_dirty
     prices = _load_prices()
     meta = _load_meta()
     if prices.pop(symbol, None) is not None:
-        _prices_dirty = True
+        _mark_prices_deleted(symbol)
+    _tr_factor_cache.pop(symbol, None)
     entry = meta.get("symbols", {}).get(symbol)
     if entry:
         entry.pop("covered_start", None)
         entry.pop("covered_end", None)
-        entry.pop("last_full_refresh", None)
         _meta_dirty = True
     if verbose:
         print(f"    {symbol}: split history changed — cached prices "
@@ -915,6 +1338,18 @@ def revalidate_stale_caches(symbols: list[str], *,
             _invalidate_prices_for_split_change(target, old_splits,
                                                 new_splits, verbose=verbose)
 
+    # 1b. Refresh dividend events for total-return symbols — the
+    #     fetch-time refresh only fires when price coverage extends, so
+    #     a revised historical dividend (rare, but ex-date corrections
+    #     happen) would otherwise never be picked up.
+    for sym in symbols:
+        if _classify_no_fetch(sym):
+            continue
+        entry = _proxy_entry(sym)
+        target = entry[0] if (entry is not None and entry[1] in ("direct", "scaled")) else sym
+        if _is_total_return_symbol(target):
+            _refresh_dividends(target, verbose=verbose)
+
     # 2. Clear tombstones so previously-given-up symbols get another
     #    chance on the next ensure_coverage call.  We don't fetch
     #    them now (that's ensure_coverage's job); we just unblock.
@@ -967,7 +1402,7 @@ def ensure_coverage(symbols: list[str], start, end, *,
     backoff or no-fetch rules — a tombstoned symbol still won't be hit.
     """
     force_today_set: set[str] = set(force_today_for or set())
-    global _prices_dirty, _splits_dirty, _meta_dirty
+    global _splits_dirty, _meta_dirty
     prices = _load_prices()
     start_d = _parse_iso(start)
     end_d   = _parse_iso(end)
@@ -1011,34 +1446,11 @@ def ensure_coverage(symbols: list[str], start, end, *,
         if _should_skip(sym, now):
             on_backoff += 1
             continue
-        # Total-return symbols: Adj Close values re-normalize every
-        # time a new dividend is announced, so the entire series has
-        # to be refetched together to stay internally consistent.
-        # SPY pays quarterly, so a weekly cadence catches every
-        # dividend within a few days of the ex-date — meanwhile we
-        # avoid hammering yfinance with 2243-day refetches every run.
-        # Between full refreshes, fall through to the normal
-        # missing-gap path (incremental: just append today's close).
-        if _is_total_return_symbol(sym):
-            meta = _load_meta()
-            entry = meta["symbols"].get(sym, {})
-            last_full = entry.get("last_full_refresh")
-            stale = True
-            if last_full:
-                try:
-                    age = (now.date() - _parse_iso(last_full)).days
-                    stale = age >= _TOTAL_RETURN_REFRESH_DAYS
-                except (ValueError, TypeError):
-                    stale = True
-            if stale:
-                to_fetch.append((sym, [(start_d, end_d)]))
-                # Drop the existing entry so the merged-update doesn't
-                # leave stale (differently-normalized) values behind.
-                prices.pop(sym, None)
-                meta["symbols"].pop(sym, None)
-                _meta_dirty = True
-                continue
-            # else: fall through to incremental fetch path
+        # Total-return symbols follow the same incremental gap path as
+        # everything else — the store is plain Close and the dividend
+        # adjustment happens at read time, so nothing re-normalizes.
+        # (_apply_fetch_success refreshes their dividend events whenever
+        # coverage extends.)
         # Use the per-symbol end override (closed-position clamp) if
         # set, else the global end.  Note: the override applies to the
         # POST-proxy-expansion symbol; if the user has a proxy
@@ -1094,7 +1506,63 @@ def ensure_coverage(symbols: list[str], start, end, *,
 
     fetched_ok = 0
     fetched_fail = 0
+
+    # Group symbols by identical gap signature.  On a typical daily run
+    # every held symbol shares the same short "since last run" gap, so a
+    # single batched download serves the whole group (one HTTP roundtrip
+    # vs one per symbol).  Groups of one keep the per-symbol path, and
+    # any symbol the batch can't serve falls back to it too — the serial
+    # path owns retry/failure bookkeeping.
+    by_gaps: dict[tuple, list[str]] = {}
     for sym, gaps in to_fetch:
+        by_gaps.setdefault(tuple(gaps), []).append(sym)
+
+    serial_fetch: list[tuple[str, list[tuple[date, date]]]] = []
+    for gaps_key, group in sorted(by_gaps.items()):
+        gaps = list(gaps_key)
+        if len(group) < 2:
+            serial_fetch.extend((s, gaps) for s in group)
+            continue
+        actual_start = min(g[0] for g in gaps)
+        actual_end   = max(g[1] for g in gaps)
+        range_days   = (actual_end - actual_start).days
+        results: dict[str, dict] | None = {}
+        for gs, ge in gaps:
+            part = _batch_fetch_ranges(group, gs, ge)
+            if part is None:
+                results = None
+                break
+            for sym, res in part.items():
+                agg = results.setdefault(sym, {"prices": {}, "split_event": False})
+                agg["prices"].update(res["prices"])
+                se, agg_se = res["split_event"], agg["split_event"]
+                # True dominates (split seen); None (unknown) dominates False.
+                agg["split_event"] = (True if (se is True or agg_se is True)
+                                      else None if (se is None or agg_se is None)
+                                      else False)
+        if results is None:
+            serial_fetch.extend((s, gaps) for s in group)
+            continue
+        for sym in group:
+            res = results.get(sym)
+            if res:
+                _apply_fetch_success(
+                    sym, res["prices"], actual_start, actual_end, now,
+                    verbose=verbose,
+                    splits_known_clean=(res["split_event"] is False))
+                fetched_ok += 1
+            elif range_days >= _NO_DATA_MIN_RANGE_DAYS:
+                # No rows for a long range could be a bad ticker or a
+                # batch artifact — let the serial path decide (and record
+                # any failure with an accurate error message).
+                serial_fetch.append((sym, gaps))
+            else:
+                # Short range, no rows — weekend / holiday / mutual-fund
+                # NAV not yet posted.  Same free pass as the serial path.
+                if verbose:
+                    print(f"    {sym}: no data (short range, not penalized)")
+
+    for sym, gaps in serial_fetch:
         actual_start = min(g[0] for g in gaps)
         actual_end   = max(g[1] for g in gaps)
         range_days   = (actual_end - actual_start).days
@@ -1113,44 +1581,9 @@ def ensure_coverage(symbols: list[str], start, end, *,
             if verbose:
                 print(f"    {sym}: fetch error — {error}")
         elif merged:
-            prices.setdefault(sym, {}).update(merged)
-            _prices_dirty = True
-            _record_success(sym, actual_start, actual_end, now)
-            # Stamp the full-refresh date on total-return symbols so
-            # the next-N-days check in the dispatch loop above can
-            # skip the full refetch until the timer expires.
-            if _is_total_return_symbol(sym):
-                meta = _load_meta()
-                meta["symbols"][sym]["last_full_refresh"] = now.date().isoformat()
-                _meta_dirty = True
+            _apply_fetch_success(sym, merged, actual_start, actual_end, now,
+                                 verbose=verbose)
             fetched_ok += 1
-            # Refresh splits alongside the price fetch — new splits always
-            # coincide with new trading days, so whenever we extend price
-            # coverage we may have a new split to record.
-            try:
-                new_splits = _fetch_splits(sym)
-                splits_cache = _load_splits()
-                old_splits = splits_cache.get(sym)
-                if old_splits != new_splits:
-                    splits_cache[sym] = new_splits
-                    _splits_dirty = True
-                    # Split history changed under an existing cache: the
-                    # previously-cached ranges are in the pre-split basis
-                    # (only the gap we just fetched is post-split).  Wipe
-                    # the symbol so the next run refetches the whole range
-                    # in one consistent basis; until then get_price
-                    # returns None and consumers fall back / report via
-                    # priced_pct rather than being wrong by the ratio.
-                    _invalidate_prices_for_split_change(
-                        sym, old_splits, new_splits, verbose=verbose)
-            except Exception:
-                # Splits fetch failures are non-fatal — keep prior cached
-                # splits (if any) and carry on.
-                pass
-            if verbose:
-                sp = _load_splits().get(sym, [])
-                sp_note = f", {len(sp)} split(s)" if sp else ""
-                print(f"    {sym}: +{len(merged)} days{sp_note}")
         elif range_days >= _NO_DATA_MIN_RANGE_DAYS:
             _record_failure(sym, "no data returned", now)
             fetched_fail += 1

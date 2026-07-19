@@ -183,6 +183,20 @@ def stub_prices(monkeypatch, isolated_workdir):
     def fake_fetch_splits(symbol):
         return []
 
+    def fake_fetch_dividends(symbol):
+        return []
+
+    def fake_batch_fetch_ranges(symbols, start, end):
+        # Mirror the real contract: only symbols with data appear;
+        # split_event None = unknown (caller does the full splits
+        # compare via the stubbed _fetch_splits).
+        out = {}
+        for sym in symbols:
+            data = fake_fetch_range(sym, start, end)
+            if data:
+                out[sym] = {"prices": data, "split_event": None}
+        return out
+
     def fake_get_sector(symbol):
         from src.sectors import _classify_no_fetch
         quick = _classify_no_fetch(symbol)
@@ -192,6 +206,8 @@ def stub_prices(monkeypatch, isolated_workdir):
 
     monkeypatch.setattr(_prices_mod, "_fetch_range", fake_fetch_range)
     monkeypatch.setattr(_prices_mod, "_fetch_splits", fake_fetch_splits)
+    monkeypatch.setattr(_prices_mod, "_fetch_dividends", fake_fetch_dividends)
+    monkeypatch.setattr(_prices_mod, "_batch_fetch_ranges", fake_batch_fetch_ranges)
     monkeypatch.setattr(_sectors_mod, "get_sector", fake_get_sector)
 
     class _StubAPI:
