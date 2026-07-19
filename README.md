@@ -46,9 +46,9 @@ All screenshots are rendered from the bundled **fictional** sample portfolio
     pairing so moving shares between accounts preserves basis. Also
     computes totals under LIFO, HIFO, and Average-cost for side-by-side
     comparison.
-11. **Builds a portfolio value time series** (monthly snapshots from your
-    first transaction through today) broken down by account group,
-    account type, and sector.
+11. **Builds a portfolio value time series** (semimonthly snapshots — the
+    15th and last day of each month — from your first transaction through
+    today) broken down by account group, account type, and sector.
 12. **Computes derived analytics** (single source of truth for figures
     multiple dashboard views consume): rollover-bridge detection,
     per-account TWR (Modified Dietz + Schwab-style daily for retirement),
@@ -260,9 +260,10 @@ fin/
 ├── tools/                 # Maintenance scripts (e.g. build_sample_snapshot.py)
 ├── cache/
 │   ├── sector_cache.json       # Symbol → sector, hand-editable
-│   ├── price_cache.json        # Symbol → {date: adjusted close}
+│   ├── prices/                 # One shard per symbol: {date: close}
 │   ├── price_cache_meta.json   # Per-symbol fetch state & backoff
 │   ├── splits_cache.json       # Symbol → split history (yfinance-derived)
+│   ├── dividends_cache.json    # Benchmark/proxy dividend events (total return)
 │   ├── symbol_proxy_map.json   # Hand-curated proxies for unfetchable symbols
 │   └── ticker_renames.json     # Hand-curated retroactive ticker renames
 ├── src/

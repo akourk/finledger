@@ -87,9 +87,15 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     hand-editable; both hits and misses cache so no symbol is fetched twice
     per run.
 12. **Price cache coverage** (`prices.ensure_coverage`) — for each symbol
-    ever seen in transactions, make sure `cache/price_cache.json` covers
+    ever seen in transactions, make sure the price cache (sharded as
+    `cache/prices/{SYMBOL}.json`, one file per symbol; values rounded
+    to 6 significant digits; the legacy monolithic
+    `cache/price_cache.json` auto-migrates on first load) covers
     `[earliest_txn_date, today]`. Missing ranges are fetched from yfinance
-    and merged in. `cache/price_cache_meta.json` tracks per-symbol
+    and merged in — symbols sharing an identical gap (the common daily
+    case) are served by ONE batched `yf.download` roundtrip, with a
+    per-symbol serial fallback owning retry/failure bookkeeping.
+    `cache/price_cache_meta.json` tracks per-symbol
     `covered_start`, `covered_end`, `last_fetch`, `failure_count`,
     `retry_after`, and `tombstone` (true after 5 consecutive failures).
     Delisted / renamed tickers stop being retried.  Prices use
@@ -98,7 +104,12 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     matches actual market close on each date. Alongside prices, each
     symbol's split history is fetched and stored in
     `cache/splits_cache.json`; see `split_factor_since` and the History
-    step for why.
+    step for why.  Benchmark symbols (SPY/BND/VXUS) and scaled-proxy
+    targets are total-return: the store is still plain Close, their
+    dividend events are cached in `cache/dividends_cache.json`, and
+    `get_price` applies the dividend adjustment at read time (suffix
+    product of `1 − div/prev_close` over later ex-dates) — stable and
+    incremental, unlike the old whole-series Adj Close refetch.
 13. **Current-price override for holdings** — `last_prices` starts from the
     most recent non-zero transaction price (fallback), then overrides with
     `prices.get_price(sym, today)` for every symbol with a non-zero
@@ -325,8 +336,13 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
 
 14. **Portfolio history** (`history.compute_history`) — walks txns in
     chronological order, maintains running balances per
-    `(account_group, symbol)`, and at each monthly sample date (+ today)
-    prices every non-zero position. At each sample, the as-of-date share
+    `(account_group, symbol)`, and at each semimonthly sample date (the
+    15th + last day of each month, + today) prices every non-zero
+    position.  EOM dates are identical to the older monthly cadence, so
+    latest-in-month consumers (monthly_pnl, annual returns) keep their
+    exact month boundaries; the mid-month samples only add chart /
+    drawdown / TWR resolution.  Sampling density is decoupled from
+    fetch cost — the price cache stores every trading day regardless. At each sample, the as-of-date share
     count is scaled by `prices.split_factor_since(sym, date)` (product of
     split ratios strictly AFTER the sample date) to convert to
     today-basis. This cancels out the split adjustment baked into
@@ -1201,13 +1217,19 @@ process.
 
 - `metadata.csv` (legacy: `retirement-data.csv`) — personal config +
   metadata, not transactions.  `scanner` returns `"skip"` for both names.
-- `cache/sector_cache.json` and `cache/price_cache.json` — both live. Hand-
-  editable (the cache format is plain JSON). Delete freely to force a full
-  refetch; the next run will rebuild them.
+- `cache/sector_cache.json` and `cache/prices/{SYMBOL}.json` — both live.
+  Hand-editable (plain JSON; each price shard is
+  `{"symbol": ..., "prices": {date: close}}` — the in-file symbol is
+  authoritative, not the filename). Delete freely to force a refetch —
+  a single symbol's shard or the whole `prices/` dir; the next run
+  rebuilds.
 - `cache/price_cache_meta.json` — fetch-state sidecar for the price cache.
-  If you hand-edit or delete `price_cache.json`, also delete the meta file
-  so the "covered range" tracking doesn't claim coverage that doesn't
-  exist anymore.
+  If you hand-edit or delete price shards, also delete those symbols'
+  meta entries so the "covered range" tracking doesn't claim coverage
+  that doesn't exist anymore.
+- `cache/dividends_cache.json` — dividend events for total-return
+  symbols (benchmarks + scaled-proxy targets); auto-refreshed, safe to
+  delete.
 - `cache/symbol_proxy_map.json` `anchor_date` / `anchor_price` are
   auto-populated from the user's earliest txn price.  When publishing
   a fork, scrub them — they get repopulated on next run.
