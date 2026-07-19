@@ -350,7 +350,7 @@ function computeTimeWeightedReturnForWindow(accountFilter, startDate, endDate) {
   // Snap each requested date to the NEAREST snapshot (by absolute day
   // distance).  Floor-snapping (last snap <= date) is wrong here — it
   // can skip a month-end rally if the user picks a mid-month date.
-  // Using nearest is at most ~15 days off for a monthly cadence and
+  // Using nearest is at most ~8 days off for a semimonthly cadence and
   // lets the user validate against brokerage statements whose exact
   // end date won't coincide with our snapshot dates.
   function nearestIdx(requested) {

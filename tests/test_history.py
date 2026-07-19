@@ -417,3 +417,29 @@ def test_history_intra_group_rebase_matches_basis_walker(stub_prices):
     holdings = state_to_holdings(fifo, "fifo")
     assert sum(h["cost_basis"] for h in holdings) == pytest.approx(
         snap_noncash, abs=0.02)
+
+
+def test_sample_dates_semimonthly_preserves_eom_boundaries():
+    """Semimonthly = the monthly EOM set with mid-month (15th) points
+    inserted between.  EOM preservation is a hard contract: monthly_pnl's
+    latest-in-month picker and annual returns' year boundaries assume
+    the same month-end dates the monthly cadence produced.
+    """
+    from src.history import _sample_dates
+
+    monthly = _sample_dates("2024-01-10", "2024-04-20", "month")
+    semi    = _sample_dates("2024-01-10", "2024-04-20", "semimonthly")
+
+    # Every monthly sample survives unchanged (incl. leap-year Feb 29).
+    assert set(monthly) <= set(semi)
+    assert "2024-02-29" in semi
+    # Mid-month points appear for each month inside the range.
+    assert {"2024-01-15", "2024-02-15", "2024-03-15", "2024-04-15"} <= set(semi)
+    assert len(semi) == len(monthly) + 4
+    # Sorted, ends at `last`, no duplicates.
+    assert semi == sorted(semi)
+    assert semi[-1] == "2024-04-20"
+    assert len(semi) == len(set(semi))
+    # Range boundaries are respected: a 15th before `first` is excluded.
+    late_start = _sample_dates("2024-01-16", "2024-02-20", "semimonthly")
+    assert "2024-01-15" not in late_start

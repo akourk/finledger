@@ -5,9 +5,12 @@ Walks the transaction log chronologically, maintains running balances per
 prices from the cache to compute portfolio value broken down by account
 group, account type, and sector.
 
-Default cadence is monthly end-of-month snapshots plus today.  Daily data
-is available in the price cache if you want to switch cadence — the JSON
-stays small either way.
+Default cadence is semimonthly (the 15th + last day of each month) plus
+today.  EOM dates match the older monthly cadence exactly, so
+latest-in-month consumers see the same month boundaries; the mid-month
+samples add chart / drawdown / TWR resolution.  Daily data is available
+in the price cache if you want to switch cadence — sampling density and
+fetch cost are decoupled (the cache stores every trading day either way).
 """
 
 from collections import defaultdict
@@ -44,20 +47,30 @@ def _sample_dates(first: str, last: str, cadence: str) -> list[str]:
     """Return the list of sample dates in [first, last].
 
     `cadence`:
-      - "month" → last calendar day of each month, plus `last`
+      - "month"       → last calendar day of each month, plus `last`
+      - "semimonthly" → 15th AND last calendar day of each month, plus
+                        `last`.  EOM dates are identical to the "month"
+                        cadence — latest-in-month consumers (monthly_pnl's
+                        year×month grid, annual returns' year boundaries)
+                        see exactly the same month-end boundaries; the
+                        mid-month points only add resolution in between.
       - "week"  → every 7 days from `first`, plus `last`
       - "day"   → every day (can be large; use sparingly)
     """
     start = datetime.strptime(first, "%Y-%m-%d").date()
     end   = datetime.strptime(last,  "%Y-%m-%d").date()
     out: list[str] = []
-    if cadence == "month":
+    if cadence in ("month", "semimonthly"):
         cur = date(start.year, start.month, 1)
         while cur <= end:
             if cur.month == 12:
                 eom = date(cur.year, 12, 31)
             else:
                 eom = date(cur.year, cur.month + 1, 1) - timedelta(days=1)
+            if cadence == "semimonthly":
+                mid = date(cur.year, cur.month, 15)
+                if start <= mid <= end:
+                    out.append(mid.isoformat())
             if start <= eom <= end:
                 out.append(eom.isoformat())
             if cur.month == 12:
@@ -163,7 +176,7 @@ def _compute_benchmark_series(txns: list[dict], samples: list[str],
 def compute_history(txns: list[dict],
                     sector_of: dict[str, str],
                     *,
-                    cadence: str = "month",
+                    cadence: str = "semimonthly",
                     account_methods: dict[str, str] | None = None,
                     disposal_lots: dict | None = None) -> list[dict]:
     """Build the portfolio value time series.
