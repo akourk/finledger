@@ -29,7 +29,22 @@ fi
 [ -f "$denylist" ] || exit 0
 
 # Staged ADDED lines only (new content being introduced).
-added=$(git diff --cached --diff-filter=ACM -U0 | grep '^+' | grep -v '^+++')
+#
+# Machine-generated market-data caches are excluded from the scan:
+# they contain exclusively yfinance output (dates, closes, split
+# ratios, dividend amounts) — user data cannot appear in them by
+# construction, and rounded public prices collide with short numeric
+# denylist tokens by the birthday paradox (231 symbols × ~2000 daily
+# closes at 6 significant digits minted exact matches for two
+# denylisted figures the first time the sharded cache was committed).
+# Every other path — exports, tests, docs, source — is still scanned
+# with the full denylist.
+added=$(git diff --cached --diff-filter=ACM -U0 -- . \
+          ':(exclude)cache/prices/*' \
+          ':(exclude)cache/price_cache.json' \
+          ':(exclude)cache/dividends_cache.json' \
+          ':(exclude)cache/splits_cache.json' \
+        | grep '^+' | grep -v '^+++')
 [ -n "$added" ] || exit 0
 
 blocked=0
