@@ -706,3 +706,46 @@ def test_history_mirrors_reservation_and_move_noop(stub_prices):
     eth = [h for h in holdings if h["symbol"] == "ETH-USD"]
     assert eth[0]["cost_basis"] == pytest.approx(200.0)
 
+
+
+def test_1099_sections_self_describe_without_sentinel(tmp_path):
+    """The multi-section 1099 needs NO known column names: the first row
+    of each column-0 form-tag run IS that section's header (user-
+    confirmed format rule).  A section whose header lacks the
+    'ACCOUNT NUMBER' sentinel — and whose columns differ from the
+    fixture guesses — must still parse."""
+    (tmp_path / "robinhood-1099-2025.csv").write_text(
+        # 1099-DIV header row deliberately without ACCOUNT NUMBER in
+        # col 1, with reordered columns.
+        "1099-DIV,TAX YEAR,SOMETHING ELSE,ORDINARY DIV\n"
+        "1099-DIV,2025,x,10.50\n"
+        "1099-DIV,2025,y,2.25\n"
+        # 1099-INT section with its own unrelated layout.
+        "1099-INT,TAX YEAR,PAYER,STATE,INT INCOME\n"
+        "1099-INT,2025,RH,WA,5.00\n",
+        encoding="utf-8")
+    from src.broker_lots import (load_robinhood_1099_income,
+                                 robinhood_1099_tax_year)
+    assert robinhood_1099_tax_year(tmp_path / "robinhood-1099-2025.csv") == "2025"
+    rows = load_robinhood_1099_income(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["date"] == "2025"
+    assert rows[0]["amount"] == 17.75   # 10.50 + 2.25 + 5.00
+
+
+def test_1099_repeated_mid_run_header_refreshes(tmp_path):
+    """A repeated header inside a tag run (col 1 == ACCOUNT NUMBER, e.g.
+    per-account re-emission) refreshes the column map instead of being
+    summed as data."""
+    (tmp_path / "robinhood-1099-2024.csv").write_text(
+        "1099-DIV,ACCOUNT NUMBER,TAX YEAR,ORDINARY DIV\n"
+        "1099-DIV,111,2024,1.00\n"
+        "1099-INT,ACCOUNT NUMBER,TAX YEAR,INT INCOME\n"
+        "1099-INT,111,2024,3.00\n"
+        "1099-INT,ACCOUNT NUMBER,TAX YEAR,INT INCOME\n"
+        "1099-INT,222,2024,4.00\n",
+        encoding="utf-8")
+    from src.broker_lots import load_robinhood_1099_income
+    rows = load_robinhood_1099_income(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["amount"] == 8.00   # 1.00 DIV + 3.00 + 4.00 INT

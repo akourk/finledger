@@ -184,8 +184,9 @@ def _parse_gainloss(path: Path) -> list[dict]:
 # Robinhood consolidated 1099 — 1099-B per-lot disposals (STOCK lot relief)
 # ---------------------------------------------------------------------------
 # The yearly consolidated 1099 CSV is multi-section: column 0 tags each row's
-# form (1099-DIV / 1099-INT / 1099-B / 1099-MISC) and each section carries its
-# own header row (col 1 == "ACCOUNT NUMBER").  The 1099-B section is the
+# form (1099-DIV / 1099-INT / 1099-B / 1099-MISC).  Reading top-down, the
+# FIRST row of each new column-0 tag run is that section's header; the rest
+# of the run is data (see _iter_1099_rows).  The 1099-B section is the
 # per-lot capital-gains detail — one row per tax lot a sale consumed:
 # DATE ACQUIRED, SALE DATE, DESCRIPTION, SHARES, COST BASIS, SALES PRICE, TERM.
 #
@@ -212,6 +213,37 @@ def _is_robinhood_1099_file(path: Path) -> bool:
     return "1099-div" in head or ("date acquired" in head and "sale date" in head)
 
 
+def _iter_1099_rows(rows):
+    """Yield ``(form_tag, cols, row)`` for each DATA row of a
+    multi-section consolidated 1099.
+
+    Section rule (the file format is self-describing): reading top-down,
+    the FIRST row whose column-0 form tag differs from the previous
+    form-tagged row starts a new section, and that row IS the section's
+    header; the following rows carrying the same tag are its data.  No
+    column name needs to be known in advance.  A mid-run row whose
+    column 1 reads "ACCOUNT NUMBER" additionally refreshes the header
+    map (defensive — some exports repeat headers per account).
+
+    ``cols`` maps the section's lower-cased column names to indices.
+    Rows whose column 0 is not a known form tag (preamble, blanks,
+    summary lines) are skipped without breaking the current run.
+    """
+    cols_by_form: dict[str, dict[str, int]] = {}
+    last_tag: str | None = None
+    for r in rows:
+        if not r or r[0] not in _1099_FORMS:
+            continue
+        tag = r[0]
+        is_header = (tag != last_tag) or (
+            len(r) > 1 and r[1].strip().upper() == "ACCOUNT NUMBER")
+        last_tag = tag
+        if is_header:
+            cols_by_form[tag] = {c.strip().lower(): i for i, c in enumerate(r)}
+            continue
+        yield tag, cols_by_form[tag], r
+
+
 def robinhood_1099_tax_year(path: Path) -> str | None:
     """Tax year of a consolidated 1099 — from the first data row's
     TAX YEAR column (every section carries one).  Used by the scanner's
@@ -220,16 +252,7 @@ def robinhood_1099_tax_year(path: Path) -> str | None:
     Returns None when the file has no parsable year."""
     try:
         with open(path, newline="", encoding="utf-8-sig") as f:
-            cols: dict[str, int] | None = None
-            for r in csv.reader(f):
-                if not r or r[0] not in _1099_FORMS:
-                    continue
-                if len(r) > 1 and r[1].strip().upper() == "ACCOUNT NUMBER":
-                    # Section header — (re)learn column positions.
-                    cols = {c.strip().lower(): i for i, c in enumerate(r)}
-                    continue
-                if cols is None:
-                    continue
+            for _tag, cols, r in _iter_1099_rows(csv.reader(f)):
                 i = cols.get("tax year")
                 if i is None or i >= len(r):
                     continue
@@ -243,26 +266,17 @@ def robinhood_1099_tax_year(path: Path) -> str | None:
 
 def _parse_1099b_rows(path: Path) -> list[dict]:
     """Section-aware parse of one consolidated 1099: yield one dict per
-    1099-B DATA row.  Tracks the 1099-B header's column positions (a
-    header row is the one whose column 1 is the literal "ACCOUNT NUMBER")
-    so the section boundaries are handled exactly as the user described —
-    switch on the column-0 form tag."""
+    1099-B DATA row.  Section boundaries follow the format's own rule
+    (see ``_iter_1099_rows``): the first row of each column-0 form-tag
+    run is that section's header."""
     try:
         with open(path, newline="", encoding="utf-8-sig") as f:
             rows = list(csv.reader(f))
     except OSError:
         return []
-    bcols = None
     out: list[dict] = []
-    for r in rows:
-        if not r or r[0] not in _1099_FORMS:
-            continue
-        if r[0] != "1099-B":
-            continue
-        if len(r) > 1 and r[1].strip().upper() == "ACCOUNT NUMBER":
-            bcols = {c.strip().lower(): i for i, c in enumerate(r)}
-            continue
-        if bcols is None:
+    for tag, bcols, r in _iter_1099_rows(rows):
+        if tag != "1099-B":
             continue
 
         def g(name: str) -> str:
@@ -392,24 +406,17 @@ def load_robinhood_1099_income(data_dir: Path) -> list[dict]:
                 rows = list(csv.reader(f))
         except OSError:
             continue
-        # Per-section header column maps, keyed by the form tag in
-        # column 0 (each data row carries its own tag, so a map lookup
-        # by tag is robust to section ordering).
-        cols_by_form: dict[str, dict[str, int]] = {}
+        # Section headers are self-describing (see _iter_1099_rows), so
+        # the box-1a / box-1 columns are looked up by name in whatever
+        # header each section actually carries.
         want = {"1099-DIV": "ordinary div", "1099-INT": "int income"}
         total = 0.0
         found_col = False
-        for r in rows:
-            if not r or r[0] not in _1099_FORMS:
-                continue
-            if len(r) > 1 and r[1].strip().upper() == "ACCOUNT NUMBER":
-                cols_by_form[r[0]] = {c.strip().lower(): i
-                                      for i, c in enumerate(r)}
-                continue
-            col = want.get(r[0])
+        for tag, cols, r in _iter_1099_rows(rows):
+            col = want.get(tag)
             if col is None:
                 continue
-            i = cols_by_form.get(r[0], {}).get(col)
+            i = cols.get(col)
             if i is None or i >= len(r):
                 continue
             found_col = True

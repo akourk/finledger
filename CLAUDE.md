@@ -945,8 +945,10 @@ threads through every consumer.
   not a bug.  **Robinhood** consolidated 1099
   CSVs (`robinhood-1099-{year}.csv`, scanner-`skip`) feed the same
   disposal-lot mechanism via `load_robinhood_1099_lots(data_dir, txns)`:
-  a section-aware parse of the multi-section 1099 (switch on the
-  column-0 form tag; header row = col1 == "ACCOUNT NUMBER") pulls the
+  a section-aware parse of the multi-section 1099 (the format is
+  self-describing: the FIRST row of each new column-0 form-tag run is
+  that section's header, the rest of the run is data — no column names
+  known in advance; `_iter_1099_rows`) pulls the
   1099-B per-lot rows, and each disposal is resolved to fin's Sell txn
   by (sale date, shares, proceeds) — the DESCRIPTION is a security
   NAME, not a ticker, so txn-matching sidesteps name→ticker resolution.
