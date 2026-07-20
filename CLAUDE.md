@@ -240,8 +240,12 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     - `lots` — per-lot open inventory for every Holdings position
       (`analytics/lots.py`): acquired date, qty, per-unit basis,
       value (options ×100 via `contract_multiplier`), unrealized,
-      days-held, LT-eligibility date, plus a per-position
-      `lt_relevant` flag (Taxable + non-option).  Sub-$1 lots fold
+      days-held, LT-eligibility date, a per-lot `origin` provenance
+      tag (`broker` = override/report-stamped basis, `fmv` = fin
+      estimated FMV, `reconstructed` = normal txn-derived — stamped
+      at push time in BOTH walkers, inert for all basis math,
+      rendered as the "src" badge in the Holdings lot table), plus a
+      per-position `lt_relevant` flag (Taxable + non-option).  Sub-$1 lots fold
       into one `micro` aggregate per position (real pools carry 100+
       reward-dust lots); position totals still include them, pinned
       to the Holdings table by the `lots_holdings_basis_parity`

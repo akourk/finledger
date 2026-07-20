@@ -17,13 +17,15 @@ Returned shape (``compute_open_lots``)::
           "cost_basis": float,        # incl. micro lots
           "lt_relevant": bool,        # Taxable + non-option — show ST/LT
           "lots": [
-            {"date": iso|"", "qty", "basis_per_share", "cost_basis",
+            {"date": iso|"", "origin": "broker"|"fmv"|"reconstructed",
+             "qty", "basis_per_share", "cost_basis",
              "price"|None, "value"|None, "unrealized_gain"|None,
              "unrealized_pct"|None, "days_held"|None,
              "lt_eligible_date"|None, "days_to_lt"|None,
              "is_long_term"|None},
             ...],                     # sorted by acquired date, undated last
-          "micro": {"count", "qty", "cost_basis", "value"|None} | None,
+          "micro": {"count", "qty", "cost_basis", "value"|None,
+                    "origin"} | None,   # origin "mixed" when folded lots differ
         },
         ...],                         # sorted (account_group, symbol)
       "total_lots": int,
@@ -140,6 +142,11 @@ def open_lot_rows(fifo_state: dict | None, prices: dict,
                 "account_group": acct,
                 "symbol": sym,
                 "date": open_iso,
+                # Basis provenance stamped by the walkers at push time:
+                # "broker" (override / report-stamped figure), "fmv"
+                # (fin estimated FMV — true basis invisible), or
+                # "reconstructed" (normal txn-derived).
+                "origin": lot.get("origin", "reconstructed"),
                 "qty": round(qty, 8),
                 "basis_per_share": round(basis_per, 4),
                 "cost_basis": round(cost_basis, 2),
@@ -200,11 +207,14 @@ def compute_open_lots(fifo_state: dict | None,
             m_val = sum(r["value"] for r in folded
                         if r["value"] is not None)
             any_val = any(r["value"] is not None for r in folded)
+            m_origins = {r.get("origin", "reconstructed") for r in folded}
             micro = {
                 "count": len(folded),
                 "qty": round(sum(r["qty"] for r in folded), 8),
                 "cost_basis": round(sum(r["cost_basis"] for r in folded), 2),
                 "value": round(m_val, 2) if any_val else None,
+                "origin": (m_origins.pop() if len(m_origins) == 1
+                           else "mixed"),
             }
 
         # Per-lot rows drop the grouping keys (redundant inside a

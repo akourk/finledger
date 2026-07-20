@@ -369,27 +369,33 @@ def compute_history(txns: list[dict],
         return _consume_lots_reserving(lots[key], qty_to_remove,
                                        _method_for(key[0]), reserved)
 
-    def _push(key, qty_add, basis_dollars, date):
+    def _push(key, qty_add, basis_dollars, date, origin="reconstructed"):
         if qty_add > 0:
             lots[key].append({
                 "date": date,
                 "qty": qty_add,
                 "basis_per_share": basis_dollars / qty_add,
+                "origin": origin,
             })
 
-    def _push_txn(key, t, qty_add, basis_dollars, date):
+    def _push_txn(key, t, qty_add, basis_dollars, date,
+                  origin="reconstructed"):
         """Multi-lot mirror of basis._push_txn_lots: when the txn
         carries a per-lot ``basis_override_lots`` breakdown (several
         broker-report rows grouped onto one fin txn), push one lot per
-        piece so per-unit flavors match the annotated walk exactly."""
+        piece so per-unit flavors match the annotated walk exactly.
+        Provenance mirrors basis.py too: any basis_override → "broker"."""
         pieces = t.get("basis_override_lots")
         if pieces and t.get("basis_override") is not None:
             for piece in pieces:
                 pq = float(piece.get("qty", 0) or 0)
                 if pq > 0:
-                    _push(key, pq, float(piece.get("basis", 0) or 0), date)
+                    _push(key, pq, float(piece.get("basis", 0) or 0), date,
+                          origin="broker")
             return
-        _push(key, qty_add, basis_dollars, date)
+        if t.get("basis_override") is not None:
+            origin = "broker"
+        _push(key, qty_add, basis_dollars, date, origin=origin)
 
     history: list[dict] = []
     for sample_date in samples:
@@ -460,7 +466,8 @@ def compute_history(txns: list[dict],
                 _push_txn(key, t, qty,
                           float(bo) if bo is not None
                           else (qty * p if p > 0 else 0.0),
-                          t.get("date", ""))
+                          t.get("date", ""),
+                          origin="reconstructed" if p > 0 else "fmv")
             elif effect == "remove":
                 _consume(key, qty,
                          hints=hints_for(_disposal_lots, acct, sym,
@@ -484,7 +491,8 @@ def compute_history(txns: list[dict],
                     bo = t.get("basis_override")
                     basis = (float(bo) if bo is not None
                              else (qty * p if p > 0 else 0.0))
-                    _push_txn(key, t, qty, basis, t.get("date", ""))
+                    _push_txn(key, t, qty, basis, t.get("date", ""),
+                              origin="fmv")
                 elif id(paired) in stashed_tout_lots:
                     for lot in stashed_tout_lots.pop(id(paired)):
                         lots[key].append(dict(lot))
@@ -540,7 +548,8 @@ def compute_history(txns: list[dict],
                             b = (float(bo) if bo is not None
                                  else (iq * px if px > 0 else 0.0))
                             _push_txn((acct, il.get("symbol", "")), il,
-                                      iq, b, il.get("date", ""))
+                                      iq, b, il.get("date", ""),
+                                      origin="fmv")
             elif effect == "split":
                 lq = lots[key]
                 old_total = sum(lot["qty"] for lot in lq)

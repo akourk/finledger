@@ -283,3 +283,70 @@ class TestIntraGroupRebase:
         holdings = state_to_holdings(state, "fifo")
         eth = [h for h in holdings if h["symbol"] == "ETH-USD"]
         assert eth[0]["cost_basis"] == pytest.approx(500.0)
+
+
+class TestLotProvenance:
+    """Lots carry an inert `origin` field stamped at push time:
+    "broker" (basis_override / report-stamped), "fmv" (fin estimated
+    FMV), "reconstructed" (normal txn-derived).  Carried lots preserve
+    it through transfers and wraps."""
+
+    def _origins(self, state, key):
+        return [l.get("origin") for l in state["lots"][key]]
+
+    def test_buy_is_reconstructed_override_is_broker(self, isolated_workdir):
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "AAPL", "Buy", 1, 100.0, 100.0),
+            ("2024-02-01", "Robinhood", "AAPL", "Buy", 1, 120.0, 120.0),
+        )
+        txns[1]["basis_override"] = 90.0
+        state = compute_basis_default(txns)
+        assert self._origins(state, ("Robinhood", "AAPL")) == [
+            "reconstructed", "broker"]
+
+    def test_unpaired_transfer_in_is_fmv(self, isolated_workdir):
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Coinbase", "ETH-USD", "Transfer In",
+             1, 2000.0, 0.0),
+        )
+        state = compute_basis_default(txns)
+        assert self._origins(state, ("Coinbase", "ETH-USD")) == ["fmv"]
+
+    def test_zero_basis_priceless_is_fmv_priced_is_reconstructed(
+            self, isolated_workdir):
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Coinbase", "ETH-USD", "Reward",
+             0.5, 2000.0, 1000.0),
+            ("2024-02-01", "Coinbase", "ETH-USD", "Reward", 0.1, 0.0, 0.0),
+        )
+        state = compute_basis_default(txns)
+        assert self._origins(state, ("Coinbase", "ETH-USD")) == [
+            "reconstructed", "fmv"]
+
+    def test_origin_survives_cross_group_transfer(self, isolated_workdir):
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "AAPL", "Buy", 1, 100.0, 100.0),
+            ("2024-03-01", "Robinhood", "AAPL", "Transfer Out",
+             1, 0.0, 0.0),
+            ("2024-03-01", "Roth IRA", "AAPL", "Transfer In", 1, 0.0, 0.0),
+        )
+        txns[0]["basis_override"] = 95.0     # broker-stamped source lot
+        state = compute_basis_default(txns)
+        assert self._origins(state, ("Roth IRA", "AAPL")) == ["broker"]
+
+    def test_origin_survives_wrap(self, isolated_workdir):
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Coinbase", "ETH-USD", "Buy", 2, 2000.0, 4000.0),
+            ("2024-02-01", "Coinbase", "ETH-USD", "Wrap Asset Out",
+             2, 0.0, 0.0),
+            ("2024-02-01", "Coinbase", "CBETH-USD", "Wrap Asset In",
+             1.9, 0.0, 0.0),
+        )
+        state = compute_basis_default(txns)
+        assert self._origins(state, ("Coinbase", "CBETH-USD")) == [
+            "reconstructed"]

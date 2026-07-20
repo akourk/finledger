@@ -2569,6 +2569,26 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Basis-provenance badge (src column of the per-lot table) */
+  .lot-origin {
+    font-size: 0.72rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: rgba(119, 119, 119, 0.15);
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .lot-origin-broker {
+    background: rgba(74, 222, 128, 0.14);
+    color: var(--green);
+  }
+
+  .lot-origin-fmv {
+    background: rgba(250, 204, 21, 0.14);
+    color: var(--yellow);
+  }
+
   /* ========== Mobile responsive (≤720px) ========== */
   @media (max-width: 720px) {
     body {

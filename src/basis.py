@@ -325,6 +325,7 @@ def _rescale_lots(carried: list[dict], target_qty: float) -> list[dict]:
         "date": l["date"],
         "qty": l["qty"] * ratio,
         "basis_per_share": l["basis_per_share"] / ratio,
+        "origin": l.get("origin", "reconstructed"),
     } for l in carried]
 
 
@@ -372,6 +373,7 @@ def _consume_lots(lots: list[dict], qty_to_remove: float, method: str) -> tuple[
             "date": lot["date"],
             "qty": take,
             "basis_per_share": lot["basis_per_share"],
+            "origin": lot.get("origin", "reconstructed"),
         })
         lot["qty"] -= take
         remaining -= take
@@ -435,6 +437,7 @@ def _consume_lots_capped(lots: list[dict], qty_to_remove: float, method: str,
             "date": lot["date"],
             "qty": take,
             "basis_per_share": lot["basis_per_share"],
+            "origin": lot.get("origin", "reconstructed"),
         })
         lot["qty"] -= take
         remaining -= take
@@ -623,7 +626,8 @@ def _consume_lots_directed(lots: list[dict], qty_to_remove: float,
             take = min(want, lot["qty"])
             basis_removed += take * lot["basis_per_share"]
             carried.append({"date": lot.get("date", ""), "qty": take,
-                            "basis_per_share": lot["basis_per_share"]})
+                            "basis_per_share": lot["basis_per_share"],
+                            "origin": lot.get("origin", "reconstructed")})
             lot["qty"] -= take
             if lot["qty"] <= 1e-12:
                 lots.pop(idx)
@@ -722,7 +726,14 @@ def _rebase_is_move(consumed: float, override_total: float) -> bool:
     return abs(consumed - override_total) <= max(5.0, abs(override_total) * 0.005)
 
 
-def _push_lot(state: dict, method: str, key: tuple, qty: float, basis_dollars: float, date: str) -> None:
+def _push_lot(state: dict, method: str, key: tuple, qty: float,
+              basis_dollars: float, date: str,
+              origin: str = "reconstructed") -> None:
+    """``origin`` is provenance metadata carried on the lot dict —
+    "broker" (basis_override / report-stamped), "fmv" (fin estimated
+    FMV because the true basis is invisible), or "reconstructed"
+    (normal txn-derived basis).  Inert for all basis math; surfaced in
+    the Holdings per-lot view."""
     if qty <= 0:
         return
     if method == "avg":
@@ -732,11 +743,13 @@ def _push_lot(state: dict, method: str, key: tuple, qty: float, basis_dollars: f
             "date": date,
             "qty": qty,
             "basis_per_share": basis_dollars / qty,
+            "origin": origin,
         })
 
 
 def _push_txn_lots(state: dict, method: str, key: tuple, t: dict,
-                   qty: float, total_basis: float, date: str) -> None:
+                   qty: float, total_basis: float, date: str,
+                   origin: str = "reconstructed") -> None:
     """Push the lot(s) created by txn ``t``.
 
     When the txn carries a ``basis_override_lots`` breakdown (several
@@ -757,9 +770,14 @@ def _push_txn_lots(state: dict, method: str, key: tuple, t: dict,
             pq = float(p.get("qty", 0) or 0)
             if pq > 0:
                 _push_lot(state, method, key, pq,
-                          float(p.get("basis", 0) or 0), date)
+                          float(p.get("basis", 0) or 0), date,
+                          origin="broker")
         return
-    _push_lot(state, method, key, qty, total_basis, date)
+    # A user / report basis_override means the figure came from the
+    # broker, whatever branch pushed it.
+    if t.get("basis_override") is not None:
+        origin = "broker"
+    _push_lot(state, method, key, qty, total_basis, date, origin=origin)
 
 
 def _push_carried_lots(state: dict, method: str, key: tuple, carried: list[dict]) -> float:
@@ -774,6 +792,7 @@ def _push_carried_lots(state: dict, method: str, key: tuple, carried: list[dict]
                 "date": lot.get("date", ""),
                 "qty":  lot["qty"],
                 "basis_per_share": lot["basis_per_share"],
+                "origin": lot.get("origin", "reconstructed"),
             })
     return total
 
@@ -956,7 +975,8 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             price = float(t.get("price", 0) or 0)
             basis = _ov(t, qty * price if price > 0 else 0.0)
             _push_txn_lots(state, method, key, t, qty, basis,
-                           t.get("date", ""))
+                           t.get("date", ""),
+                           origin="reconstructed" if price > 0 else "fmv")
             if qty > 0:
                 cost_basis_value = basis
 
@@ -1053,7 +1073,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 price = float(t.get("price", 0) or 0)
                 basis = _ov(t, qty * price if price > 0 else 0.0)
                 _push_txn_lots(state, method, key, t, qty, basis,
-                               t.get("date", ""))
+                               t.get("date", ""), origin="fmv")
                 cost_basis_value = basis
             elif id(paired) in stashed_tout_lots:
                 carried = stashed_tout_lots.pop(id(paired))
@@ -1141,7 +1161,8 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                         b = _ov(il, iq * px if px > 0 else 0.0)
                         _push_txn_lots(state, method,
                                        (acct, il.get("symbol", "")),
-                                       il, iq, b, il.get("date", ""))
+                                       il, iq, b, il.get("date", ""),
+                                       origin="fmv")
                         wrap_leg_ann[id(il)] = ("wrap_in_unpaired", b, None)
             ann = wrap_leg_ann.get(id(t))
             if ann:

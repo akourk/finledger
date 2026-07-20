@@ -609,6 +609,14 @@ function lotTermCell(p, l) {
   return `<span${imminent ? ' style="color:var(--yellow);"' : ''} title="Long-term on ${l.lt_eligible_date}">${l.days_to_lt}d → LT</span>`;
 }
 
+function lotOriginCell(origin) {
+  const o = origin || 'reconstructed';
+  if (o === 'broker') return '<span class="lot-origin lot-origin-broker" title="Basis is a broker-reported figure (Cost Basis override, gain/loss report, RAWTX or 1099 stamping)">broker</span>';
+  if (o === 'fmv') return '<span class="lot-origin lot-origin-fmv" title="Basis estimated at fair market value — the true acquisition cost is not visible to fin (e.g. asset received from an external wallet)">FMV est</span>';
+  if (o === 'mixed') return '<span class="lot-origin" title="Folded micro lots have differing basis sources">mixed</span>';
+  return '<span class="lot-origin" title="Basis reconstructed from the transaction history">txn</span>';
+}
+
 function lotDetailHtml(p, colspan) {
   const fmtQty = q => q.toLocaleString(undefined, { maximumFractionDigits: 8 });
   const rows = (p.lots || []).map(l => `<tr>
@@ -621,6 +629,7 @@ function lotDetailHtml(p, colspan) {
       <td class="num">${l.unrealized_pct != null ? fmtPct(l.unrealized_pct) : '—'}</td>
       <td class="num">${l.days_held != null ? l.days_held + 'd' : '—'}</td>
       <td>${lotTermCell(p, l)}</td>
+      <td>${lotOriginCell(l.origin)}</td>
     </tr>`);
   if (p.micro) {
     rows.push(`<tr>
@@ -630,6 +639,7 @@ function lotDetailHtml(p, colspan) {
       <td class="num" style="color:var(--text-dim);">${fmtMoney(p.micro.cost_basis)}</td>
       <td class="num" style="color:var(--text-dim);">${p.micro.value != null ? fmtMoney(p.micro.value) : '—'}</td>
       <td colspan="4"></td>
+      <td>${lotOriginCell(p.micro.origin)}</td>
     </tr>`);
   }
   return `<tr class="lot-detail"><td colspan="${colspan}">
@@ -639,7 +649,7 @@ function lotDetailHtml(p, colspan) {
           <th>acquired</th><th class="num">qty</th><th class="num">basis/share</th>
           <th class="num">cost basis</th><th class="num">value</th>
           <th class="num">unrealized</th><th class="num">%</th>
-          <th class="num">held</th><th>term</th>
+          <th class="num">held</th><th>term</th><th>src</th>
         </tr></thead>
         <tbody>${rows.join('')}</tbody>
       </table>

@@ -311,3 +311,34 @@ def test_harvest_lots_threshold_and_empty(isolated_workdir):
     # -$5 total loss: below the $10 floor.
     assert _compute_harvest_lots(state, holdings, txns=[]) == []
     assert _compute_harvest_lots(None, holdings, txns=[]) == []
+
+
+def test_open_lots_surface_origin_and_mixed_micro(isolated_workdir):
+    """Per-lot `origin` provenance flows through to the export; folded
+    micro lots aggregate to a single origin, or "mixed" when they
+    differ.  Lots without the field (older state) default to
+    "reconstructed"."""
+    from src.analytics.lots import compute_open_lots
+    state = {"lots": {
+        ("Broker", "AAA"): [
+            {"date": "2023-05-01", "qty": 2.0, "basis_per_share": 100.0,
+             "origin": "broker"},
+            {"date": "2024-01-01", "qty": 1.0, "basis_per_share": 50.0,
+             "origin": "fmv"},
+            {"date": "2022-01-01", "qty": 1.0, "basis_per_share": 60.0},
+            # Two micro (sub-$1 value) lots with differing origins.
+            {"date": "2024-02-01", "qty": 0.001, "basis_per_share": 100.0,
+             "origin": "broker"},
+            {"date": "2024-03-01", "qty": 0.001, "basis_per_share": 100.0,
+             "origin": "reconstructed"},
+        ],
+    }}
+    holdings = [_holding("Broker", "AAA", 120.0, 310.2)]
+    out = compute_open_lots(state, holdings)
+    p = out["positions"][0]
+    by_date = {l["date"]: l for l in p["lots"]}
+    assert by_date["2023-05-01"]["origin"] == "broker"
+    assert by_date["2024-01-01"]["origin"] == "fmv"
+    assert by_date["2022-01-01"]["origin"] == "reconstructed"   # default
+    assert p["micro"]["count"] == 2
+    assert p["micro"]["origin"] == "mixed"
