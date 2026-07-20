@@ -692,3 +692,39 @@ class TestOptionIntrinsicFloor:
         by_date = {h["date"]: h for h in history}
         # EOM 2026-01-31: premium 20 → floored at intrinsic 200 → ×100
         assert by_date["2026-01-31"]["total"] == pytest.approx(20000.0)
+
+
+class TestOptionIntrinsicSplitBasis:
+    """The strike is written in the as-of-trade share basis; the cached
+    underlying close is today-basis.  option_intrinsic must scale the
+    price back before comparing — the regression here showed a $2.50
+    ACB call (pre-reverse-split basis) at $500k+ on a 2019 snapshot."""
+
+    def test_reverse_split_does_not_inflate_calls(self, isolated_workdir):
+        from src.prices import _load_prices, _load_splits, option_intrinsic
+        # As-traded 2019 close $2.19; after 1:12 then 1:10 reverse
+        # splits the today-basis cached close is 2.19 × 120 = 262.80.
+        _load_prices()["ACB"] = {"2019-12-31": 262.80}
+        _load_splits()["ACB"] = [["2020-05-11", 1 / 12], ["2024-02-20", 0.1]]
+        call = "ACB 1/17/2020 Call $2.50"
+        # As-traded 2.19 < 2.50 strike -> OTM, intrinsic 0.
+        assert option_intrinsic(call, "2019-12-31") == 0.0
+        put = "ACB 1/17/2020 Put $2.50"
+        assert option_intrinsic(put, "2019-12-31") == pytest.approx(0.31)
+
+    def test_forward_split_does_not_inflate_puts(self, isolated_workdir):
+        from src.prices import _load_prices, _load_splits, option_intrinsic
+        # As-traded 2019 close $430; after 5:1 and 3:1 forward splits
+        # the today-basis cached close is 430 / 15 = 28.6667.
+        _load_prices()["TSLA"] = {"2019-12-31": 28.6667}
+        _load_splits()["TSLA"] = [["2020-08-31", 5.0], ["2022-08-25", 3.0]]
+        put = "TSLA 1/17/2020 Put $400.00"
+        assert option_intrinsic(put, "2019-12-31") == 0.0
+        call = "TSLA 1/17/2020 Call $400.00"
+        assert option_intrinsic(call, "2019-12-31") == pytest.approx(30.0, abs=0.01)
+
+    def test_no_later_splits_unchanged(self, isolated_workdir):
+        from src.prices import _load_prices, option_intrinsic
+        _load_prices()["META"] = {"2026-07-17": 850.0}
+        assert option_intrinsic("META 12/18/2026 Call $800.00",
+                                "2026-07-17") == pytest.approx(50.0)

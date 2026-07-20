@@ -1083,6 +1083,17 @@ def option_intrinsic(symbol: str, on_date) -> float | None:
 
     Returns ``None`` when the symbol isn't a parsable option contract
     or the underlying has no cached price for the date.
+
+    SPLIT BASIS: the cached close is split-adjusted to TODAY's share
+    basis, but the strike is written in the AS-OF-TRADE basis — the
+    comparison must happen in the strike's basis, so the price is
+    scaled back by ``split_factor_since`` (actual as-traded price =
+    adjusted × factor; 1.0 for dates with no later splits, i.e. every
+    "today" lookup).  Without this, an underlying that later
+    reverse-split values historical CALLS at phantom hundreds per
+    share (adjusted price ≫ old-basis strike), and forward splits do
+    the same to PUTS — the bug class that showed a $2.50 ACB call at
+    $500k+ on a 2019 snapshot.
     """
     parsed = parse_option_symbol(symbol or "")
     if not parsed:
@@ -1090,6 +1101,7 @@ def option_intrinsic(symbol: str, on_date) -> float | None:
     s = get_price(parsed["underlying"], on_date)
     if s is None or s <= 0:
         return None
+    s *= split_factor_since(parsed["underlying"], on_date)
     if parsed["type"] == "Call":
         return max(0.0, s - parsed["strike"])
     return max(0.0, parsed["strike"] - s)
