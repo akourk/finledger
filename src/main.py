@@ -19,9 +19,11 @@ from .history import compute_history
 from .normalize import normalize_action
 from .parsers import parse_all_files
 from .prices import (
+    apply_option_intrinsic_floor,
     build_display_map,
     ensure_coverage, ensure_proxy_anchors,
     fetch_latest_close_batch, get_price,
+    option_underlyings,
     revalidate_stale_caches,
     save_caches as save_price_cache,
 )
@@ -229,7 +231,10 @@ def _refresh_prices_only(args) -> None:
     # refresh-prices mode assumes the prior full pipeline already
     # filled in the historical cache.
     _BENCHMARK_SYMBOLS = ("SPY", "BND", "VXUS")
-    refresh_set = sorted(set(held_symbols) | set(_BENCHMARK_SYMBOLS))
+    # Option underlyings ride along so the intrinsic-value floor below
+    # has a fresh underlying close to read.
+    refresh_set = sorted(set(held_symbols) | set(_BENCHMARK_SYMBOLS)
+                         | option_underlyings(held_symbols))
     print(f"Refreshing latest close for {len(refresh_set)} "
           f"held + benchmark symbol(s) (batched)...")
     ensure_proxy_anchors(txns, verbose=False)
@@ -246,6 +251,10 @@ def _refresh_prices_only(args) -> None:
         cached = get_price(sym, today_str)
         if cached is not None:
             last_prices[sym] = cached
+    # Open option contracts: floor the stale last-traded premium at
+    # intrinsic value from the underlying's cached price (see
+    # prices.option_intrinsic — yfinance can't price the contracts).
+    apply_option_intrinsic_floor(last_prices, held_symbols, today_str)
 
     # FIFO basis by (account, symbol) — derived from per-txn
     # basis_effect annotations on the loaded txns, so we don't re-walk.
@@ -704,6 +713,13 @@ def main():
     # prices._is_total_return_symbol.
     _BENCHMARK_SYMBOLS = ("SPY", "BND", "VXUS")
     all_symbols_ever.update(_BENCHMARK_SYMBOLS)
+    # Underlying tickers of option-contract symbols: the contracts
+    # themselves are unfetchable (multi-word), but the intrinsic-value
+    # floor (prices.option_intrinsic) needs the UNDERLYING's price
+    # series — including for underlyings the user never held directly.
+    # Full-range fetch is broader than the option's holding window but
+    # it batches with everything else and fetches once.
+    all_symbols_ever.update(option_underlyings(all_symbols_ever))
     earliest_date = min((t.get("date", "") for t in txns if t.get("date")),
                         default="")
     today_str = datetime.now().date().isoformat()
@@ -740,6 +756,10 @@ def main():
         cached = get_price(sym, today_str)
         if cached is not None:
             last_prices[sym] = cached
+    # Open option contracts: floor the stale last-traded premium at
+    # intrinsic value from the underlying's cached price (see
+    # prices.option_intrinsic — yfinance can't price the contracts).
+    apply_option_intrinsic_floor(last_prices, symbols_with_balance, today_str)
 
     # Cash principal per (account, USD) for Savings-type accounts —
     # basis = deposits − withdrawals so interest reads as unrealized

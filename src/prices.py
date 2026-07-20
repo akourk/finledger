@@ -60,8 +60,10 @@ day within a 7-day window.
 
 import json
 import math
+import re
 from bisect import bisect_right
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 
 from .config import CACHE_DIR, CRYPTO_SYMBOLS, SYMBOL_MAP
@@ -1026,6 +1028,103 @@ def split_factor_since(symbol: str, as_of_date) -> float:
 def split_adjust_qty(symbol: str, qty: float, as_of_date) -> float:
     """Convenience: apply `split_factor_since` to `qty`."""
     return qty * split_factor_since(symbol, as_of_date)
+
+
+# ---------------------------------------------------------------------------
+# Option contracts — symbol parse + intrinsic-value floor
+# ---------------------------------------------------------------------------
+
+_OPTION_SYM_RE = re.compile(
+    r"^(\S+)\s+(\d{1,2})/(\d{1,2})/(\d{4})\s+(Call|Put)\s+\$([\d,.]+)"
+)
+
+
+@lru_cache(maxsize=None)
+def parse_option_symbol(sym: str) -> dict | None:
+    """Parse ``"META 12/18/2026 Call $800.00"`` into components.
+
+    Returns ``None`` if the symbol doesn't match the Robinhood format.
+    Lives here (not analytics) so the pricing layer and both pipeline
+    paths can use it; ``analytics.options._parse_option_symbol`` is an
+    alias.  Cached — the distinct symbol set is small and the history
+    walkers call this per (day × symbol).  Callers must treat the
+    returned dict as read-only (it's the cache entry).
+    """
+    if not sym:
+        return None
+    m = _OPTION_SYM_RE.match(sym)
+    if not m:
+        return None
+    under, mo, d, y, kind, strike_raw = m.groups()
+    try:
+        strike = float(strike_raw.replace(",", ""))
+    except ValueError:
+        return None
+    return {
+        "underlying": under,
+        "expiry": f"{y}-{int(mo):02d}-{int(d):02d}",
+        "type": kind,
+        "strike": strike,
+    }
+
+
+def option_intrinsic(symbol: str, on_date) -> float | None:
+    """Per-share intrinsic value of an option contract on ``on_date``,
+    from the UNDERLYING's cached price: ``max(0, S − K)`` for calls,
+    ``max(0, K − S)`` for puts.
+
+    Used as a valuation FLOOR for open options: yfinance can't price
+    the contracts themselves, so fin values them at their last-traded
+    premium — which goes stale between trades and can wildly
+    undervalue a deep-ITM contract whose underlying has since moved.
+    Intrinsic tracks the underlying's cached close, so the floor stays
+    current even when the option hasn't traded in months.  Time value
+    is still not modeled (the floor only ever raises the price).
+
+    Returns ``None`` when the symbol isn't a parsable option contract
+    or the underlying has no cached price for the date.
+    """
+    parsed = parse_option_symbol(symbol or "")
+    if not parsed:
+        return None
+    s = get_price(parsed["underlying"], on_date)
+    if s is None or s <= 0:
+        return None
+    if parsed["type"] == "Call":
+        return max(0.0, s - parsed["strike"])
+    return max(0.0, parsed["strike"] - s)
+
+
+def option_underlyings(symbols) -> set[str]:
+    """Underlying tickers of any option-contract symbols in ``symbols``.
+    main.py adds these to the fetch set so the intrinsic floor has an
+    underlying price to read even when the user never held the
+    underlying directly."""
+    out: set[str] = set()
+    for sym in symbols:
+        p = parse_option_symbol(sym or "")
+        if p:
+            out.add(p["underlying"])
+    return out
+
+
+def apply_option_intrinsic_floor(last_prices: dict[str, float],
+                                 symbols, on_date) -> int:
+    """Floor each option symbol's entry in ``last_prices`` at its
+    intrinsic value on ``on_date``.  Only ever raises a price (an OTM
+    intrinsic of 0 never overwrites a real premium, and never creates
+    a 0 entry).  Returns the number of symbols floored.  Shared by
+    main() and the refresh path — the last_prices build is duplicated
+    across both."""
+    n = 0
+    for sym in symbols:
+        iv = option_intrinsic(sym, on_date)
+        if iv is None:
+            continue
+        if iv > (last_prices.get(sym) or 0):
+            last_prices[sym] = iv
+            n += 1
+    return n
 
 
 def _fetch_range(symbol: str, start: date, end: date) -> dict[str, float]:

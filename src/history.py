@@ -26,7 +26,7 @@ from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
                           reserved_future_demand, take_wrap_demand,
                           wrap_next_dates, wrap_symbol_families)
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS, contract_multiplier
-from .prices import get_price, split_factor_since
+from .prices import get_price, option_intrinsic, split_factor_since
 
 # Sourced from src/actions.py — single source of truth for the action
 # vocabulary, so any new canonical action lands here automatically.
@@ -590,6 +590,12 @@ def compute_history(txns: list[dict],
                     # so no split adjustment is needed on the balance side.
                     price = last_txn_price.get(sym)
                     adj_qty = qty
+                    # Open option contracts: the last-traded premium goes
+                    # stale between trades — floor at intrinsic value from
+                    # the underlying's cached price on this date.
+                    iv = option_intrinsic(sym, sample_date)
+                    if iv is not None and iv > (price or 0):
+                        price = iv
 
             # Dust filter — mirrors main.py _is_dust so history positions
             # exactly match the holdings table (no phantom sub-penny rows).
@@ -797,6 +803,10 @@ def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
                 else:
                     price = last_txn_price.get(sym)
                     adj_qty = qty
+                    # Same intrinsic floor as the snapshot walker.
+                    iv = option_intrinsic(sym, d_iso)
+                    if iv is not None and iv > (price or 0):
+                        price = iv
             if price and price > 0:
                 if abs(qty * price) < 0.01:
                     continue

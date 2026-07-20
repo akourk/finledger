@@ -564,7 +564,15 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   snapshots, 1-day change, daily P&L, basis-methods rows) scales
   options by 100 — basis is amount-based and needs no scaling.  Open
   options are valued at their last-traded premium (yfinance can't
-  price them), so their displayed value stays flat between trades.
+  price the contracts), FLOORED at intrinsic value from the
+  underlying's cached price (`prices.option_intrinsic`; applied in
+  both pipeline paths' `last_prices` and both history walkers'
+  fallback branches) — so a deep-ITM contract tracks its underlying
+  instead of staying flat between trades.  Time value is still not
+  modeled; the floor only ever raises the price.  Underlying tickers
+  of option symbols join the price-fetch set
+  (`prices.option_underlyings`) so the floor works even for
+  underlyings never held directly.
 - **Robinhood option exercises (OEXCS + OCC) are paired in the parser.**
   Robinhood writes the contract disposal and its cash proceeds as two
   rows: OEXCS ("1S" quantity = 1 contract, empty amount) and OCC

@@ -629,3 +629,66 @@ class TestShardedPriceCache:
         assert names[0] != "CON.json"
         prices.reset_caches()
         assert prices.get_price("CON", "2024-01-03") == 20.0
+
+
+class TestOptionIntrinsicFloor:
+    """Open options are floored at intrinsic value from the underlying's
+    cached price — a deep-ITM contract must track its underlying
+    instead of staying flat at a stale last-traded premium."""
+
+    def _seed_underlying(self, sym, prices_by_date):
+        from src.prices import _load_prices
+        _load_prices()[sym] = dict(prices_by_date)
+
+    def test_call_and_put_intrinsic(self, isolated_workdir):
+        from src.prices import option_intrinsic
+        self._seed_underlying("META", {"2026-07-17": 850.0})
+        call = "META 12/18/2026 Call $800.00"
+        put = "META 12/18/2026 Put $900.00"
+        otm_call = "META 12/18/2026 Call $1,000.00"
+        assert option_intrinsic(call, "2026-07-17") == pytest.approx(50.0)
+        assert option_intrinsic(put, "2026-07-17") == pytest.approx(50.0)
+        assert option_intrinsic(otm_call, "2026-07-17") == 0.0
+
+    def test_unparsable_or_unpriced_returns_none(self, isolated_workdir):
+        from src.prices import option_intrinsic
+        assert option_intrinsic("AAPL", "2026-07-17") is None
+        # Parsable option but underlying has no cached price.
+        assert option_intrinsic("ZZZQ 01/15/2027 Call $10.00",
+                                "2026-07-17") is None
+
+    def test_floor_only_raises(self, isolated_workdir):
+        from src.prices import apply_option_intrinsic_floor
+        self._seed_underlying("META", {"2026-07-17": 850.0})
+        deep_itm = "META 12/18/2026 Call $800.00"   # intrinsic 50
+        otm = "META 12/18/2026 Call $1,000.00"       # intrinsic 0
+        prices = {deep_itm: 12.50, otm: 3.25, "AAPL": 200.0}
+        n = apply_option_intrinsic_floor(
+            prices, [deep_itm, otm, "AAPL"], "2026-07-17")
+        assert n == 1
+        assert prices[deep_itm] == pytest.approx(50.0)   # raised
+        assert prices[otm] == pytest.approx(3.25)        # premium kept
+        assert prices["AAPL"] == pytest.approx(200.0)    # untouched
+
+    def test_history_fallback_uses_intrinsic_floor(self, stub_prices):
+        """Snapshot walker: an option position with a stale premium and
+        a risen underlying values at intrinsic × 100 × contracts."""
+        from src.history import compute_history
+
+        opt = "META 6/18/2027 Call $500.00"
+        stub_prices.set("META", {"2026-01-30": 700.0})
+        _populate_cache = None
+        from datetime import datetime
+        from src.prices import ensure_coverage
+        ensure_coverage(["META"], "2026-01-30", "2026-01-30")
+        txns = [_hist_txn := {
+            "date": "2026-01-15", "account": "Robinhood",
+            "account_group": "Robinhood", "account_type": "Taxable",
+            "symbol": opt, "action": "Option Buy", "raw_action": "BTO",
+            "quantity": 1.0, "price": 20.0, "fees": 0.0,
+            "amount": 2000.0, "description": "", "source": "manual.csv",
+        }]
+        history = compute_history(txns, {opt: "Options"})
+        by_date = {h["date"]: h for h in history}
+        # EOM 2026-01-31: premium 20 → floored at intrinsic 200 → ×100
+        assert by_date["2026-01-31"]["total"] == pytest.approx(20000.0)

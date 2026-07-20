@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -24,32 +24,10 @@ from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
 from ..prices import get_price, split_factor_since
 
 
-_OPTION_SYM_RE = re.compile(
-    r"^(\S+)\s+(\d{1,2})/(\d{1,2})/(\d{4})\s+(Call|Put)\s+\$([\d,.]+)"
-)
-
-
-def _parse_option_symbol(sym: str) -> dict | None:
-    """Parse ``"META 12/18/2026 Call $800.00"`` into components.
-
-    Returns ``None`` if the symbol doesn't match the Robinhood format.
-    """
-    if not sym:
-        return None
-    m = _OPTION_SYM_RE.match(sym)
-    if not m:
-        return None
-    under, mo, d, y, kind, strike_raw = m.groups()
-    try:
-        strike = float(strike_raw.replace(",", ""))
-    except ValueError:
-        return None
-    return {
-        "underlying": under,
-        "expiry": f"{y}-{int(mo):02d}-{int(d):02d}",
-        "type": kind,
-        "strike": strike,
-    }
+# Option-symbol parsing moved to src/prices.py (the pricing layer and
+# both pipeline paths need it for the intrinsic-value floor); this alias
+# keeps the analytics-side imports (tax.py, reconcile.py) working.
+from ..prices import parse_option_symbol as _parse_option_symbol  # noqa: E402
 
 
 def _is_option_symbol(sym: str) -> bool:
