@@ -703,3 +703,109 @@ def compute_history(txns: list[dict],
         })
 
     return history
+
+
+def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
+    """Daily total portfolio value from the first transaction through
+    today: ``[(YYYY-MM-DD, total), ...]`` for every calendar day.
+
+    A lightweight companion to ``compute_history`` for consumers that
+    need DAILY resolution of the TOTAL only — currently the drawdown
+    stats, where monthly/semimonthly sampling structurally understates
+    peak-to-trough depth.  No lots, no positions, no benchmarks, and the
+    result is never exported wholesale (~3k tuples stay in memory).
+
+    Valuation mirrors the snapshot walker exactly:
+      - balance walk skips USD outside Savings (matches main.py);
+        NEUTRAL actions are no-ops, SUBTRACT_ACTIONS subtract
+      - cache-priced: as-of-date qty × ``split_factor_since`` × close
+      - unpriceable: most recent txn price at or before the day
+        (no split adjustment — txn prices are as-of-trade)
+      - option contracts × ``contract_multiplier``
+      - dust filter mirrors main.py's ``_is_dust``
+      - Coinbase implicit USD bridge added ($1 threshold, negatives
+        clamp to 0 — same as the snapshot bridge)
+    """
+    if not txns:
+        return []
+    dated = [t for t in txns if t.get("date")]
+    if not dated:
+        return []
+
+    first = min(t["date"] for t in dated)
+    today = datetime.now().date().isoformat()
+    last = max(max(t["date"] for t in dated), today)
+
+    # Per-day txn buckets (end-of-day balances; intra-day order is
+    # irrelevant at daily resolution).
+    by_day: dict[str, list[dict]] = defaultdict(list)
+    for t in dated:
+        by_day[t["date"]].append(t)
+
+    # Coinbase implicit USD bridge, walked with a pointer.
+    from .coinbase_reconcile import usd_series as _cb_usd_series
+    cb_eod = _cb_usd_series(txns)
+    cb_idx = 0
+    cb_bal = 0.0
+
+    balances: dict[tuple[str, str], float] = defaultdict(float)
+    last_txn_price: dict[str, float] = {}
+
+    out: list[tuple[str, float]] = []
+    cur = datetime.strptime(first, "%Y-%m-%d").date()
+    end = datetime.strptime(last, "%Y-%m-%d").date()
+    while cur <= end:
+        d_iso = cur.isoformat()
+        for t in by_day.get(d_iso, ()):
+            acct = t.get("account_group", "")
+            sym = t.get("symbol", "")
+            p = float(t.get("price", 0) or 0)
+            if sym and p > 0:
+                last_txn_price[sym] = p
+            action = t.get("action", "")
+            qty = float(t.get("quantity", 0) or 0)
+            if sym in CASH_SYMBOLS and ACCOUNT_TYPES.get(acct) != "Savings":
+                continue
+            if action in _NEUTRAL_ACTIONS:
+                continue
+            if action in _SUBTRACT_ACTIONS:
+                balances[(acct, sym)] -= qty
+            else:
+                balances[(acct, sym)] += qty
+
+        while cb_idx < len(cb_eod) and cb_eod[cb_idx][0] <= d_iso:
+            cb_bal = cb_eod[cb_idx][1]
+            cb_idx += 1
+
+        total = 0.0
+        px_today: dict[str, float | None] = {}
+        for (acct, sym), qty in balances.items():
+            if abs(qty) < 1e-12:
+                continue
+            if sym in CASH_SYMBOLS:
+                price = 1.0
+                adj_qty = qty
+            else:
+                if sym in px_today:
+                    cache_px = px_today[sym]
+                else:
+                    cache_px = get_price(sym, d_iso)
+                    px_today[sym] = cache_px
+                if cache_px is not None:
+                    price = cache_px
+                    adj_qty = qty * split_factor_since(sym, d_iso)
+                else:
+                    price = last_txn_price.get(sym)
+                    adj_qty = qty
+            if price and price > 0:
+                if abs(qty * price) < 0.01:
+                    continue
+                total += adj_qty * price * contract_multiplier(sym)
+            # Unpriceable positions contribute nothing — same as the
+            # snapshot walker's priced_pct gap.
+
+        if cb_bal >= 1.0:
+            total += cb_bal
+        out.append((d_iso, round(total, 2)))
+        cur += timedelta(days=1)
+    return out

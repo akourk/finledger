@@ -53,6 +53,15 @@ from .trading_heatmap import compute_trading_heatmap
 from ._shared import _account_filter_sets
 
 
+def _daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
+    """Daily total-value series for the drawdown stats' resolution —
+    see ``history.compute_daily_totals``.  Late import: analytics
+    modules are also imported standalone in tests, and the history
+    module pulls in the whole basis/broker_lots machinery."""
+    from ..history import compute_daily_totals
+    return compute_daily_totals(txns)
+
+
 def build_analytics(txns: list[dict], history: list[dict],
                     holdings: list[dict],
                     holdings_by_account: list[dict],
@@ -318,7 +327,11 @@ def build_analytics(txns: list[dict], history: list[dict],
         # drawdown + monthly_pnl take the rollover bridges so an
         # in-flight custodial transfer (e.g. Voya→Schwab, weeks of $0
         # account value) doesn't read as a real crash / red month.
-        "drawdown":        compute_drawdown(history, bridges),
+        # daily_totals upgrades the drawdown HEADLINE stats to daily
+        # resolution (sparse snapshots understate peak-to-trough depth);
+        # the exported series stays at snapshot cadence.
+        "drawdown":        compute_drawdown(history, bridges,
+                                            daily_totals=_daily_totals(txns)),
         "daily_pnl":       compute_daily_pnl(history, txns),
         "trading_heatmap": compute_trading_heatmap(txns),
         "income_calendar": (_income_cal := compute_income_calendar(

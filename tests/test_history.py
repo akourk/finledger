@@ -443,3 +443,59 @@ def test_sample_dates_semimonthly_preserves_eom_boundaries():
     # Range boundaries are respected: a 15th before `first` is excluded.
     late_start = _sample_dates("2024-01-16", "2024-02-20", "semimonthly")
     assert "2024-01-15" not in late_start
+
+
+def test_daily_totals_track_price_curve(stub_prices):
+    """compute_daily_totals values every calendar day from the daily
+    price cache; weekends carry the prior close (get_price walkback)."""
+    from src.history import compute_daily_totals
+
+    stub_prices.set("AAPL", {
+        "2024-01-15": 100.0,   # Monday
+        "2024-01-16": 110.0,
+        "2024-01-17": 90.0,
+        "2024-01-18": 105.0,
+        "2024-01-19": 108.0,   # Friday
+    })
+    _populate_cache(stub_prices, {"AAPL": ["2024-01-15", "2024-01-19"]})
+    txns = [_txn("2024-01-15", "Robinhood", "Taxable", "AAPL", "Buy", 10,
+                 amount=1000.0, price=100.0)]
+    out = dict(compute_daily_totals(txns))
+    assert out["2024-01-15"] == pytest.approx(1000.0)
+    assert out["2024-01-16"] == pytest.approx(1100.0)
+    assert out["2024-01-17"] == pytest.approx(900.0)   # the daily dip
+    assert out["2024-01-20"] == pytest.approx(1080.0)  # Saturday carries Friday
+    # Axis runs through today (txn-price fallback once cache ends).
+    from datetime import datetime
+    assert datetime.now().date().isoformat() in dict(compute_daily_totals(txns))
+
+
+def test_drawdown_daily_resolution_catches_intra_sample_dip(stub_prices):
+    """A crash that recovers between snapshot dates is invisible to the
+    snapshot walk but must appear in the daily-resolution headline
+    stats — while the exported series stays at snapshot cadence."""
+    from src.analytics.drawdown import compute_drawdown
+
+    history = [
+        {"date": "2024-01-31", "total": 100000.0},
+        {"date": "2024-02-29", "total": 102000.0},
+        {"date": "2024-03-31", "total": 104000.0},
+    ]
+    daily = ([("2024-01-31", 100000.0), ("2024-02-10", 101000.0),
+              ("2024-02-15", 60000.0),   # intra-month crash…
+              ("2024-02-20", 99000.0),   # …recovered by month-end
+              ("2024-02-29", 102000.0), ("2024-03-31", 104000.0)])
+
+    out = compute_drawdown(history, None, daily_totals=daily)
+    assert out["resolution"] == "daily"
+    assert out["max_drawdown"] == pytest.approx(-0.40594, abs=1e-4)
+    assert out["max_drawdown_window"]["trough_date"] == "2024-02-15"
+    assert out["max_drawdown_window"]["peak_date"] == "2024-02-10"
+    # Exported series stays snapshot-cadence (3 points, no dip visible).
+    assert len(out["series"]) == 3
+    assert all(p["drawdown_pct"] == 0.0 for p in out["series"])
+
+    # Without daily data the dip is invisible and resolution says so.
+    out2 = compute_drawdown(history, None)
+    assert out2["resolution"] == "snapshot"
+    assert out2["max_drawdown"] == 0.0

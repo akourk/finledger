@@ -71,15 +71,9 @@ def _max_dd_in_window(snapshots: list[dict], val_fn) -> dict:
     return out
 
 
-def compute_drawdown(history: list[dict],
-                     bridges: list[dict] | None = None) -> dict:
-    """Compute drawdown series and headline stats from the history
-    snapshots.  Returns an empty result if history has < 2 points.
-
-    ``bridges`` (rollover bridges from ``detect_rollover_bridges``) are
-    added to each snapshot's total so a custodial rollover's in-flight
-    window doesn't fabricate a portfolio-scale "drawdown" — the money
-    never left, it was in transit between custodians.
+def _walk_drawdown(points: list[tuple[str, float]]) -> dict:
+    """Core drawdown walk over ``[(date, value), ...]`` (values already
+    bridge-adjusted).  Returns the per-point series plus headline stats.
 
     Max-drawdown computation filters out periods where the running
     peak is below 5% of all-time peak — drawdowns that ran on a
@@ -92,25 +86,12 @@ def compute_drawdown(history: list[dict],
     today's drawdown risk is more like -10% to -20%.  The full
     series still flows to the chart so the shape stays visible.
     """
-    if len(history) < 2:
-        return {"series": [], "max_drawdown": 0.0,
-                "max_drawdown_window": None,
-                "current_drawdown_pct": 0.0}
-
-    from ._shared import bridge_adjustment
-
-    def _val(h: dict) -> float:
-        return (float(h.get("total") or 0)
-                + bridge_adjustment(h.get("date", ""), None, bridges or []))
-
-    # All-time peak — 5% denominator filter excludes pre-growth
-    # volatility from the headline max-drawdown figure.
-    atl_peak = max(_val(h) for h in history) or 1.0
+    atl_peak = max(v for _, v in points) or 1.0
     significant_threshold = atl_peak * 0.05
 
     series = []
     running_peak = 0.0
-    peak_date = history[0].get("date", "")
+    peak_date = points[0][0]
     max_dd = 0.0
     max_dd_peak_date = peak_date
     max_dd_trough_date = peak_date
@@ -125,9 +106,7 @@ def compute_drawdown(history: list[dict],
     current_dd_trough = 0.0
     current_dd_trough_date = peak_date
 
-    for h in history:
-        v = _val(h)
-        d = h.get("date", "")
+    for d, v in points:
         if v >= running_peak:
             running_peak = v
             peak_date = d
@@ -168,8 +147,6 @@ def compute_drawdown(history: list[dict],
             "value":        round(v, 2),
         })
 
-    # Days from peak to trough for the worst window
-    from datetime import datetime
     def _days(a: str, b: str) -> int | None:
         try:
             return (datetime.strptime(b, "%Y-%m-%d").date()
@@ -189,14 +166,74 @@ def compute_drawdown(history: list[dict],
             "magnitude_pct":  round(max_dd * 100, 2),
         }
 
-    # Per-window max drawdown.  Trailing-window slices of the history
-    # so the "max drawdown in last 1 year" doesn't keep showing the
-    # 2022 episode three years after recovery.  Lifetime mirrors the
-    # headline above (small-base filter applies); shorter windows skip
-    # the filter — the slice itself rules out early-portfolio noise.
+    return {
+        "series":               series,
+        "max_drawdown":         max_dd,
+        "max_drawdown_window":  max_dd_window,
+        "current_drawdown_pct": series[-1]["drawdown_pct"] if series else 0.0,
+        "small_base_threshold": significant_threshold,
+        "n_filtered":           n_filtered,
+    }
+
+
+def compute_drawdown(history: list[dict],
+                     bridges: list[dict] | None = None,
+                     daily_totals: list[tuple[str, float]] | None = None) -> dict:
+    """Compute drawdown series and headline stats.  Returns an empty
+    result if history has < 2 points.
+
+    ``bridges`` (rollover bridges from ``detect_rollover_bridges``) are
+    added to each value so a custodial rollover's in-flight window
+    doesn't fabricate a portfolio-scale "drawdown" — the money never
+    left, it was in transit between custodians.
+
+    ``daily_totals`` (``history.compute_daily_totals``) upgrades the
+    HEADLINE stats — max drawdown, its peak/trough/recovery window,
+    current drawdown, and the trailing windows — to daily resolution:
+    sparse sampling structurally understates peak-to-trough depth (an
+    intra-month dip that recovers by the sample date is invisible).
+    The exported ``series`` deliberately stays at snapshot cadence —
+    it feeds the chart, and ~3k daily points would bloat the export
+    for no visual gain.  ``resolution`` reports which basis the stats
+    used ("daily" or "snapshot").
+    """
+    if len(history) < 2:
+        return {"series": [], "max_drawdown": 0.0,
+                "max_drawdown_window": None,
+                "current_drawdown_pct": 0.0}
+
+    from ._shared import bridge_adjustment
+
+    def _adj(d: str, v: float) -> float:
+        return v + bridge_adjustment(d, None, bridges or [])
+
+    snap_points = [(h.get("date", ""), _adj(h.get("date", ""),
+                                            float(h.get("total") or 0)))
+                   for h in history]
+    snap = _walk_drawdown(snap_points)
+
+    if daily_totals and len(daily_totals) >= 2:
+        stat_points = [(d, _adj(d, v)) for d, v in daily_totals]
+        stats = _walk_drawdown(stat_points)
+        resolution = "daily"
+    else:
+        stat_points = snap_points
+        stats = snap
+        resolution = "snapshot"
+
+    # Per-window max drawdown.  Trailing-window slices (of the stats
+    # source, so daily resolution applies here too) so the "max
+    # drawdown in last 1 year" doesn't keep showing the 2022 episode
+    # three years after recovery.  Lifetime mirrors the headline above
+    # (small-base filter applies); shorter windows skip the filter —
+    # the slice itself rules out early-portfolio noise.
+    pseudo = [{"date": d, "v": v} for d, v in stat_points]
+    val_fn = lambda h: h["v"]
     today = datetime.now().date()
-    latest_iso = history[-1].get("date") or "" if history else ""
+    latest_iso = stat_points[-1][0]
     latest_year = latest_iso[:4] if latest_iso else ""
+    max_dd = stats["max_drawdown"]
+    max_dd_window = stats["max_drawdown_window"]
     windowed: dict[str, dict] = {}
     for label, spec in _WINDOW_MONTHS.items():
         if spec is None:
@@ -204,22 +241,23 @@ def compute_drawdown(history: list[dict],
                 "magnitude_pct": round(max_dd * 100, 2) if max_dd < 0 else 0.0,
                 "peak_date":     max_dd_window["peak_date"]   if max_dd_window else None,
                 "trough_date":   max_dd_window["trough_date"] if max_dd_window else None,
-                "n_snapshots":   len(history),
+                "n_snapshots":   len(pseudo),
             }
             continue
         if spec == "ytd":
             cutoff = f"{latest_year}-01-01" if latest_year else ""
         else:
             cutoff = (today - timedelta(days=int(int(spec) * 30.5))).isoformat()
-        slice_ = [h for h in history if (h.get("date") or "") >= cutoff]
-        windowed[label] = _max_dd_in_window(slice_, _val)
+        slice_ = [h for h in pseudo if h["date"] >= cutoff]
+        windowed[label] = _max_dd_in_window(slice_, val_fn)
 
     return {
-        "series":               series,
+        "series":               snap["series"],
         "max_drawdown":         round(max_dd, 6),
         "max_drawdown_window":  max_dd_window,
-        "current_drawdown_pct": round(series[-1]["drawdown_pct"], 6) if series else 0.0,
-        "small_base_threshold": round(significant_threshold, 2),
-        "n_periods_below_threshold": n_filtered,
+        "current_drawdown_pct": round(stats["current_drawdown_pct"], 6),
+        "small_base_threshold": round(stats["small_base_threshold"], 2),
+        "n_periods_below_threshold": stats["n_filtered"],
+        "resolution":           resolution,
         "windowed":             windowed,
     }

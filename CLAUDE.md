@@ -264,7 +264,14 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     - `drawdown` — series of `{date, drawdown_pct, running_peak,
       value}`, max-drawdown window with peak/trough/recovery dates,
       and current_drawdown_pct.  Takes `bridges` — a custodial
-      rollover's in-flight window is not a drawdown.
+      rollover's in-flight window is not a drawdown.  HEADLINE stats
+      (max DD, its window, current DD, trailing windows) are computed
+      at DAILY resolution via `history.compute_daily_totals` (a
+      lightweight balances×prices day walker mirroring the snapshot
+      walker's valuation rules; never exported wholesale) — sparse
+      sampling structurally understates peak-to-trough depth.  The
+      exported `series` stays at snapshot cadence for the chart;
+      `resolution` reports which basis the stats used.
     - `daily_pnl` — list of `{date, value, change, change_pct}` for
       the last 30 calendar days, walking back from today's positions
       and re-pricing at recent dates (market-only moves; same-day
