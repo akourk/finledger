@@ -163,6 +163,7 @@ def compute_reconciliation(txns, history, reconcile_meta):
         if computed is None:
             rows.append({
                 "kind": kind, "account_group": ag, "label": label,
+                "date": date_s,
                 "reported": round(reported, 2), "computed": None,
                 "delta": None, "status": "nodata", "note": note,
                 "detail": "no fin figure for this date/account",
@@ -171,7 +172,11 @@ def compute_reconciliation(txns, history, reconcile_meta):
 
         delta = computed - reported
         rows.append({
+            # `date` (year for form kinds, ISO date for balance) lets the
+            # dashboard's drill-down re-derive the composing txn set
+            # without parsing the display label.
             "kind": kind, "account_group": ag, "label": label,
+            "date": date_s,
             "reported": round(reported, 2), "computed": round(computed, 2),
             "delta": round(delta, 2), "status": _status(kind, reported, delta),
             "note": note, "detail": detail,

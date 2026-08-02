@@ -2589,6 +2589,61 @@
     color: var(--yellow);
   }
 
+  /* Reconciliation drill-down (Overview status card) */
+  tr.recon-clickable {
+    cursor: pointer;
+  }
+
+  tr.recon-clickable:hover td {
+    background: rgba(167, 139, 250, 0.06);
+  }
+
+  .recon-chev {
+    color: var(--text-dim);
+    font-size: 0.8em;
+  }
+
+  tr.recon-drill-row > td {
+    padding: 4px 0 10px 18px;
+  }
+
+  /* Detach the drill cell's content from the outer table's layout —
+     a colspan cell's min-content otherwise widens the whole table and
+     the browser redistributes the excess across every column. */
+  .recon-drill-outer {
+    width: 0;
+    min-width: 100%;
+  }
+
+  .recon-drill {
+    max-height: 260px;
+    overflow-y: auto;
+    overflow-x: auto;
+    border-left: 2px solid var(--border);
+    padding-left: 10px;
+  }
+
+  .recon-src-chips {
+    margin-bottom: 6px;
+    line-height: 1.9;
+  }
+
+  .recon-src-chip {
+    font-size: 0.72rem;
+    padding: 1px 7px;
+    border-radius: 8px;
+    background: rgba(119, 119, 119, 0.14);
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .recon-drill-foot {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    margin-top: 5px;
+    padding-left: 12px;
+  }
+
   /* ========== Mobile responsive (≤720px) ========== */
   @media (max-width: 720px) {
     body {

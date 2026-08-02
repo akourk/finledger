@@ -533,9 +533,126 @@ function fmtMoneyShort(v) {
 //   Attention (actionable signals) · Data Health (pipeline integrity)
 //   · What's Changed (diff vs last run) · Reconciliation (vs broker docs)
 // Summary tint = the most severe signal across all sections.
+// --- Reconciliation drill-down --------------------------------------------
+// Click an income / realized reconcile row to expand the transactions
+// composing fin's computed figure — turns every delta into a self-serve
+// investigation.  Membership rules MIRROR analytics/reconcile.py through
+// the same exported sources of truth: the action catalog's `income`
+// field (income buckets) and `section_1256_underlyings` (realized
+// split), so the drill-down's sum always reproduces the computed figure
+// (the footer verifies it visually).  Balance rows have no txn
+// composition — they compare against a history snapshot — so they
+// don't expand.
+const reconExpanded = new Set();
+function toggleReconRow(i) {
+  if (reconExpanded.has(i)) reconExpanded.delete(i); else reconExpanded.add(i);
+  renderOverviewStatus();
+}
+
+const _RECON_INCOME_BUCKETS = {
+  income: ['dividends', 'interest', 'lending'],
+  other_income: ['rewards', 'lending'],
+};
+const _RECON_DRILLABLE = new Set(['income', 'other_income',
+                                  'realized', 'section_1256']);
+
+function _reconIncomeKindByAction() {
+  const m = {};
+  for (const a of ((DATA.action_catalog || {}).actions || [])) {
+    if (a.income) m[a.name] = a.income;
+  }
+  return m;
+}
+
+function reconDrillHtml(r, colspan) {
+  const year = (r.date || '').slice(0, 4);
+  if (!year) return '';
+  const rows = [];
+  let total = 0;
+  if (r.kind === 'income' || r.kind === 'other_income') {
+    const kinds = new Set(_RECON_INCOME_BUCKETS[r.kind]);
+    const kindOf = _reconIncomeKindByAction();
+    for (const t of DATA.transactions || []) {
+      if (t.account_group !== r.account_group) continue;
+      if ((t.date || '').slice(0, 4) !== year) continue;
+      const k = kindOf[t.action];
+      if (!k || !kinds.has(k)) continue;
+      const amt = +t.amount || 0;
+      total += amt;
+      rows.push({ date: t.date, action: t.action, sym: t.symbol || '',
+                  desc: t.description || '', v: amt });
+    }
+  } else if (r.kind === 'realized' || r.kind === 'section_1256') {
+    const want1256 = r.kind === 'section_1256';
+    for (const t of DATA.transactions || []) {
+      if (t.account_group !== r.account_group) continue;
+      if ((t.date || '').slice(0, 4) !== year) continue;
+      if (typeof t.realized_gain !== 'number') continue;
+      if (isSection1256Symbol(t.symbol) !== want1256) continue;
+      total += t.realized_gain;
+      rows.push({ date: t.date, action: t.action, sym: t.symbol || '',
+                  desc: t.description || '', v: t.realized_gain });
+    }
+  } else {
+    return '';
+  }
+
+  // Per-source subtotals — the investigative view.  A single security's
+  // payments summing to the delta (the pattern behind most reconcile
+  // drift) jumps out here where a chronological list hides it.
+  const bySrc = new Map();
+  for (const x of rows) {
+    const key = x.sym || x.action;
+    const cur = bySrc.get(key) || { n: 0, v: 0 };
+    cur.n += 1; cur.v += x.v;
+    bySrc.set(key, cur);
+  }
+  const srcChips = [...bySrc.entries()]
+    .sort((a, b) => Math.abs(b[1].v) - Math.abs(a[1].v))
+    .map(([k, s]) => `<span class="recon-src-chip">${_htmlEsc(k)}&nbsp;·&nbsp;${s.n}×&nbsp;·&nbsp;${fmtMoney(s.v, 2)}</span>`)
+    .join(' ');
+
+  const isRealized = (r.kind === 'realized' || r.kind === 'section_1256');
+  const valHead = isRealized ? 'realized' : 'amount';
+  const body = rows
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    .map(x => `<tr>
+        <td>${_htmlEsc(x.date || '')}</td>
+        <td>${_htmlEsc(x.action)}</td>
+        <td title="${_htmlEsc(x.desc)}">${_htmlEsc(x.sym)}</td>
+        <td class="num ${x.v < 0 ? 'negative' : ''}">${fmtMoney(x.v, 2)}</td>
+      </tr>`).join('');
+  const parity = (r.computed != null && Math.abs(total - r.computed) < 0.01)
+    ? '<span class="positive" title="The listed transactions reproduce fin\'s computed figure exactly">✓ matches fin</span>'
+    : `<span class="negative" title="Drill-down sum differs from fin's computed figure — worth reporting">Σ ${fmtMoney(total, 2)} ≠ fin ${fmtMoney(r.computed, 2)}</span>`;
+  // .recon-drill-outer (width:0 / min-width:100%) detaches this cell's
+  // content from the outer table's layout algorithm — without it, wide
+  // drill content sets a minimum width for the WHOLE reconcile table
+  // and the browser spreads the extra across all columns, pushing
+  // Reported/fin/Δ out of the visible half-column.  Wide content
+  // scrolls inside .recon-drill instead.
+  return `<tr class="recon-drill-row"><td colspan="${colspan}">
+      <div class="recon-drill-outer">
+        <div class="recon-drill">
+          <div class="recon-src-chips">${srcChips}</div>
+          <table class="lots-table">
+            <thead><tr><th>date</th><th>action</th><th>symbol</th>
+              <th class="num">${valHead}</th></tr></thead>
+            <tbody>${body}</tbody>
+          </table>
+        </div>
+        <div class="recon-drill-foot">${rows.length} transaction${rows.length === 1 ? '' : 's'} · Σ ${fmtMoney(total, 2)} · ${parity}</div>
+      </div>
+    </td></tr>`;
+}
+
 function renderOverviewStatus() {
   const host = document.getElementById('overviewStatus');
   if (!host) return;
+  // Re-renders happen on drill-down toggles — keep the card's
+  // open/closed state instead of collapsing it under the click.
+  const prevDetails = host.querySelector('details.feedback-collapsible');
+  const wasOpen = prevDetails ? prevDetails.open : false;
   const alerts = ANALYTICS.alerts || [];
   const issues = ANALYTICS.data_health || [];
   const changes = ANALYTICS.changes || {};
@@ -662,14 +779,24 @@ function renderOverviewStatus() {
     bump(s.off ? 'high' : s.warn ? 'warn' : 'info');
     const fmtN = v => v == null ? '—' : fmtMoney(v, 2);
     const fmtD = v => v == null ? '—' : (v >= 0 ? '+' : '') + fmtMoney(v, 2);
-    const bodyRows = recon.rows.map(r => `<tr>
-        <td>${_htmlEsc(r.account_group || '')}</td>
+    const bodyRows = recon.rows.map((r, i) => {
+      const drillable = _RECON_DRILLABLE.has(r.kind)
+        && r.computed != null && (r.date || '').length >= 4;
+      const expanded = drillable && reconExpanded.has(i);
+      const chev = drillable
+        ? `<span class="recon-chev">${expanded ? '▾' : '▸'}</span> `
+        : '';
+      let html = `<tr${drillable ? ` class="recon-clickable" onclick="toggleReconRow(${i})" title="Click to see the transactions composing fin's figure"` : ''}>
+        <td>${chev}${_htmlEsc(r.account_group || '')}</td>
         <td>${_htmlEsc(r.label || '')}</td>
         <td style="text-align:right;">${fmtN(r.reported)}</td>
         <td style="text-align:right;">${fmtN(r.computed)}</td>
         <td style="text-align:right;" class="${r.delta > 0 ? 'positive' : r.delta < 0 ? 'negative' : ''}">${fmtD(r.delta)}</td>
         <td><span class="dh-chip sev-${sevOf[r.status] || 'info'}">${_htmlEsc(r.status)}</span>${r.detail ? ` <span style="color:var(--text-dim);font-size:0.85em;">${_htmlEsc(r.detail)}</span>` : ''}</td>
-      </tr>`).join('');
+      </tr>`;
+      if (expanded) html += reconDrillHtml(r, 6);
+      return html;
+    }).join('');
     const total = s.total || recon.rows.length;
     for (const k of ['off', 'warn']) {
       if (s[k]) chips.push(`<span class="dh-chip sev-${sevOf[k]}">${s[k]} ${k}</span>`);
@@ -688,9 +815,10 @@ function renderOverviewStatus() {
         <tbody>${bodyRows}</tbody>
       </table>
       <div style="color:var(--text-dim);font-size:0.8rem;margin-top:8px;">
-        Add <code>Reconcile Balance/Realized/Income/Section 1256</code> rows to
-        <code>metadata.csv</code> (Symbol = account group, Date = as-of date or year)
-        to check more accounts.
+        Click an income / realized row to see the transactions composing
+        fin's figure.  Add <code>Reconcile Balance/Realized/Income/Section 1256</code>
+        rows to <code>metadata.csv</code> (Symbol = account group, Date = as-of
+        date or year) to check more accounts.
       </div>
     </div>`;
   }
@@ -715,7 +843,7 @@ function renderOverviewStatus() {
   const body = (sections.length && reconSection)
     ? `<div class="dh-body-cols"><div>${sections.join('')}</div><div>${reconSection}</div></div>`
     : (sections.join('') + reconSection);
-  host.innerHTML = `<details class="feedback-panel feedback-collapsible">
+  host.innerHTML = `<details class="feedback-panel feedback-collapsible"${wasOpen ? ' open' : ''}>
     <summary class="dh-summary dh-${dominant}">
       <span class="dh-label">Status</span>
       ${chips.join(' ')}
