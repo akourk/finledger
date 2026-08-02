@@ -549,6 +549,16 @@ function toggleReconRow(i) {
   renderOverviewStatus();
 }
 
+// Issues-only by default: ok + explained rows collapse behind a
+// one-line summary so the daily glance shows only what needs action.
+// The list grows every year (each new form adds rows) — hiding the
+// resolved ones keeps it scannable.
+let reconShowAll = false;
+function toggleReconShowAll() {
+  reconShowAll = !reconShowAll;
+  renderOverviewStatus();
+}
+
 const _RECON_INCOME_BUCKETS = {
   income: ['dividends', 'interest', 'lending'],
   other_income: ['rewards', 'lending'],
@@ -780,19 +790,34 @@ function renderOverviewStatus() {
     bump(s.off ? 'high' : s.warn ? 'warn' : 'info');
     const fmtN = v => v == null ? '—' : fmtMoney(v, 2);
     const fmtD = v => v == null ? '—' : (v >= 0 ? '+' : '') + fmtMoney(v, 2);
-    const bodyRows = recon.rows.map((r, i) => {
+    // Issues-only by default: resolved rows (ok / explained) hide
+    // behind the toggle so the glance shows only what needs action.
+    const needsAttention = r => r.status !== 'ok' && r.status !== 'explained';
+    const visible = recon.rows
+      .map((r, i) => [r, i])
+      .filter(([r]) => reconShowAll || needsAttention(r));
+    const bodyRows = visible.map(([r, i]) => {
       const drillable = _RECON_DRILLABLE.has(r.kind)
         && r.computed != null && (r.date || '').length >= 4;
       const expanded = drillable && reconExpanded.has(i);
       const chev = drillable
         ? `<span class="recon-chev">${expanded ? '▾' : '▸'}</span> `
         : '';
+      // Δ column: rows carrying an [expected] token show the RESIDUAL
+      // (the unexplained remainder — usually ±0.00, uncolored); the
+      // raw delta and expectation move to the cell's tooltip.
+      const hasExp = r.expected != null && r.residual != null;
+      const dVal = hasExp ? r.residual : r.delta;
+      const dColor = (dVal != null && Math.abs(dVal) >= 0.005)
+        ? (dVal > 0 ? 'positive' : 'negative') : '';
+      const dTitle = hasExp
+        ? ` title="raw Δ ${fmtD(r.delta)}; expected ${fmtD(r.expected)}"` : '';
       let html = `<tr${drillable ? ` class="recon-clickable" onclick="toggleReconRow(${i})" title="Click to see the transactions composing fin's figure"` : ''}>
         <td>${chev}${_htmlEsc(r.account_group || '')}</td>
         <td${r.note ? ` title="${_htmlEsc(r.note)}" class="recon-noted"` : ''}>${_htmlEsc(r.label || '')}</td>
         <td style="text-align:right;">${fmtN(r.reported)}</td>
         <td style="text-align:right;">${fmtN(r.computed)}</td>
-        <td style="text-align:right;" class="${r.delta > 0 ? 'positive' : r.delta < 0 ? 'negative' : ''}">${fmtD(r.delta)}</td>
+        <td style="text-align:right;" class="${dColor}"${dTitle}>${fmtD(dVal)}</td>
         <td><span class="dh-chip sev-${sevOf[r.status] || 'info'}">${_htmlEsc(r.status)}</span>${r.detail ? ` <span style="color:var(--text-dim);font-size:0.85em;">${_htmlEsc(r.detail)}</span>` : ''}</td>
       </tr>`;
       if (expanded) html += reconDrillHtml(r, 6);
@@ -804,9 +829,10 @@ function renderOverviewStatus() {
     }
     const okish = (s.ok || 0) + (s.explained || 0);
     chips.push(`<span class="dh-chip sev-info">${okish}/${total} reconcile${s.explained ? ` (${s.explained} explained)` : ''}</span>`);
-    reconSection = `<div class="dh-category">
-      <h4>Reconciliation <span style="color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:0;">— ${total} check${total === 1 ? '' : 's'} vs broker docs</span></h4>
-      <table>
+    const nHidden = recon.rows.length - visible.length;
+    const toggleLink = `<a href="javascript:void(0)" onclick="toggleReconShowAll()" style="color:var(--accent);font-weight:400;text-transform:none;letter-spacing:0;font-size:0.85em;">${reconShowAll ? 'issues only' : `show all ${total}`}</a>`;
+    const tableHtml = visible.length
+      ? `<table>
         <thead><tr>
           <th>Account</th><th>Check</th>
           <th style="text-align:right;">Reported</th>
@@ -815,7 +841,11 @@ function renderOverviewStatus() {
           <th>Status</th>
         </tr></thead>
         <tbody>${bodyRows}</tbody>
-      </table>
+      </table>`
+      : `<div style="color:var(--text-dim);padding:6px 0;">All ${total} checks reconcile — ${s.ok || 0} ok${s.explained ? `, ${s.explained} explained (documented deltas holding steady)` : ''}.</div>`;
+    reconSection = `<div class="dh-category">
+      <h4>Reconciliation <span style="color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:0;">— ${total} check${total === 1 ? '' : 's'} vs broker docs${nHidden ? ` · ${nHidden} resolved hidden` : ''}</span> ${toggleLink}</h4>
+      ${tableHtml}
       <div style="color:var(--text-dim);font-size:0.8rem;margin-top:8px;">
         Click an income / realized row to see the transactions composing
         fin's figure.  Add <code>Reconcile Balance/Realized/Income/Section 1256</code>

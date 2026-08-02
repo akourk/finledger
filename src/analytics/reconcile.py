@@ -220,6 +220,10 @@ def compute_reconciliation(txns, history, reconcile_meta):
             "status": (status if expected is not None
                        else _status(kind, reported, delta)),
             "expected": (round(expected, 2) if expected is not None else None),
+            # The unexplained remainder — what the panel's Δ column
+            # shows for rows carrying an expectation (raw delta stays
+            # available on hover).
+            "residual": (residual if expected is not None else None),
             "note": note, "detail": detail,
         })
 

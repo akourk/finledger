@@ -181,3 +181,19 @@ def test_note_without_token_unchanged():
     ])
     assert rec["rows"][0]["status"] == "off"
     assert rec["rows"][0]["expected"] is None
+
+
+def test_expected_rows_export_residual():
+    """Rows with an [expected] token export `residual` — the panel's
+    Δ column shows it (the unexplained remainder) instead of the raw
+    delta, which moves to a tooltip."""
+    rec = compute_reconciliation(_txns(), _history(), [
+        {"kind": "income", "account_group": "Robinhood",
+         "date": "2025", "amount": 69.06,
+         "note": "[expected +5.94] EPD K-1"},
+        {"kind": "realized", "account_group": "Robinhood",
+         "date": "2025", "amount": 800.0, "note": "plain"},
+    ])
+    by_kind = {r["kind"]: r for r in rec["rows"]}
+    assert by_kind["income"]["residual"] == 0.0
+    assert by_kind["realized"]["residual"] is None
