@@ -788,7 +788,7 @@ function renderOverviewStatus() {
         : '';
       let html = `<tr${drillable ? ` class="recon-clickable" onclick="toggleReconRow(${i})" title="Click to see the transactions composing fin's figure"` : ''}>
         <td>${chev}${_htmlEsc(r.account_group || '')}</td>
-        <td>${_htmlEsc(r.label || '')}</td>
+        <td${r.note ? ` title="${_htmlEsc(r.note)}" class="recon-noted"` : ''}>${_htmlEsc(r.label || '')}</td>
         <td style="text-align:right;">${fmtN(r.reported)}</td>
         <td style="text-align:right;">${fmtN(r.computed)}</td>
         <td style="text-align:right;" class="${r.delta > 0 ? 'positive' : r.delta < 0 ? 'negative' : ''}">${fmtD(r.delta)}</td>

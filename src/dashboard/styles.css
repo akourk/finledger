@@ -2603,6 +2603,15 @@
     font-size: 0.8em;
   }
 
+  /* Check cells carrying a metadata Note reveal it on hover — the
+     Note is where explained deltas get documented (source form,
+     "+X EPD K-1 expected", …). */
+  td.recon-noted {
+    text-decoration: underline dotted var(--text-dim);
+    text-underline-offset: 3px;
+    cursor: help;
+  }
+
   tr.recon-drill-row > td {
     padding: 4px 0 10px 18px;
   }
