@@ -728,3 +728,75 @@ class TestOptionIntrinsicSplitBasis:
         _load_prices()["META"] = {"2026-07-17": 850.0}
         assert option_intrinsic("META 12/18/2026 Call $800.00",
                                 "2026-07-17") == pytest.approx(50.0)
+
+
+class TestScaledProxyMultiAnchor:
+    """Scaled proxies anchor each lookup to the NEAREST observed txn
+    price (in-memory series from ensure_proxy_anchors), so tracking
+    drift is bounded by the observation gap — not the years since the
+    persisted first anchor."""
+
+    def _setup(self, monkeypatch):
+        import json as _json
+        from src.config import CACHE_DIR
+        from src import prices
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        (CACHE_DIR / "symbol_proxy_map.json").write_text(_json.dumps({
+            "MYFUND": {"proxy": "VFIAX", "method": "scaled"},
+        }), encoding="utf-8")
+        prices._load_prices()["VFIAX"] = {
+            "2024-01-15": 200.0, "2024-06-14": 210.0, "2024-06-20": 220.0,
+        }
+
+    def test_nearest_anchor_wins(self, isolated_workdir, monkeypatch):
+        from src.prices import ensure_proxy_anchors, get_price
+        self._setup(monkeypatch)
+        txns = [
+            {"symbol": "MYFUND", "date": "2024-01-15", "price": 100.0},
+            # By June the fund OUTPERFORMED the proxy: real NAV 110
+            # while proxy-scaling from January would predict 105.
+            {"symbol": "MYFUND", "date": "2024-06-14", "price": 110.0},
+        ]
+        ensure_proxy_anchors(txns, verbose=False)
+        # Query near the June observation → June anchor:
+        # 110 × (220/210) = 115.238…  (January anchor would give
+        # 100 × 220/200 = 110 — a 4.5% error.)
+        assert get_price("MYFUND", "2024-06-20") == pytest.approx(110 * 220 / 210)
+        # Query near the January observation → January anchor.
+        assert get_price("MYFUND", "2024-01-15") == pytest.approx(100.0)
+
+    def test_falls_back_to_persisted_anchor_without_series(
+            self, isolated_workdir, monkeypatch):
+        """No ensure_proxy_anchors call (no txns loaded) → legacy
+        single-anchor behaviour from the persisted map entry."""
+        import json as _json
+        from src.config import CACHE_DIR
+        from src import prices
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        (CACHE_DIR / "symbol_proxy_map.json").write_text(_json.dumps({
+            "MYFUND": {"proxy": "VFIAX", "method": "scaled",
+                       "anchor_date": "2024-01-15", "anchor_price": 100.0},
+        }), encoding="utf-8")
+        prices._load_prices()["VFIAX"] = {
+            "2024-01-15": 200.0, "2024-06-20": 220.0,
+        }
+        assert prices.get_price("MYFUND", "2024-06-20") == pytest.approx(110.0)
+
+    def test_series_is_memory_only(self, isolated_workdir, monkeypatch):
+        """The per-txn anchor series must never persist (the dates are
+        the user's payroll calendar) — only the single first anchor
+        lands in the proxy map file."""
+        import json as _json
+        from src.config import CACHE_DIR
+        from src.prices import ensure_proxy_anchors, save_caches
+        self._setup(monkeypatch)
+        ensure_proxy_anchors([
+            {"symbol": "MYFUND", "date": "2024-01-15", "price": 100.0},
+            {"symbol": "MYFUND", "date": "2024-06-14", "price": 110.0},
+        ], verbose=False)
+        save_caches()
+        doc = _json.loads((CACHE_DIR / "symbol_proxy_map.json")
+                          .read_text(encoding="utf-8"))
+        assert doc["MYFUND"]["anchor_date"] == "2024-01-15"
+        assert "anchors" not in doc["MYFUND"]
+        assert "2024-06-14" not in _json.dumps(doc)

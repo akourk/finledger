@@ -162,6 +162,16 @@ def _mark_prices_deleted(sym: str) -> None:
 # _dividends; dropped whenever either changes for the symbol.
 _tr_factor_cache: dict[str, tuple[list[str], list[float]]] = {}
 
+# Multi-anchor series for SCALED proxies: {mapped_symbol: (sorted_dates,
+# prices)} of EVERY observed transaction price — for a 401K fund that's
+# a fresh real NAV every payroll.  Built in-memory by
+# ensure_proxy_anchors each run (both pipeline paths call it) and NEVER
+# persisted: the dates are effectively the user's paycheck calendar.
+# get_price's scaled branch anchors each lookup to the NEAREST real
+# price, capping proxy tracking drift at the gap between observations
+# (~2 weeks) instead of the years since the single persisted anchor.
+_proxy_anchor_series: dict[str, tuple[list[str], list[float]]] = {}
+
 
 def reset_caches() -> None:
     """Clear in-memory cache state so the next access re-reads from
@@ -185,6 +195,7 @@ def reset_caches() -> None:
     _dividends_dirty = False
     _proxy_dirty = False
     _tr_factor_cache.clear()
+    _proxy_anchor_series.clear()
 
 # yfinance is imported lazily so dry-runs don't pay the import cost.
 _yf = None
@@ -484,18 +495,31 @@ def save_caches() -> None:
 
 
 def ensure_proxy_anchors(txns: list[dict], *, verbose: bool = True) -> None:
-    """Auto-populate ``anchor_date`` + ``anchor_price`` for any proxy
-    map entries using ``method: "scaled"`` that don't have them yet.
+    """Anchor scaled proxy-map entries to the user's own txn prices.
 
-    The anchor is the first observed non-zero transaction price for
-    the mapped symbol — fin's ground truth for what that share was
-    actually worth when the user held it.  From there, the proxy's
-    return stream drives valuations.
+    Two layers:
+
+    1. **Persisted single anchor** (``anchor_date`` / ``anchor_price``
+       on the map entry): the first observed non-zero txn price, kept
+       for back-compat and as the fallback when no in-memory series is
+       available (auto-populated only when missing).
+    2. **In-memory multi-anchor series** (``_proxy_anchor_series``):
+       EVERY observed txn price for the mapped symbol, rebuilt each run
+       and never persisted.  ``get_price`` anchors each scaled lookup
+       to the NEAREST real observation, so proxy tracking drift is
+       bounded by the gap between observations (biweekly for a 401K
+       fund with payroll contributions) instead of accumulating for
+       years from the single first anchor.  (On real data this proved
+       the user's CIT tracks VFIAX almost perfectly — the residual
+       statement-vs-computed deltas are statement composition, e.g.
+       year-end accruals, not valuation drift — but it guards the
+       valuation against any future divergence at negligible cost.)
     """
     global _proxy, _proxy_dirty
     pm = _load_proxy_map()
-    # Find first observed txn price per symbol
-    first_price: dict[str, tuple[str, float]] = {}
+    # All observed txn prices per scaled-mapped symbol (last one wins
+    # per date — a same-day exchange pair carries one NAV anyway).
+    observed: dict[str, dict[str, float]] = {}
     for t in txns:
         sym = t.get("symbol", "")
         if not sym or sym not in pm:
@@ -503,27 +527,45 @@ def ensure_proxy_anchors(txns: list[dict], *, verbose: bool = True) -> None:
         entry = pm[sym]
         if not isinstance(entry, dict) or entry.get("method") != "scaled":
             continue
-        if entry.get("anchor_price") and entry.get("anchor_date"):
-            continue   # already anchored
         price = float(t.get("price", 0) or 0)
-        if price <= 0:
-            continue
         d = t.get("date", "")
-        if not d:
+        if price <= 0 or not d:
             continue
-        prev = first_price.get(sym)
-        if prev is None or d < prev[0]:
-            first_price[sym] = (d, price)
+        observed.setdefault(sym, {})[d] = price
 
-    if not first_price:
-        return
-    for sym, (d, p) in first_price.items():
-        pm[sym]["anchor_date"]  = d
-        pm[sym]["anchor_price"] = round(p, 4)
-        _proxy_dirty = True
-        if verbose:
-            print(f"  proxy anchor: {sym} -> {pm[sym]['proxy']} "
-                  f"(anchor {d} @ ${p:.2f})")
+    for sym, series in observed.items():
+        dates = sorted(series)
+        _proxy_anchor_series[sym] = (dates, [series[d] for d in dates])
+        entry = pm[sym]
+        if not (entry.get("anchor_price") and entry.get("anchor_date")):
+            d, p = dates[0], series[dates[0]]
+            entry["anchor_date"]  = d
+            entry["anchor_price"] = round(p, 4)
+            _proxy_dirty = True
+            if verbose:
+                print(f"  proxy anchor: {sym} -> {entry['proxy']} "
+                      f"(anchor {d} @ ${p:.2f})")
+        if verbose and len(dates) > 1:
+            print(f"  proxy anchors: {sym} -> {entry['proxy']} "
+                  f"({len(dates)} observed prices, "
+                  f"{dates[0]}..{dates[-1]})")
+
+
+def _nearest_anchor(symbol: str, iso_date: str) -> tuple[str, float] | None:
+    """The observed (date, price) closest to ``iso_date`` for a scaled
+    proxy symbol, or None when no in-memory series exists."""
+    series = _proxy_anchor_series.get(symbol)
+    if not series:
+        return None
+    dates, prices = series
+    i = bisect_right(dates, iso_date)
+    best = None
+    for j in (i - 1, i):
+        if 0 <= j < len(dates):
+            gap = abs((_parse_iso(dates[j]) - _parse_iso(iso_date)).days)
+            if best is None or gap < best[0]:
+                best = (gap, dates[j], prices[j])
+    return (best[1], best[2]) if best else None
 
 
 # ---------------------------------------------------------------------------
@@ -624,7 +666,13 @@ def get_price(symbol: str, on_date) -> float | None:
             # Scaled needs both an anchor (ground-truth txn price) and
             # the proxy's price on both the anchor date and the query
             # date.  Any missing piece → return None so the caller
-            # falls back to the last_txn_price.
+            # falls back to the last_txn_price.  Prefer the observed
+            # txn price NEAREST the query date (multi-anchor series —
+            # see ensure_proxy_anchors) over the persisted first-price
+            # anchor: drift is then bounded by the observation gap.
+            near = _nearest_anchor(symbol, _parse_iso(on_date).isoformat())
+            if near is not None:
+                anchor_date, anchor_price = near
             if not anchor_date or anchor_price is None:
                 return None
             now_px = get_price(proxy, on_date)

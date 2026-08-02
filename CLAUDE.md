@@ -1279,7 +1279,17 @@ process.
   delete.
 - `cache/symbol_proxy_map.json` `anchor_date` / `anchor_price` are
   auto-populated from the user's earliest txn price.  When publishing
-  a fork, scrub them — they get repopulated on next run.
+  a fork, scrub them — they get repopulated on next run.  At runtime,
+  scaled proxies actually anchor each lookup to the NEAREST observed
+  txn price (`prices._proxy_anchor_series`, built in-memory by
+  `ensure_proxy_anchors` from ALL priced txns and never persisted —
+  the dates are the user's payroll calendar); the persisted single
+  anchor is only the fallback when no txns are loaded.  This bounds
+  proxy tracking drift at the observation gap (~2 weeks for a 401K
+  with payroll contributions) instead of years-since-first-anchor.
+  (Real-data note: the user's CIT tracks VFIAX near-perfectly, so
+  this changed balances only slightly — remaining statement deltas
+  are statement composition (year-end accruals), not valuation.)
 
 ## Snapshot feature
 
