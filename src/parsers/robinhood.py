@@ -47,6 +47,68 @@ def _parse_option_qty(raw: str, default: float = 1.0) -> float:
 
 _OPTION_ACTIONS = {"BTO", "STC", "OEXP", "OEXCS"}
 
+# A REC quantity printed with fewer than this many decimals carries no
+# useful evidence of rounding — snapping it would move the figure by more
+# than half a milli-share, which is a guess rather than a recovery.
+_RECEIVE_SNAP_MIN_DECIMALS = 3
+
+
+def _decimals(raw: str) -> int:
+    """Count digits after the decimal point in a CSV numeric field."""
+    s = (raw or "").strip().replace(",", "").replace("$", "").lstrip("+-")
+    return len(s.split(".", 1)[1]) if "." in s else 0
+
+
+def _resolve_receive(qty: float, qty_raw: str, companions: list[dict]) -> tuple[float, float]:
+    """Recover the true quantity and FMV price of a Robinhood REC row.
+
+    ``REC`` ("received") is shares credited to the account with no cash
+    outlay — in practice a promotional credit.  Robinhood writes these
+    rows with an empty Price and Amount, and rounds the Quantity to
+    fewer decimals than it actually tracks.  Both gaps are recoverable
+    when the receive accompanies a same-day purchase of the same
+    security, which is the shape a purchase-topping credit takes::
+
+        Buy  0.984963 @ $402.00   ($397.00 cash)
+        REC  0.0150               (no price, no amount)   ← a $5 credit
+                ↑ true value 0.015037 — the two legs sum to 1.000000
+
+    - **price**: the companion Buy's execution price is the security's
+      FMV at receipt, which the cost-basis walker turns into the reward
+      lot's basis (``zero_basis`` → ``qty × price``).  Without it the
+      free shares get $0 basis and the whole value is realized as gain
+      at the eventual sale.
+    - **quantity**: when the legs sum to a whole share within the REC
+      row's *own* printed precision, snap to it.  The correction is
+      bounded by half of the last printed decimal place, so it can
+      never move the figure further from the truth than the broker's
+      own rounding already did.
+
+    Returns ``(quantity, price)`` — unchanged quantity and ``0.0`` price
+    when there's no same-day companion (e.g. a standalone free-stock
+    reward), which leaves the pre-existing zero-basis behaviour intact.
+    """
+    price = 0.0
+    for row in companions:
+        px = abs(_num(row.get("Price", "")))
+        if px > 0:
+            price = px
+            break
+
+    places = _decimals(qty_raw)
+    tol = 0.5 * 10 ** -places
+    if places >= _RECEIVE_SNAP_MIN_DECIMALS and qty > 0:
+        bought = [abs(_num(r.get("Quantity", ""))) for r in companions]
+        bought = [q for q in bought if q > 0]
+        # Try each same-day order on its own first (a credit tops up one
+        # order), then their total in case the day's orders were split.
+        for base in bought + ([sum(bought)] if len(bought) > 1 else []):
+            whole = round(base + qty)
+            if whole > 0 and abs(base + qty - whole) <= tol:
+                return round(whole - base, 10), price
+
+    return qty, price
+
 
 def _option_contract_symbol(action: str, description: str, underlying: str) -> str:
     """Derive a per-contract symbol for an option row so each contract is
@@ -95,6 +157,13 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
     )
     occ_pool           = build_occ_pool(rows)
     mrgc_pool          = build_mrgc_pool(rows)
+    # Same-day purchases per (date, instrument) — the FMV / whole-share
+    # evidence a REC row needs.  See _resolve_receive.
+    buy_pool: dict[tuple[str, str], list[dict]] = {}
+    for _d, _r in rows:
+        if (_r.get("Trans Code") or "").strip() == "Buy":
+            buy_pool.setdefault(
+                (_d, (_r.get("Instrument") or "").strip()), []).append(_r)
     mrgs_receive_dates = build_mrgs_receive_dates(rows)
     held_at_some_point = build_held_at_some_point(rows)
     consumed_occ:  set[int] = set()
@@ -297,6 +366,23 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
                 ))
             continue
         # ── end merger handling ────────────────────────────────────────
+
+        # REC = shares received with no cash outlay — a promotional
+        # credit, NOT a corporate action (it used to normalize to
+        # "Merger", which was both wrong in the ledger and wrong in the
+        # Tax tab).  It normalizes to "Reward" now; recover the FMV and
+        # the rounded-off quantity from the same-day companion buy.
+        if action == "REC":
+            rec_qty, rec_px = _resolve_receive(
+                abs(qty), qty_raw, buy_pool.get((date, underlying), []))
+            txns.append(_txn(
+                date=date, account="Robinhood", symbol=underlying,
+                action=action, quantity=rec_qty, price=rec_px, fees=0.0,
+                amount=rec_qty * rec_px,
+                description=(description or "") + " | Share receipt (no cash outlay)",
+                source=filepath.name,
+            ))
+            continue
 
         # Split ACH by direction before abs()
         if action == "ACH":

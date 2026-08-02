@@ -277,3 +277,83 @@ class TestQuantityParsing:
         oexcs = [t for t in txns if t["action"] == "OEXCS"]
         assert len(oexcs) == 1
         assert oexcs[0]["quantity"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# REC — shares received with no cash outlay (a promotional credit).
+# Deliberately NOT a corporate action: it used to normalize to "Merger",
+# which mislabeled the ledger row and swept it into corp-action reporting.
+# ---------------------------------------------------------------------------
+
+class TestShareReceipt:
+    def _rec_with_companion_buy(self, csv):
+        """A partly-cash-funded order: the buy leg covers 0.984963 shares,
+        a $5 promo credit tops it up to a whole share.  Robinhood rounds
+        the REC quantity to 4 decimals (true value 0.015037) and leaves
+        its price and amount blank."""
+        write_robinhood_csv(csv, [
+            {"Activity Date": "2/6/2025", "Trans Code": "Buy",
+             "Instrument": "ZZZ", "Description": "Zeta Corp",
+             "Quantity": "0.984963", "Price": "$402.00", "Amount": "($397.00)"},
+            {"Activity Date": "2/6/2025", "Trans Code": "REC",
+             "Instrument": "ZZZ", "Description": "Zeta Corp",
+             "Quantity": "0.0150"},
+        ])
+        return [t for t in _parse(csv) if t["action"] == "REC"]
+
+    def test_rec_normalizes_to_reward_not_merger(self, isolated_workdir):
+        """REC is a reward receipt, not a corporate action."""
+        from src.normalize import normalize_action
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        rec = self._rec_with_companion_buy(csv)[0]
+        rec["account_group"] = "Robinhood"
+        assert normalize_action(rec) == "Reward"
+
+    def test_rec_snaps_rounded_quantity_to_whole_share(self, isolated_workdir):
+        """The two same-day legs sum to exactly one share; the parser
+        recovers the digits Robinhood rounded off the REC row."""
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        rec = self._rec_with_companion_buy(csv)[0]
+        assert rec["quantity"] == pytest.approx(0.015037, abs=1e-9)
+        assert _balance(_parse(csv), "ZZZ") == pytest.approx(1.0, abs=1e-9)
+
+    def test_rec_takes_fmv_from_same_day_buy(self, isolated_workdir):
+        """No price on the row, so the companion buy's execution price is
+        the FMV at receipt — which becomes the reward lot's cost basis
+        (zero_basis → qty × price) instead of $0."""
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        rec = self._rec_with_companion_buy(csv)[0]
+        assert rec["price"] == pytest.approx(402.00)
+        assert rec["amount"] == pytest.approx(0.015037 * 402.00)
+
+    def test_standalone_rec_keeps_quantity_and_gets_no_price(self, isolated_workdir):
+        """A free-stock reward with no same-day purchase has no FMV
+        evidence in the file — leave the quantity alone and fall back to
+        the zero-basis treatment rather than inventing a price."""
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        write_robinhood_csv(csv, [
+            {"Activity Date": "2/6/2025", "Trans Code": "REC",
+             "Instrument": "ZZZ", "Description": "Zeta Corp",
+             "Quantity": "0.0150"},
+        ])
+        rec = [t for t in _parse(csv) if t["action"] == "REC"][0]
+        assert rec["quantity"] == pytest.approx(0.0150)
+        assert rec["price"] == 0.0
+        assert rec["amount"] == 0.0
+
+    def test_rec_quantity_untouched_when_legs_miss_a_whole_share(self, isolated_workdir):
+        """Snapping only fires as ROUNDING recovery: the correction is
+        capped at half the REC row's last printed decimal, so legs that
+        land nowhere near a whole share are left exactly as reported."""
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        write_robinhood_csv(csv, [
+            {"Activity Date": "2/6/2025", "Trans Code": "Buy",
+             "Instrument": "ZZZ", "Description": "Zeta Corp",
+             "Quantity": "0.5", "Price": "$402.00", "Amount": "($201.00)"},
+            {"Activity Date": "2/6/2025", "Trans Code": "REC",
+             "Instrument": "ZZZ", "Description": "Zeta Corp",
+             "Quantity": "0.0150"},
+        ])
+        rec = [t for t in _parse(csv) if t["action"] == "REC"][0]
+        assert rec["quantity"] == pytest.approx(0.0150)
+        assert rec["price"] == pytest.approx(402.00)

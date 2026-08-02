@@ -69,7 +69,6 @@ RULES = [
     {"account_group": "Robinhood", "action": "MRGS",  "normalized": "Merger"},
     {"account_group": "Robinhood", "action": "SXCH",  "normalized": "Merger"},
     {"account_group": "Robinhood", "action": "CIL",   "normalized": "Merger"},
-    {"account_group": "Robinhood", "action": "REC",   "normalized": "Merger"},
     {"account_group": "Robinhood", "action": "LIQ",   "normalized": "Sell"},
     {"account_group": "Robinhood", "action": "AFEE",  "normalized": "Fee"},
     {"account_group": "Robinhood", "action": "DFEE",  "normalized": "Fee"},
@@ -83,6 +82,14 @@ RULES = [
     # MISC = promotional cash rewards (e.g. the prediction-markets
     # learning bonus) — count as reward income.
     {"account_group": "Robinhood", "action": "MISC",  "normalized": "Reward"},
+    # REC = "received": shares credited with no cash outlay — the stock
+    # analogue of MISC (a promo credit topping an order up to a whole
+    # share, a referral free share, …).  Same treatment: reward income at
+    # FMV, and FMV becomes the lot's basis.  The parser recovers the FMV
+    # price from the same-day companion buy — see parsers.robinhood.
+    # _resolve_receive.  This used to map to "Merger", which mislabeled
+    # the ledger row and dropped it into corporate-action reporting.
+    {"account_group": "Robinhood", "action": "REC",   "normalized": "Reward"},
 
     # ── Coinbase (regular) ───────────────────────────────────────────────
     {"account_group": "Coinbase", "action": "Buy",                          "normalized": "Buy"},

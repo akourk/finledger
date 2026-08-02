@@ -589,6 +589,23 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   realized gain = cash_proceeds − basis. OEXP rows also default qty to
   1 when Robinhood leaves the field blank, so expired options actually
   vanish from the balance instead of piling up forever.
+- **Robinhood `REC` = shares received with no cash outlay** — a
+  promotional credit (the stock analogue of `MISC`), NOT a corporate
+  action.  It normalizes to `Reward`: reward income at FMV, and FMV
+  becomes the lot's basis via the `zero_basis` branch.  Robinhood
+  writes these rows with an empty Price and Amount and rounds the
+  Quantity to fewer decimals than it tracks, so
+  `parsers.robinhood._resolve_receive` recovers both from the
+  **same-day companion Buy of the same instrument**: its execution
+  price is the FMV at receipt, and when the two legs sum to a whole
+  share the REC quantity snaps to complete it.  The snap is bounded by
+  half of the REC row's own last printed decimal — it can only ever
+  undo the broker's rounding, never invent precision — and it needs at
+  least 3 printed decimals to fire.  With no same-day companion (a
+  standalone free-stock reward) the row keeps its reported quantity and
+  falls back to $0 basis.  `REC` used to map to `Merger`, which
+  mislabeled the ledger row, swept it into corporate-action reporting,
+  and left the position a hair off the broker's whole-share count.
 - **`metadata.csv` is user-maintained metadata + project config.** The
   scanner classifies it as "skip" so the transaction pipeline never
   touches it, but `metadata.parse_metadata` reads it early in main()
