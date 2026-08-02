@@ -701,7 +701,16 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     broker figure; Note = source.  Parsed into
     `retirement_meta["reconcile"]`, consumed by
     `analytics/reconcile.py`, surfaced in the Overview's
-    Reconciliation panel.  Absent → the panel hides.  Realized rows
+    Reconciliation panel.  Absent → the panel hides.  A Note may
+    carry an `[expected ±N.NN]` token (no thousands separators)
+    declaring a KNOWN, documented delta (a K-1 entity's
+    distributions the 1099-DIV can't see, a broker's per-program
+    reporting threshold, lot-relief basis residuals, structural
+    limits): status is then banded on the RESIDUAL (delta −
+    expected) and renders `explained` when clean — but re-flags at
+    the residual's severity when reality drifts from the
+    expectation, so an explanation can never mask new drift.
+    Realized rows
     should be the 1099-B *equity* grand-total (exclude §1256, which
     has its own row).  **`Reconcile Realized` also acts as a
     tax-override**: `analytics/tax.py._tax_rate_estimate` trusts the

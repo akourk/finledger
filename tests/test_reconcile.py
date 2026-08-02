@@ -136,3 +136,48 @@ def test_rows_carry_date_for_drilldown():
     by_kind = {r["kind"]: r for r in rec["rows"]}
     assert by_kind["realized"]["date"] == "2025"
     assert by_kind["balance"]["date"] == "2026-05-31"
+
+
+def test_expected_delta_renders_explained():
+    """An `[expected ±N.NN]` Note token bands the RESIDUAL: a documented
+    delta that still holds renders 'explained' instead of off."""
+    rec = compute_reconciliation(_txns(), _history(), [
+        # fin computes 75; form says 69.06 -> delta +5.94, all expected
+        # (a K-1 entity's distributions the 1099-DIV can't see).
+        {"kind": "income", "account_group": "Robinhood",
+         "date": "2025", "amount": 69.06,
+         "note": "1099-DIV+INT [expected +5.94] EPD K-1"},
+    ])
+    row = rec["rows"][0]
+    assert row["status"] == "explained"
+    assert row["delta"] == 5.94
+    assert row["expected"] == 5.94
+    assert "residual +0.00" in row["detail"]
+    assert rec["summary"]["explained"] == 1
+    assert rec["summary"]["off"] == 0
+
+
+def test_stale_expectation_reflags_on_residual():
+    """An explanation must never mask NEW drift: when the actual delta
+    moves away from the expectation, the row re-flags at the residual's
+    severity."""
+    rec = compute_reconciliation(_txns(), _history(), [
+        # fin computes 75; form says 50 -> delta +25, but only +5.94 is
+        # documented -> residual +19.06 -> off.
+        {"kind": "income", "account_group": "Robinhood",
+         "date": "2025", "amount": 50.0,
+         "note": "[expected +5.94] EPD K-1"},
+    ])
+    row = rec["rows"][0]
+    assert row["status"] == "off"
+    assert "residual +19.06" in row["detail"]
+
+
+def test_note_without_token_unchanged():
+    rec = compute_reconciliation(_txns(), _history(), [
+        {"kind": "income", "account_group": "Robinhood",
+         "date": "2025", "amount": 90.0,
+         "note": "expected to be close"},   # prose, not a token
+    ])
+    assert rec["rows"][0]["status"] == "off"
+    assert rec["rows"][0]["expected"] is None

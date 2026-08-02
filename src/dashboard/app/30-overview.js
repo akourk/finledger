@@ -774,7 +774,8 @@ function renderOverviewStatus() {
   // show up here as expected, explainable deltas.
   const recon = ANALYTICS.reconciliation;
   if (recon && recon.rows && recon.rows.length) {
-    const sevOf = { ok: 'info', warn: 'warn', off: 'high', nodata: 'info' };
+    const sevOf = { ok: 'info', explained: 'info', warn: 'warn',
+                    off: 'high', nodata: 'info' };
     const s = recon.summary || {};
     bump(s.off ? 'high' : s.warn ? 'warn' : 'info');
     const fmtN = v => v == null ? '—' : fmtMoney(v, 2);
@@ -801,7 +802,8 @@ function renderOverviewStatus() {
     for (const k of ['off', 'warn']) {
       if (s[k]) chips.push(`<span class="dh-chip sev-${sevOf[k]}">${s[k]} ${k}</span>`);
     }
-    chips.push(`<span class="dh-chip sev-info">${s.ok || 0}/${total} reconcile</span>`);
+    const okish = (s.ok || 0) + (s.explained || 0);
+    chips.push(`<span class="dh-chip sev-info">${okish}/${total} reconcile${s.explained ? ` (${s.explained} explained)` : ''}</span>`);
     reconSection = `<div class="dh-category">
       <h4>Reconciliation <span style="color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:0;">— ${total} check${total === 1 ? '' : 's'} vs broker docs</span></h4>
       <table>

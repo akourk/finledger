@@ -23,6 +23,7 @@ activity CSV.  The panel surfaces them rather than hiding them.
 
 from __future__ import annotations
 
+import re
 from datetime import date as _date
 
 from ._shared import INCOME_ACTION_KINDS
@@ -115,6 +116,29 @@ def _computed_income(txns, account_group, year, buckets) -> float:
     return total
 
 
+_EXPECTED_RE = re.compile(r"\[expected\s+([+-]?\d+(?:\.\d+)?)\s*\]")
+
+
+def _expected_delta(note: str) -> float | None:
+    """Parse an ``[expected ±N.NN]`` token from a Reconcile row's Note.
+
+    The token declares a KNOWN, documented delta (a K-1 entity the form
+    can't see, a broker's per-program reporting threshold, structural
+    lot-relief residuals…).  Status is then computed on the RESIDUAL
+    (delta − expected): a clean residual renders as "explained" instead
+    of warn/off, while a residual outside the band re-flags the row —
+    an explanation can never mask NEW drift.  No thousands separators
+    in the amount (the Note is a CSV field).
+    """
+    m = _EXPECTED_RE.search(note or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
 def compute_reconciliation(txns, history, reconcile_meta):
     """Pair each user ``Reconcile *`` row against fin's computed figure.
 
@@ -171,6 +195,20 @@ def compute_reconciliation(txns, history, reconcile_meta):
             continue
 
         delta = computed - reported
+        expected = _expected_delta(note)
+        if expected is not None:
+            residual = round(delta - expected, 2)
+            if residual == 0:
+                residual = 0.0   # normalize -0.00 from float epsilon
+            # Band the residual, not the raw delta: a documented delta
+            # that still holds renders "explained"; one that drifted
+            # away re-flags at the residual's severity.
+            status = _status(kind, reported, residual)
+            if status == "ok":
+                status = "explained"
+            detail = (f"expected {expected:+.2f}; "
+                      f"residual {residual:+.2f}"
+                      + (f" — {detail}" if detail else ""))
         rows.append({
             # `date` (year for form kinds, ISO date for balance) lets the
             # dashboard's drill-down re-derive the composing txn set
@@ -178,15 +216,19 @@ def compute_reconciliation(txns, history, reconcile_meta):
             "kind": kind, "account_group": ag, "label": label,
             "date": date_s,
             "reported": round(reported, 2), "computed": round(computed, 2),
-            "delta": round(delta, 2), "status": _status(kind, reported, delta),
+            "delta": round(delta, 2),
+            "status": (status if expected is not None
+                       else _status(kind, reported, delta)),
+            "expected": (round(expected, 2) if expected is not None else None),
             "note": note, "detail": detail,
         })
 
     rows.sort(key=lambda x: (x["account_group"], x["kind"], x["label"]))
     summary = {
         "total": len(rows),
-        "ok":   sum(1 for r in rows if r["status"] == "ok"),
-        "warn": sum(1 for r in rows if r["status"] == "warn"),
-        "off":  sum(1 for r in rows if r["status"] == "off"),
+        "ok":        sum(1 for r in rows if r["status"] == "ok"),
+        "explained": sum(1 for r in rows if r["status"] == "explained"),
+        "warn":      sum(1 for r in rows if r["status"] == "warn"),
+        "off":       sum(1 for r in rows if r["status"] == "off"),
     }
     return {"rows": rows, "summary": summary}
