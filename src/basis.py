@@ -60,6 +60,31 @@ _INCOME_ACTIONS       = INCOME_ACTIONS
 # treating intra-IRA fund swaps as money out of the user's pocket.
 _ROLLOVER_GROUPS = frozenset({"Roth IRA", "Rollover IRA"})
 
+# Raw broker actions whose Transfer In / Transfer Out crosses fin's
+# MEASUREMENT BOUNDARY — the asset moves to or from somewhere fin has
+# no visibility into (a self-custody wallet, another exchange, a bank).
+#
+# This is the crucial distinction from the many raw actions that merely
+# shuffle assets between wallets fin ALREADY tracks under one
+# account_group (Coinbase's `Pro Withdrawal` / `Exchange Deposit` /
+# `Retail Staking Transfer In|Out`, …).  Those net to zero and must
+# stay flows-neutral; these do not.
+#
+# Keyed on RAW action because the broker's own vocabulary is what
+# distinguishes them — after normalization both collapse to the same
+# canonical `Transfer In` / `Transfer Out`.  Scoped per account_group
+# because these names are broker-specific.
+#
+# ``{account_group: (external_inflow_raw, external_outflow_raw)}``
+_EXTERNAL_TRANSFER_MARKERS = {
+    # Coinbase `Send` / `Receive` are on-chain transfers to/from an
+    # address outside Coinbase.  `Withdrawal` on a CRYPTO symbol is an
+    # old-export quirk (normalize sends USD `Withdrawal` to the proper
+    # `Withdrawal` action; only the crypto ones land on Transfer Out).
+    "Coinbase": (frozenset({"Receive"}),
+                 frozenset({"Send", "Withdrawal"})),
+}
+
 
 def txn_external_cash_flow(t: dict) -> float:
     """Signed external cash-flow amount for a single transaction.
@@ -91,6 +116,16 @@ def txn_external_cash_flow(t: dict) -> float:
        under-count Roth IRA contributions by the user's full USAA
        history.
 
+    3. ``Transfer In`` / ``Transfer Out`` rows whose RAW action marks
+       them as crossing fin's measurement boundary (see
+       ``_EXTERNAL_TRANSFER_MARKERS``) count as +/-amount at FMV.
+       Ordinary transfers stay 0 — they move assets between accounts
+       fin already tracks, so both legs cancel.  But crypto sent to a
+       self-custody wallet leaves fin's view entirely: with no
+       offsetting flow the value drop reads as a market loss, and
+       chain-linked TWR compounds it.  Airdrops (income arriving as a
+       ``Receive``) are excluded.
+
     Used by:
     - ``basis.compute_cash_summary`` (cash_summary.net_contributed)
     - ``history._compute_net_contributed_series`` (snapshot series)
@@ -107,6 +142,27 @@ def txn_external_cash_flow(t: dict) -> float:
         if a == "Distribution" and t.get("account_group") in _ROLLOVER_GROUPS:
             return 0.0
         return -amt
+    # 3. Assets crossing fin's measurement boundary — crypto sent to or
+    #    received from an address fin doesn't track.  fin can only
+    #    measure what's inside the boundary, so an outbound send is
+    #    economically a WITHDRAWAL and an inbound receive a
+    #    CONTRIBUTION, both at FMV.  Left as "ignore" (the old
+    #    behaviour) the value simply vanishes or appears with no
+    #    offsetting flow, and Modified-Dietz books it as market
+    #    performance: sending crypto to a hardware wallet registered as
+    #    a total loss of that amount.
+    if a in ("Transfer In", "Transfer Out"):
+        raw_in, raw_out = _EXTERNAL_TRANSFER_MARKERS.get(
+            t.get("account_group", ""), (frozenset(), frozenset()))
+        raw = t.get("raw_action", "") or ""
+        if raw in raw_in or raw in raw_out:
+            # Airdrops arrive as a `Receive` but are INCOME, not
+            # contributed capital — counting them as a contribution
+            # would suppress the return they represent.
+            if "airdrop" in (t.get("description") or "").lower():
+                return 0.0
+            return amt if raw in raw_in else -amt
+
     # USAA-style contribution marker on a Buy row
     if a == "Buy" and t.get("account_group") == "Roth IRA":
         desc = (t.get("description") or "").upper()

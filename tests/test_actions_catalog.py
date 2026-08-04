@@ -103,6 +103,77 @@ def test_robinhood_roc_futswp_misc_classification():
     assert INCOME_ACTION_KINDS.get("Reward") == "rewards"
 
 
+def test_robinhood_directional_codes_split_by_sign():
+    """FUTSWP and ROC each carry BOTH cash directions under one raw
+    code: event-contract cash moves to and from the prediction-markets
+    entity, and Robinhood reverses a mis-paid return-of-capital with a
+    second ROC row (negative amount, "REVERT:" description).
+
+    The parser splits them by sign before abs() — per CLAUDE.md's
+    "split ambiguous actions in the parser, not downstream" invariant —
+    because after abs() the direction is unrecoverable.  Both legs
+    would then read as credits and cash_bridge would over-report the
+    balance by twice the outbound amount.
+
+    Both directions stay fully inert for balance / basis /
+    net_contributed; only the cash reconstruction cares which way the
+    money went.
+    """
+    from src.normalize import normalize_action
+    from src.actions import ACTIONS, CASH_ADD_ACTIONS, CASH_SUB_ACTIONS
+    from src.cash_bridge import usd_effect
+
+    for raw, canonical in (("FUTSWP OUT", "Event Contract Transfer Out"),
+                           ("ROC REVERT", "Return of Capital Reversal")):
+        got = normalize_action(
+            {"action": raw, "account_group": "Robinhood", "symbol": "USD"})
+        assert got == canonical, f"{raw} → {got}"
+        act = ACTIONS[canonical]
+        assert (act.balance, act.basis) == ("neutral", "ignore")
+        # Never external cash flow — inert for net_contributed / TWR.
+        assert canonical not in CASH_ADD_ACTIONS
+        assert canonical not in CASH_SUB_ACTIONS
+        # ...but a DEBIT to the reconstructed brokerage cash balance.
+        assert usd_effect({"account_group": "Robinhood", "action": canonical,
+                           "symbol": "USD", "amount": 100.0}) == -100.0
+
+    # Positive legs keep the original canonical names and credit cash.
+    for raw, canonical in (("FUTSWP", "Event Contract Transfer"),
+                           ("ROC", "Return of Capital")):
+        assert normalize_action(
+            {"action": raw, "account_group": "Robinhood",
+             "symbol": "USD"}) == canonical
+        assert usd_effect({"account_group": "Robinhood", "action": canonical,
+                           "symbol": "USD", "amount": 100.0}) == +100.0
+
+
+def test_robinhood_parser_splits_directional_rows(tmp_path):
+    """End-to-end through the parser: a parenthesized (negative) amount
+    must emerge as the Out/Reversal variant, a plain one as the inbound
+    action — with the amount abs()ed in both cases."""
+    from src.parsers.robinhood import parse_robinhood as rh_parse
+
+    csv = tmp_path / "robinhood-x.csv"
+    csv.write_text(
+        '"Activity Date","Process Date","Settle Date","Instrument",'
+        '"Description","Trans Code","Quantity","Price","Amount"\n'
+        '"6/15/2026","6/15/2026","6/15/2026","","Event Contracts '
+        'Inter-Entity Cash Transfer","FUTSWP","","","($800.00)"\n'
+        '"6/8/2026","6/8/2026","6/8/2026","","Event Contracts '
+        'Inter-Entity Cash Transfer","FUTSWP","","","$50.00"\n'
+        '"4/28/2026","5/4/2026","4/28/2026","VISN","REVERT: Return of '
+        'Capital: R/D 2026-04-17","ROC","","","($100.00)"\n'
+        '"4/28/2026","4/28/2026","4/28/2026","VISN","Return of Capital: '
+        'R/D 2026-04-17","ROC","","","$100.00"\n',
+        encoding="utf-8")
+
+    by_action = {(t["action"], t["amount"]) for t in rh_parse(csv)}
+    assert ("FUTSWP OUT", 800.0) in by_action
+    assert ("FUTSWP", 50.0) in by_action
+    assert ("ROC REVERT", 100.0) in by_action
+    assert ("ROC", 100.0) in by_action
+
+
 def test_income_classification_is_catalog_derived():
     """Income membership lives on the Action.income field; the three
     downstream consumers must all derive from it (no hardcoded copies)."""
@@ -201,6 +272,58 @@ def test_external_cash_flow_helper_handles_all_carve_outs():
     assert txn_external_cash_flow({
         "action": "Trade Settle In", "amount": 500.0,
         "account_group": "Coinbase",
+    }) == 0.0
+
+    # Carve-out 4: transfers crossing fin's MEASUREMENT BOUNDARY.
+    # Coinbase Send/Receive are on-chain moves to/from an address fin
+    # can't see, so they're a withdrawal / contribution at FMV.
+    assert txn_external_cash_flow({
+        "action": "Transfer Out", "raw_action": "Send", "amount": 4000.0,
+        "account_group": "Coinbase", "symbol": "ETH-USD",
+        "description": "Sent 10 ETH to 0xABC123",
+    }) == -4000.0
+    assert txn_external_cash_flow({
+        "action": "Transfer In", "raw_action": "Receive", "amount": 2000.0,
+        "account_group": "Coinbase", "symbol": "ETH-USD",
+        "description": "Received 5 ETH from an external account",
+    }) == 2000.0
+    # Crypto `Withdrawal` (old-export quirk: normalize routes USD
+    # Withdrawal to the real Withdrawal action, crypto to Transfer Out).
+    assert txn_external_cash_flow({
+        "action": "Transfer Out", "raw_action": "Withdrawal", "amount": 500.0,
+        "account_group": "Coinbase", "symbol": "ETH-USD",
+    }) == -500.0
+
+    # ...but INTRA-Coinbase shuffles must stay neutral.  These move
+    # assets between wallets fin already tracks under one account_group,
+    # so both legs cancel; counting them would inflate net_contributed
+    # by six figures on a real ledger.
+    for raw in ("Pro Withdrawal", "Exchange Withdrawal",
+                "Retail Staking Transfer In", "Retail Unstaking Transfer In"):
+        assert txn_external_cash_flow({
+            "action": "Transfer In", "raw_action": raw, "amount": 20000.0,
+            "account_group": "Coinbase", "symbol": "ETH-USD",
+        }) == 0.0, raw
+    for raw in ("Pro Deposit", "Exchange Deposit",
+                "Retail Staking Transfer Out", "Retail Unstaking Transfer Out"):
+        assert txn_external_cash_flow({
+            "action": "Transfer Out", "raw_action": raw, "amount": 20000.0,
+            "account_group": "Coinbase", "symbol": "ETH-USD",
+        }) == 0.0, raw
+
+    # Airdrops arrive as a Receive but are INCOME, not contributed
+    # capital — counting them as a contribution suppresses the return.
+    assert txn_external_cash_flow({
+        "action": "Transfer In", "raw_action": "Receive", "amount": 5.0,
+        "account_group": "Coinbase", "symbol": "FLR-USD",
+        "description": "Received 100 FLR from Flare Airdrop",
+    }) == 0.0
+
+    # Markers are scoped per account_group — another broker's "Send"
+    # must not be swept up by Coinbase's vocabulary.
+    assert txn_external_cash_flow({
+        "action": "Transfer Out", "raw_action": "Send", "amount": 100.0,
+        "account_group": "Robinhood",
     }) == 0.0
 
 

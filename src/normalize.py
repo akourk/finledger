@@ -75,10 +75,16 @@ RULES = [
     {"account_group": "Robinhood", "action": "DTAX",  "normalized": "Tax"},
     {"account_group": "Robinhood", "action": "CONV",  "normalized": "Conversion"},
     {"account_group": "Robinhood", "action": "ROC",   "normalized": "Return of Capital"},
+    # Negative-amount ROC = Robinhood reversing a mis-paid distribution.
+    # The parser splits it by sign (raw "ROC REVERT") so the cash bridge
+    # sees a debit rather than a second credit.
+    {"account_group": "Robinhood", "action": "ROC REVERT", "normalized": "Return of Capital Reversal"},
     # FUTSWP = "Event Contracts Inter-Entity Cash Transfer" — internal
     # cash move to/from the prediction-markets entity; fully excluded
     # from performance (see actions.py "Event Contract Transfer").
+    # Directional: the parser splits the negative leg to "FUTSWP OUT".
     {"account_group": "Robinhood", "action": "FUTSWP", "normalized": "Event Contract Transfer"},
+    {"account_group": "Robinhood", "action": "FUTSWP OUT", "normalized": "Event Contract Transfer Out"},
     # MISC = promotional cash rewards (e.g. the prediction-markets
     # learning bonus) — count as reward income.
     {"account_group": "Robinhood", "action": "MISC",  "normalized": "Reward"},

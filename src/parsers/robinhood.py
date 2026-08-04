@@ -388,6 +388,18 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
         if action == "ACH":
             action = "ACH Deposit" if amount >= 0 else "ACH Withdrawal"
 
+        # FUTSWP and ROC are directional under a single raw code — cash
+        # moves BOTH ways to the event-contracts entity, and Robinhood
+        # reverses a mis-paid return-of-capital with a second ROC row
+        # ("REVERT: ..." description, negative amount).  Split before
+        # abs() or the direction is unrecoverable downstream, which
+        # silently inflates the reconstructed cash balance the history
+        # bridge relies on (see cash_bridge.py).
+        if action == "FUTSWP" and amount < 0:
+            action = "FUTSWP OUT"
+        if action == "ROC" and amount < 0:
+            action = "ROC REVERT"
+
         # BTO/STC operate on a specific option contract, not the
         # underlying — use the description-derived symbol so their basis
         # and balance stay separate from the stock's.

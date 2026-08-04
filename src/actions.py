@@ -148,6 +148,15 @@ _ACTIONS: tuple[Action, ...] = (
            "dividends aren't tracked either.  NOT income — excluded from "
            "the Income tab.  cash_flow='neutral' keeps it out of "
            "net_contributed / performance contribution accounting."),
+    Action("Return of Capital Reversal", "neutral", "ignore", "neutral", "#5eead4",
+           "Robinhood reverses a mis-paid return-of-capital with a second "
+           "ROC row carrying a 'REVERT:' description and a NEGATIVE amount; "
+           "the parser splits it off by sign.  Same classification as "
+           "Return of Capital — inert for balance, basis, and "
+           "net_contributed — but it debits the brokerage cash balance, so "
+           "the cash_bridge reconstruction must see it as an outflow.  "
+           "Without the split both legs read as credits and the bridge "
+           "over-reports cash by twice the reversed amount."),
     Action("Split",          "add",      "split",     "neutral", "#fbbf24",
            "Forward stock split — adds new shares, scales basis-per-share."),
     Action("Spinoff",        "add",      "zero_basis", "neutral", "#9ca3af",
@@ -190,6 +199,13 @@ _ACTIONS: tuple[Action, ...] = (
            "basis='ignore', cash_flow='ignore' so event-contract activity "
            "is excluded from net_contributed, TWR, Sharpe, FIRE, and every "
            "other performance metric (per user: not tracking these)."),
+    Action("Event Contract Transfer Out", "neutral", "ignore", "ignore", "#94a3b8",
+           "Outbound leg of the FUTSWP inter-entity cash shuffle (negative "
+           "raw amount, split off in the parser).  Identical classification "
+           "to Event Contract Transfer — fully inert for every performance "
+           "metric — but the direction matters to the cash_bridge "
+           "reconstruction, which tracks the brokerage cash balance these "
+           "transfers debit."),
     Action("Fee",            "subtract", "remove",  "ignore",  "#f87171",
            "Share-level fee (rare); USD fees route to basis 'ignore'."),
     Action("Tax",            "subtract", "remove",  "ignore",  "#fb7185"),
