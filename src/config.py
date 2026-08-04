@@ -108,3 +108,17 @@ SYMBOL_MAP = {
 
 # Symbols that are really just cash (value = 1 per unit)
 CASH_SYMBOLS = {"USD"}
+
+# Benchmark tickers for the Performance tab / Overview overlay.
+# SPY = US large-cap, BND = US aggregate bond, VXUS = international
+# ex-US.  Priced as total return so the comparison against the user's
+# TWR is apples-to-apples (see prices._is_total_return_symbol).
+#
+# Their price series must run through TODAY regardless of whether the
+# user holds them, so they are exempt from the closed-position fetch
+# clamp and the trivial-symbol filter (see pipeline_stages.
+# compute_position_endings).  Without that exemption, buying and then
+# selling a benchmark ticker turns it into a "closed position", clamps
+# its fetch range to the sell date, and silently freezes the benchmark
+# line at zero from there on — which is exactly what happened to VXUS.
+BENCHMARK_SYMBOLS: tuple[str, ...] = ("SPY", "BND", "VXUS")

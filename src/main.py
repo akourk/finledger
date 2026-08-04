@@ -230,7 +230,7 @@ def _refresh_prices_only(args) -> None:
     # vs ~30s individually).  Historical backfill is NOT re-run —
     # refresh-prices mode assumes the prior full pipeline already
     # filled in the historical cache.
-    _BENCHMARK_SYMBOLS = ("SPY", "BND", "VXUS")
+    from .config import BENCHMARK_SYMBOLS as _BENCHMARK_SYMBOLS
     # Option underlyings ride along so the intrinsic-value floor below
     # has a fresh underlying close to read.
     refresh_set = sorted(set(held_symbols) | set(_BENCHMARK_SYMBOLS)
@@ -709,7 +709,14 @@ def main():
     # snapshot value).  Pulled into pipeline_stages so the refresh path
     # can reuse it.
     from .pipeline_stages import compute_position_endings
+    from .config import BENCHMARK_SYMBOLS as _BENCHMARK_SYMBOLS
     closed_position_ends, trivial = compute_position_endings(txns)
+    # Benchmarks must stay current even when the user briefly HELD one:
+    # a buy-then-sell makes it a closed position, which would clamp its
+    # fetch range to the sell date and freeze the overlay at zero.
+    for _b in _BENCHMARK_SYMBOLS:
+        closed_position_ends.pop(_b, None)
+    trivial -= set(_BENCHMARK_SYMBOLS)
     all_symbols_ever -= trivial
     if trivial:
         print(f"  Skipping price fetch for {len(trivial)} trivial symbol(s) "
@@ -717,12 +724,8 @@ def main():
               f"{', '.join(sorted(trivial)[:8])}"
               f"{' ...' if len(trivial) > 8 else ''}")
 
-    # Benchmark tickers for the Performance tab / Overview overlay.
-    # SPY = US large-cap, BND = US aggregate bond, VXUS = international
-    # ex-US.  All fetched as total return (Adj Close) so the comparison
-    # vs. the user's portfolio TWR is apples-to-apples; see
-    # prices._is_total_return_symbol.
-    _BENCHMARK_SYMBOLS = ("SPY", "BND", "VXUS")
+    # Benchmark tickers for the Performance tab / Overview overlay —
+    # see config.BENCHMARK_SYMBOLS.
     all_symbols_ever.update(_BENCHMARK_SYMBOLS)
     # Underlying tickers of option-contract symbols: the contracts
     # themselves are unfetchable (multi-word), but the intrinsic-value
