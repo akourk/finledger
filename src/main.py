@@ -600,6 +600,17 @@ def main():
     # don't mistake intra-Coinbase shuffles for external funding.
     txns = _reconcile_coinbase_external_funding(txns)
 
+    # --- Step 4d-iii: Robinhood external-funding heuristic.
+    # Robinhood's activity export starts at the first TRADE, not the
+    # first ACH — this account traded for over a year before its
+    # earliest Deposit row.  Without the synth the reconstructed cash
+    # balance runs negative through the early years, the history
+    # bridge clamps it to $0, and the resulting phantom value swings
+    # on a tiny base produce chain-linked TWR periods that dominate
+    # the lifetime figure.  Same cumulative-min approach as Coinbase.
+    from .cash_bridge import synthesize_external_funding
+    txns = synthesize_external_funding(txns, "Robinhood")
+
     # --- Step 4e: Ensure positive qty/amount ---
     # After normalization, direction is encoded in the action.
     # Make quantity and amount always non-negative for display consistency.

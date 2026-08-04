@@ -28,6 +28,11 @@ from datetime import datetime, timedelta
 from ..basis import _basis_dollars, BASIS_EFFECTS  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
 from ..prices import get_price, option_intrinsic, split_factor_since
+from ..cash_bridge import (
+    all_series as cash_bridge_series,
+    balance_at as cash_balance_at,
+    BRIDGE_MIN as CASH_BRIDGE_MIN,
+)
 
 # ---------------------------------------------------------------------------
 # Shared constants / classifiers
@@ -753,7 +758,8 @@ def _balance_sort_key(t: dict) -> tuple:
 
 def _value_at_date(txns_sorted: list[dict], target: str,
                    filter_groups: frozenset | None,
-                   bridges: list[dict]) -> float:
+                   bridges: list[dict],
+                   cash_series: dict[str, list] | None = None) -> float:
     """Portfolio value at close-of-day `target` for the given filter.
 
     Walks a pre-sorted txn list to build running balances per
@@ -815,6 +821,18 @@ def _value_at_date(txns_sorted: list[dict], target: str,
                 from ..config import contract_multiplier
                 total += qty * fb * contract_multiplier(sym)
     total += bridge_adjustment(target, filter_groups, bridges)
+    # Reconstructed broker cash (see cash_bridge.py).  Distinct from
+    # `bridges` above, which is the rollover-bridge adjustment.
+    # Passed in rather than derived here: the caller walks many
+    # boundary dates off one txn list, and rebuilding the series per
+    # date would make this quadratic.
+    if cash_series:
+        for bgroup, bseries in cash_series.items():
+            if filter_groups is not None and bgroup not in filter_groups:
+                continue
+            bcash = cash_balance_at(bseries, target)
+            if bcash >= CASH_BRIDGE_MIN:
+                total += bcash
     return total
 
 
@@ -889,7 +907,9 @@ def compute_twr_daily_summary(txns: list[dict], history: list[dict],
             boundaries.append(d)
     flow_at = dict(events)
 
-    values = [_value_at_date(txns_sorted, d, filter_groups, bridges) for d in boundaries]
+    cash_series = cash_bridge_series(txns)
+    values = [_value_at_date(txns_sorted, d, filter_groups, bridges, cash_series)
+              for d in boundaries]
 
     cumulative = 1.0
     any_valid = False

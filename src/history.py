@@ -254,41 +254,15 @@ def compute_history(txns: list[dict],
     # each snapshot.  Apples-to-apples with the SPY benchmark.
     net_contrib_series = _compute_net_contributed_series(txns, samples)
 
-    # Coinbase implicit USD bridge.  For Coinbase-only (where the
-    # complete-data property holds after the GDAX-deprecation marker
-    # fix and cumulative-min synth), we know the implicit USD wallet
-    # balance at every date.  Adding this to snapshot value
-    # eliminates the spurious "drop to zero" mid-period when the user
-    # sells crypto and the next Buy / Withdrawal is on a different
-    # snapshot.  See ``coinbase.usd_series`` for the full rationale.
-    from .coinbase_reconcile import usd_series as _cb_usd_series
-    _cb_usd_eod = _cb_usd_series(txns)
-    _cb_usd_dates = [d for d, _ in _cb_usd_eod]
-    _cb_usd_balances = [b for _, b in _cb_usd_eod]
-
-    def _coinbase_usd_at(sample_date: str) -> float:
-        """Implicit Coinbase USD balance at end-of-day on sample_date.
-
-        Walk-back lookup: the most recent end-of-day balance with
-        date <= sample_date.  Returns 0.0 before any Coinbase
-        activity.  Negative results clamp to 0 — the Coinbase
-        reconciliation guarantees the natural flow ends ≈ $0, but
-        intermediate dates can show transient deficits when same-day
-        Sells haven't been counted yet (the cumulative-min approach
-        in _reconcile_coinbase_external_funding accepts these as
-        recycled-cash transients, not real external funding gaps).
-        """
-        # Linear search; len(_cb_usd_dates) ~= a few thousand at most
-        # and we lookup only ~108 sample dates.  Binary search would
-        # micro-optimize; not worth the dependency on bisect for the
-        # readability tradeoff.
-        bal = 0.0
-        for d, b in zip(_cb_usd_dates, _cb_usd_balances):
-            if d <= sample_date:
-                bal = b
-            else:
-                break
-        return max(bal, 0.0)
+    # Implicit broker-cash bridges.  For groups whose export is
+    # provably complete (see cash_bridge.BRIDGED_GROUPS), we know the
+    # uninvested cash balance at every date.  Adding it to snapshot
+    # value eliminates the spurious "drop" mid-period when the user
+    # sells and the next Buy / Withdrawal falls on a later snapshot —
+    # a drop that has no offsetting external flow, so TWR would
+    # otherwise book it as a market loss.  See cash_bridge.py.
+    from .cash_bridge import all_series as _bridge_all_series, balance_at, BRIDGE_MIN
+    _bridge_series = _bridge_all_series(txns)
 
     # Pre-pair cross-account transfers exactly like basis.py so basis
     # carries from source to destination on paired transfers, and
@@ -655,34 +629,30 @@ def compute_history(txns: list[dict],
                 "cost_basis":    round(pos_basis, 2),
             })
 
-        # Coinbase implicit USD bridge — the running USD wallet balance
-        # for Coinbase at this snapshot date.  See _coinbase_usd_at
-        # docstring above for the full motivation.  Adds 1:1 to value,
-        # basis, sector "Cash", and creates a synthetic USD position so
-        # the dashboard's as-of-date holdings filter shows the cash
-        # bridge during sell→buy gaps.
-        #
-        # Threshold is $1 (looser than main.py's $0.01 dust rule)
-        # because the running balance accumulates floating-point drift
-        # across thousands of txns — the natural flow ends at ~$0.01
-        # rather than exactly $0 even when the user's actual balance
-        # is $0.  Sub-dollar bridge values are noise, not real cash.
-        cb_usd = round(_coinbase_usd_at(sample_date), 2)
-        if cb_usd >= 1.0:
-            total += cb_usd
-            by_group["Coinbase"] += cb_usd
-            by_type[ACCOUNT_TYPES.get("Coinbase", "Taxable")] += cb_usd
-            by_sector["Cash"] += cb_usd
-            total_basis += cb_usd
-            basis_group["Coinbase"] += cb_usd
-            basis_type[ACCOUNT_TYPES.get("Coinbase", "Taxable")] += cb_usd
+        # Implicit broker-cash bridge — the reconstructed uninvested
+        # cash balance for each bridged group at this snapshot date.
+        # Adds 1:1 to value, basis and sector "Cash", and emits a
+        # synthetic USD position so the dashboard's as-of-date holdings
+        # filter shows the cash during sell→buy gaps.
+        for _bgroup, _bseries in _bridge_series.items():
+            bcash = round(balance_at(_bseries, sample_date), 2)
+            if bcash < BRIDGE_MIN:
+                continue
+            _btype = ACCOUNT_TYPES.get(_bgroup, "Taxable")
+            total += bcash
+            by_group[_bgroup] += bcash
+            by_type[_btype] += bcash
+            by_sector["Cash"] += bcash
+            total_basis += bcash
+            basis_group[_bgroup] += bcash
+            basis_type[_btype] += bcash
             positions.append({
-                "account_group": "Coinbase",
+                "account_group": _bgroup,
                 "symbol":        "USD",
-                "quantity":      cb_usd,
+                "quantity":      bcash,
                 "price":         1.0,
-                "value":         cb_usd,
-                "cost_basis":    cb_usd,
+                "value":         bcash,
+                "cost_basis":    bcash,
             })
 
         history.append({
@@ -757,11 +727,11 @@ def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
     for t in dated:
         by_day[t["date"]].append(t)
 
-    # Coinbase implicit USD bridge, walked with a pointer.
-    from .coinbase_reconcile import usd_series as _cb_usd_series
-    cb_eod = _cb_usd_series(txns)
-    cb_idx = 0
-    cb_bal = 0.0
+    # Implicit broker-cash bridges, each walked with its own pointer.
+    from .cash_bridge import all_series as _bridge_all_series, BRIDGE_MIN
+    bridge_eod = _bridge_all_series(txns)
+    bridge_idx: dict[str, int] = {g: 0 for g in bridge_eod}
+    bridge_bal: dict[str, float] = {g: 0.0 for g in bridge_eod}
 
     balances: dict[tuple[str, str], float] = defaultdict(float)
     last_txn_price: dict[str, float] = {}
@@ -788,9 +758,11 @@ def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
             else:
                 balances[(acct, sym)] += qty
 
-        while cb_idx < len(cb_eod) and cb_eod[cb_idx][0] <= d_iso:
-            cb_bal = cb_eod[cb_idx][1]
-            cb_idx += 1
+        for _bgroup, _bseries in bridge_eod.items():
+            while (bridge_idx[_bgroup] < len(_bseries)
+                   and _bseries[bridge_idx[_bgroup]][0] <= d_iso):
+                bridge_bal[_bgroup] = _bseries[bridge_idx[_bgroup]][1]
+                bridge_idx[_bgroup] += 1
 
         total = 0.0
         px_today: dict[str, float | None] = {}
@@ -823,8 +795,11 @@ def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
             # Unpriceable positions contribute nothing — same as the
             # snapshot walker's priced_pct gap.
 
-        if cb_bal >= 1.0:
-            total += cb_bal
+        for _bbal in bridge_bal.values():
+            # Same clamp as cash_bridge.balance_at — negatives are
+            # same-day ordering artifacts, not real balances.
+            if _bbal >= BRIDGE_MIN:
+                total += _bbal
         out.append((d_iso, round(total, 2)))
         cur += timedelta(days=1)
     return out

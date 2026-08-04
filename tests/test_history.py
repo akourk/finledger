@@ -78,9 +78,22 @@ def test_history_smoke_buy_then_hold(stub_prices):
     assert by_date["2024-04-30"]["by_sector"]["Technology"] == pytest.approx(1950.0)
 
 
-def test_history_buy_then_sell_zeroes_position(stub_prices):
-    """Buy → Sell sequence drives the position balance back to zero;
-    final snapshot total drops to zero (taxable USD not tracked)."""
+def test_history_buy_then_sell_bridges_proceeds_as_cash(stub_prices):
+    """Buy → Sell drives the position balance to zero, but the sale
+    proceeds remain in the snapshot as reconstructed broker cash.
+
+    Robinhood's activity export records every ACH leg, trade, fee and
+    distribution against the brokerage cash balance, so the uninvested
+    balance is recoverable — see ``cash_bridge.BRIDGED_GROUPS``.
+
+    Before the bridge this snapshot dropped to $0: the position value
+    left the tracked universe and the proceeds landed in cash fin
+    didn't track.  That drop carries no offsetting external flow, so
+    Modified-Dietz booked it as a market loss — meaning every
+    profitable round trip produced a phantom loss roughly equal to the
+    gain, which chain-linking compounded into a deeply negative
+    lifetime TWR for an account that had actually made money.
+    """
     from src.history import compute_history
 
     stub_prices.set("AAPL", {
@@ -90,20 +103,27 @@ def test_history_buy_then_sell_zeroes_position(stub_prices):
     })
     _populate_cache(stub_prices, {"AAPL": ["2024-01-31", "2024-03-31"]})
     txns = [
+        _txn("2024-01-15", "Robinhood", "Taxable", "USD", "Deposit", 0,
+             amount=1700.0),
         _txn("2024-01-15", "Robinhood", "Taxable", "AAPL", "Buy", 10,
              amount=1700.0, price=170.0),
-        # After this, balance = 0; USD proceeds aren't tracked for non-Savings.
         _txn("2024-02-20", "Robinhood", "Taxable", "AAPL", "Sell", 10,
              amount=2000.0, price=200.0),
     ]
     history = compute_history(txns, {"AAPL": "Technology"})
     by_date = {h["date"]: h for h in history}
-    # Pre-sell snapshot: still holding 10 AAPL @ $180 = $1800
+    # Pre-sell: fully invested, cash bridge at $0 → 10 AAPL @ $180.
     assert by_date["2024-01-31"]["total"] == pytest.approx(1800.0)
-    # Post-sell snapshot: zero position, no USD tracking → $0 total.
-    # This is the artifact the Coinbase bridge fixes; for Robinhood
-    # we accept it (data isn't complete enough for a similar fix).
-    assert by_date["2024-03-31"]["total"] == pytest.approx(0.0)
+    # Post-sell: position gone, $2000 of proceeds held as bridged cash.
+    post = by_date["2024-03-31"]
+    assert post["total"] == pytest.approx(2000.0)
+    assert post["by_account_group"]["Robinhood"] == pytest.approx(2000.0)
+    assert post["by_sector"]["Cash"] == pytest.approx(2000.0)
+    # The synthetic USD position makes the cash visible to the
+    # dashboard's as-of-date holdings filter.
+    usd = [p for p in post["positions"]
+           if p["account_group"] == "Robinhood" and p["symbol"] == "USD"]
+    assert len(usd) == 1 and usd[0]["value"] == pytest.approx(2000.0)
 
 
 def test_history_dust_filter_excludes_sub_penny(stub_prices):
