@@ -611,6 +611,14 @@ def main():
     from .cash_bridge import synthesize_external_funding
     txns = synthesize_external_funding(txns, "Robinhood")
 
+    # --- Step 4d-iv: Balance Anchor true-up for hand-maintained cash
+    # accounts.  Apple Card Daily Cash lands in Apple Savings without
+    # ever appearing in the hand-kept CSV, so the balance drifts low by
+    # ~$50/month.  Each anchor books the drift since the previous one
+    # as a `Cash Back` row.  Cash accounts only — see balance_anchor.py.
+    from .balance_anchor import apply_balance_anchors
+    txns = apply_balance_anchors(txns, retirement_meta.get("balance_anchors") or [])
+
     # --- Step 4e: Ensure positive qty/amount ---
     # After normalization, direction is encoded in the action.
     # Make quantity and amount always non-negative for display consistency.

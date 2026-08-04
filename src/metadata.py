@@ -151,6 +151,13 @@ def _empty() -> dict:
         # Filed-1040 figures by tax year: {"2025": {"total_tax": ..,
         # "agi": .., "withholding": ..}, ...}
         "tax_returns": {},
+        # Statement balances for hand-maintained CASH accounts, used to
+        # true up untracked deposits (Apple Card Daily Cash landing in
+        # Apple Savings).  See balance_anchor.py.
+        "balance_anchors": [],
+        # Effective-dated savings interest rates, used for FORECASTS
+        # only — actual history comes from real Interest txns.
+        "savings_apr": [],
     }
 
 
@@ -362,6 +369,33 @@ def parse_metadata(data_dir: Path) -> dict:
                 n = int(round(amt))
                 if n in (12, 24, 26, 52):
                     out["pay_frequency"] = n
+            elif typ == "Balance Anchor":
+                # True statement balance for a hand-maintained CASH
+                # account.  Symbol = account_group, Date = as-of,
+                # Amount = the real balance.  balance_anchor.py books
+                # the difference vs fin's computed balance as a
+                # `Cash Back` row.  See that module for why this is
+                # restricted to cash accounts.
+                if symbol and date:
+                    out["balance_anchors"].append({
+                        "account_group": symbol,
+                        "date": date,
+                        "amount": amt,
+                        "note": note,
+                    })
+            elif typ == "Savings APR":
+                # Effective-dated annual interest rate for a savings
+                # account.  Accepts 0.042 or 4.2 (both -> 4.2%).
+                # FORECAST ONLY: real Interest txns remain the
+                # authority for history, so there's no double-count.
+                rate = amt / 100.0 if amt > 1 else amt
+                if symbol and 0 <= rate <= 0.25:
+                    out["savings_apr"].append({
+                        "account_group": symbol,
+                        "date": date,
+                        "rate": rate,
+                        "note": note,
+                    })
             elif typ.startswith("Reconcile "):
                 # User-supplied ground truth from broker statements /
                 # 1099s, compared against fin's computed figures by
@@ -383,6 +417,11 @@ def parse_metadata(data_dir: Path) -> dict:
     out["bonus_history"].sort(key=lambda x: x["date"])
     out["annual_expenses"].sort(key=lambda x: x["date"])
     out["targets"].sort(key=lambda x: x["year"])
+    # Chronological: each anchor books only the drift since the
+    # previous one, and APR lookup takes the latest rate at or before
+    # a date.
+    out["balance_anchors"].sort(key=lambda x: x["date"])
+    out["savings_apr"].sort(key=lambda x: x["date"])
     return out
 
 

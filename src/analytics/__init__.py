@@ -336,7 +336,8 @@ def build_analytics(txns: list[dict], history: list[dict],
         "trading_heatmap": compute_trading_heatmap(txns),
         "income_calendar": (_income_cal := compute_income_calendar(
             txns, holdings_by_account,
-            annual_expenses=latest_annual_expenses)),
+            annual_expenses=latest_annual_expenses,
+            savings_apr=rm.get("savings_apr"))),
         # Budget — recurring living expenses from `Budget` metadata rows.
         # Reuses the income calendar's trailing-12mo income for the
         # "passive income covers X% of budget" figure (compute-once).

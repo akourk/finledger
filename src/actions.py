@@ -117,6 +117,17 @@ _ACTIONS: tuple[Action, ...] = (
            income="rewards"),
     Action("Lending",        "add",      "add",     "neutral", "#67e8f9",
            income="lending"),
+    Action("Cash Back",      "add",      "ignore",  "in",      "#a3e635",
+           "Credit-card rewards deposited straight into a savings "
+           "account (Apple Card Daily Cash → Apple Savings).  "
+           "cash_flow='in' because the money arrives from OUTSIDE the "
+           "portfolio: the savings account didn't earn it, so booking "
+           "it as return would overstate the account's performance.  "
+           "Deliberately NOT income (`income=None`): card cash back is "
+           "a purchase REBATE, not taxable income, so it must never "
+           "reach the Income tab totals or AGI.  Usually synthesized "
+           "from a `Balance Anchor` metadata row (see "
+           "balance_anchor.py) rather than entered per-deposit."),
 
     # ── Account-internal movements ─────────────────────────────────────────
     Action("Transfer In",    "add",      "transfer_in",  "ignore", "#818cf8",

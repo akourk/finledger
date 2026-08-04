@@ -20,11 +20,13 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from ..actions import INCOME_ACTIONS as _INCOME_ACTIONS
+from ..balance_anchor import apr_at
 
 
 def compute_income_calendar(txns: list[dict],
                             holdings_by_account: list[dict],
-                            annual_expenses: float | None = None) -> dict:
+                            annual_expenses: float | None = None,
+                            savings_apr: list[dict] | None = None) -> dict:
     # Held symbols that aren't cash, plus per-symbol cost basis
     # rolled up across accounts.  Yield-on-cost = trailing-12mo income
     # / aggregate cost basis — measures whether contribution-weighted
@@ -102,6 +104,40 @@ def compute_income_calendar(txns: list[dict],
             "projected_annual": round(last_4q, 2),
         })
         forecast_total += last_4q
+
+    # Savings interest.  The per-symbol loop above can't produce this:
+    # it only projects HELD non-cash tickers off their trailing yield,
+    # so a savings account contributed to `ttm_actual` but nothing to
+    # the forecast — the two figures silently disagreed.  A savings
+    # account's income is a RATE on a balance, so project it directly
+    # from the declared `Savings APR` and the current cash balance.
+    for h in holdings_by_account:
+        if h.get("symbol") != "USD":
+            continue
+        group = h.get("account_group", "")
+        rate = apr_at(savings_apr or [], group, today_iso)
+        if not rate:
+            continue
+        bal = h.get("value")
+        if not isinstance(bal, (int, float)):
+            bal = h.get("quantity", 0)
+        bal = float(bal or 0)
+        if bal <= 0:
+            continue
+        projected = bal * rate
+        forecast.append({
+            "symbol":           f"{group} (cash)",
+            "last_12mo_income": round(by_sym_recent.get("USD", 0.0), 2),
+            "cost_basis":       round(bal, 2),
+            "yield_on_cost":    round(rate * 100, 3),
+            "current_yield":    round(rate * 100, 3),
+            # Rate × balance, not a trailing extrapolation — the
+            # balance moves with every transfer, so last year's
+            # interest is a poor guide to next year's.
+            "projected_annual": round(projected, 2),
+            "is_savings_rate":  True,
+        })
+        forecast_total += projected
 
     forecast.sort(key=lambda r: r["projected_annual"], reverse=True)
 

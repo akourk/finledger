@@ -194,6 +194,10 @@ RULES = [
     {"account_group": "Apple Savings", "action": "Buy",                     "normalized": "Deposit"},
     {"account_group": "Apple Savings", "action": "Sell",                    "normalized": "Withdrawal"},
     {"account_group": "Apple Savings", "action": "Interest",                "normalized": "Interest"},
+    # Card rewards deposited into savings.  Usually synthesized from a
+    # `Balance Anchor` metadata row, but accept a hand-entered row too.
+    {"account_group": "Apple Savings", "action": "Cash Back",               "normalized": "Cash Back"},
+    {"account_group": "Apple Savings", "action": "Daily Cash",              "normalized": "Cash Back"},
 ]
 
 
