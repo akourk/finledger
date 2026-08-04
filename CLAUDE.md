@@ -505,23 +505,43 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   Don't try to "fix" this — sell proceeds are underreported in most broker
   exports and you'll produce worse data.
 
-  **Carve-out: Coinbase USD bridge in `history.py` snapshots.**  After
-  the GDAX-deprecation marker fix and the `_reconcile_coinbase_external_funding`
-  cumulative-min synth, Coinbase USD movements are provably complete
-  (the natural-flow walker ends at ~$0, matching the user's actual
-  balance).  `history.compute_history` calls `main.coinbase_usd_series`
-  to get the implicit USD wallet at each snapshot date and adds it to
-  `by_account_group['Coinbase']`, `by_account_type['Taxable']`,
+  **Carve-out: reconstructed cash bridges (`src/cash_bridge.py`).**  For
+  a broker whose export is *provably complete*, the implicit cash
+  balance can be reconstructed exactly — and NOT bridging it actively
+  corrupts the numbers.  A sale converts tracked position value into
+  untracked cash, so the snapshot shows a drop with no offsetting
+  external flow, which Modified-Dietz reads as a market loss: every
+  profitable round trip books a phantom loss roughly equal to the
+  gain, and chain-linking compounds that into a deeply negative
+  lifetime TWR for an account that made money.
+
+  `history.compute_history` (and `compute_daily_totals`, and
+  `_shared._value_at_date` for the daily-TWR path) adds each bridged
+  group's balance to `by_account_group`, `by_account_type`,
   `by_sector['Cash']`, `total`, `total_cost_basis`, and emits a
-  synthetic `(Coinbase, USD)` position so dashboard as-of-date
-  filtering shows the bridge.  Threshold is $1 (looser than the $0.01
-  dust rule) to drop the floating-point drift the running sum
-  accumulates over thousands of txns.  Without this bridge, snapshots
-  that fell between a Sell and the next Buy/Withdrawal showed the USD
-  proceeds as $0 of value, which corrupted Coinbase TWR (-87% vs the
-  -37% that reflects actual crypto performance).  Coinbase-only —
-  other brokers don't have the same data-completeness property and
-  a similar bridge would inflate values.
+  synthetic `(group, USD)` position so dashboard as-of-date filtering
+  shows the bridge.  Threshold is $1 (looser than the $0.01 dust rule)
+  to drop floating-point drift accumulated over thousands of rows;
+  negative balances clamp to 0.
+
+  `BRIDGED_GROUPS` currently = **Coinbase, Robinhood**.  Adding a group
+  is a claim about that broker's data completeness — validate it
+  (see the module docstring): walk `usd_series` for persistent
+  negatives, then check `tracked_value + final_balance` against the
+  broker's reported total via a `Reconcile Balance` row.  Get it wrong
+  and you invent portfolio value, which is worse than the
+  understatement it fixes.
+
+  Both bridged groups need a **cumulative-min external-funding synth**
+  (`cash_bridge.synthesize_external_funding`; Coinbase has its own
+  older copy in `coinbase_reconcile`) because both exports are
+  truncated — Robinhood's begins at the first TRADE, so the account
+  traded for over a year before its earliest ACH row.  Without the
+  synth the reconstructed balance runs negative, the clamp zeroes the
+  bridge across exactly the early years where the account is small,
+  and percentage swings on a ~$100 base dominate the chain-linked
+  lifetime figure.  The synth raises reconstructed cash and
+  `net_contributed` by the same amount, so total return is unchanged.
 - **ETH ↔ ETH2 Coinbase conversions are Neutral** (same underlying asset,
   just the old staking wrapper; ETH2→ETH-USD via SYMBOL_MAP). Other
   *different-asset* conversions (Convert In/Out, e.g. BTC→ETH) synthesize a
@@ -569,11 +589,22 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   options by 100 — basis is amount-based and needs no scaling.  Open
   options are valued at their last-traded premium (yfinance can't
   price the contracts), FLOORED at intrinsic value from the
-  underlying's cached price (`prices.option_intrinsic`; applied in
-  both pipeline paths' `last_prices` and both history walkers'
-  fallback branches) — so a deep-ITM contract tracks its underlying
-  instead of staying flat between trades.  Time value is still not
-  modeled; the floor only ever raises the price.  Underlying tickers
+  underlying's cached price (`prices.option_intrinsic`) — so a deep-ITM
+  contract tracks its underlying instead of staying flat between
+  trades.  Time value is still not modeled; the floor only ever raises
+  the price.
+
+  **EVERY txn-price fallback must apply the floor**: both pipeline
+  paths' `last_prices`, both history walkers, `analytics/header.py`
+  (1-day change), `analytics/daily_pnl.py`, and
+  `analytics/_shared.py::_value_at_date` (TWR boundaries).  The last
+  three were missing it, so the snapshot walker marked a deep-ITM
+  contract at intrinsic while they pinned it at the purchase premium —
+  and the ENTIRE intrinsic-over-cost gap reprinted as a phantom
+  "today's move" every single day the contract stayed open, vanishing
+  the day it closed.  Pinned by `tests/test_option_floor_parity.py`,
+  which includes a static guard: any module mentioning
+  `last_txn_price` must also mention `option_intrinsic`.  Underlying tickers
   of option symbols join the price-fetch set
   (`prices.option_underlyings`) so the floor works even for
   underlyings never held directly.
@@ -755,6 +786,36 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     they reduce take-home but are a PREPAYMENT, credited against the
     estimated tax on realized gains before the suggested quarterly
     payment, never counted as a tax cost).
+  - `Balance Anchor` — the real statement balance for a
+    hand-maintained **cash** account.  Symbol = `account_group`,
+    Date = as-of, Amount = the true balance.  `balance_anchor.py`
+    walks fin's own USD balance to that date and synthesizes ONE
+    `Cash Back` row for the difference.  Motivating case: Apple Card
+    Daily Cash lands in Apple Savings in small irregular amounts that
+    never reach the hand-kept CSV, so the balance drifts low by
+    ~$50/month forever.  Anchors process chronologically and each
+    sees earlier anchors' synthesized rows, so re-anchoring books
+    only the NEW drift (never double-counts).  **Cash accounts only**
+    (`ACCOUNT_TYPES == "Savings"`): for cash a delta is exact
+    arithmetic and unambiguously means missing transactions, whereas
+    on a securities account it could equally be a pricing error, a
+    missing split, or a basis bug — plugging that would paper over
+    exactly what this codebase works to surface.  A NEGATIVE delta
+    (fin above the statement) is also refused: that means fin has
+    transactions the account doesn't, which is a bug to investigate.
+    Pair with a `Reconcile Balance` row at the same date to keep the
+    panel honest.
+  - `Savings APR` — effective-dated interest rate for a savings
+    account.  Symbol = `account_group`, Amount = rate (accepts
+    `0.042` or `4.2`), Date = effective-from; a rate change is just a
+    new row.  **Forecast only** — real `Interest` transactions remain
+    the authority for history, so there's no double-count.  Feeds the
+    Income tab's 12-month forecast as `rate × current cash balance`
+    (a savings account's income is a rate on a balance, not a
+    position's trailing yield).  This also closed a pre-existing
+    inconsistency: savings interest counted toward `ttm_actual` but
+    contributed nothing to `forecast_12mo`, so the two silently
+    disagreed.
   - `Pay Frequency` — Amount = pay periods per year, snapped to
     12 / 24 / 26 / 52 (default 26 = biweekly).  Annualizes the
     paycheck rows.
@@ -793,7 +854,7 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
 
 - **External cash-flow accounting goes through one helper:
   `basis.txn_external_cash_flow(t) -> float`**.  Returns +amount for
-  inflows, -amount for outflows, 0 for everything else.  Three
+  inflows, -amount for outflows, 0 for everything else.  Four
   carve-outs handled in this single place:
   1. `Contribution Reversal` → -amount (was missed by old local sets
      in basis.py / history.py — would silently drop the reversal,
@@ -806,6 +867,28 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
      +amount (USAA Victory Capital exports represent contributions
      as Buys with these descriptive markers, not as separate Deposit
      lines).
+  4. **Transfers crossing fin's MEASUREMENT BOUNDARY** → ±amount at
+     FMV, keyed on RAW action via `basis._EXTERNAL_TRANSFER_MARKERS`
+     (currently Coinbase `Receive` in; `Send` / crypto-`Withdrawal`
+     out).  fin can only measure what's inside its boundary, so
+     crypto sent to a self-custody wallet is economically a
+     WITHDRAWAL and an inbound receive a CONTRIBUTION.  Left at
+     `ignore` (the pre-fix behaviour) the value vanishes with no
+     offsetting flow and Modified-Dietz books it as market
+     performance — sending ETH to a hardware wallet registered as a
+     total loss of that amount, and chain-linking compounded it.
+     **The distinction that matters**: most Coinbase transfer raw
+     actions (`Pro Withdrawal` / `Exchange Deposit` / `Retail
+     Staking Transfer In|Out` / GDAX-side `deposit`/`withdrawal`)
+     shuffle assets between wallets fin ALREADY tracks under one
+     `account_group` — both legs cancel and they MUST stay neutral.
+     Only the broker's own raw vocabulary distinguishes them, since
+     normalization collapses both kinds to `Transfer In`/`Transfer
+     Out`.  Do NOT substitute "unpaired" as a proxy for "external":
+     `_pair_transfers` fails on the intra-Coinbase legs (GDAX
+     reports `amount` in ASSET UNITS, not USD), so most unpaired
+     transfers are internal.  Airdrops arriving as a `Receive` are
+     income, not contributed capital, and are excluded by description.
 
   Consumers: `basis.compute_cash_summary`,
   `history._compute_net_contributed_series`,
@@ -1029,6 +1112,27 @@ threads through every consumer.
   `main._reconcile_coinbase_intra_transfers`, `main.coinbase_usd_series`)
   so older references still resolve — but the logic lives here.  Keeping
   it out of `main.py` lets `main` stay a generic orchestrator.
+- **`src/balance_anchor.py`** — statement true-up for hand-maintained
+  CASH accounts (`Balance Anchor` metadata rows → synthesized
+  `Cash Back` transactions), plus `apr_at` for the effective-dated
+  `Savings APR` lookup.  `Cash Back` is deliberately
+  `cash_flow="in"` and **NOT** income: card cash back is money
+  arriving from outside the portfolio (so booking it as return would
+  overstate the account's performance) and it's a purchase REBATE,
+  not taxable income (so it must never reach the Income tab or AGI).
+- **`src/cash_bridge.py`** — reconstructed broker-cash bridges (the
+  "USD balance tracking" carve-out above).  Owns `BRIDGED_GROUPS`, the
+  per-group `usd_effect` classification, `usd_series` / `all_series` /
+  `balance_at`, and the generic cumulative-min
+  `synthesize_external_funding`.  Coinbase's `usd_effect` is delegated
+  to `coinbase_reconcile` (its Pro/regular wallet logic is genuinely
+  Coinbase-specific); Robinhood's rules live here.  Consumers:
+  `history.compute_history`, `history.compute_daily_totals`,
+  `analytics/_shared.py::_value_at_date`, and `main.py`'s step 4d-iii.
+  **A sign error here invents portfolio value** — the directional
+  actions (`Event Contract Transfer Out`, `Return of Capital
+  Reversal`) exist precisely because the parser's `abs()` would
+  otherwise make two opposite cash moves indistinguishable.
 - **`src/parsers/`** — package directory.  `__init__.py` owns the
   broker→parser dispatch table and re-exports the public API;
   `_helpers.py` has the shared `_txn()`, `_num()`, `_date_*()`
@@ -1259,6 +1363,18 @@ process.
   (corp-action artifacts like ENVXW spinoff warrants the user got
   for 0.5000 shares and immediately sold) never produce material
   snapshot value — skip the price fetch entirely.
+- **Benchmarks are EXEMPT from both filters above**
+  (`config.BENCHMARK_SYMBOLS` = SPY / BND / VXUS; `main.py` pops them
+  out of `closed_position_ends` and subtracts them from `trivial`).
+  A benchmark's series must run through today no matter what the user
+  holds.  Real bug: a benchmark ticker was briefly held and then sold,
+  which made it a "closed position" — its fetch range clamped to the
+  sell date and the overlay silently froze at $0 for every later
+  snapshot, with `failure_count: 0` so nothing flagged it.  SPY
+  carries the same trap and backs the headline "Vs SPY" figure on
+  every performance view.  **Detection tip**: a cached symbol with a
+  stale `covered_end` but `failure_count: 0` was never REQUESTED — it
+  didn't fail.  Pinned by `tests/test_benchmark_coverage.py`.
 
 ## Files that *look* like they could be shared infrastructure but aren't
 
