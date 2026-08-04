@@ -25,7 +25,7 @@ def compute_daily_pnl(history: list[dict],
         return []
 
     from ..config import CASH_SYMBOLS
-    from ..prices import get_price, get_series
+    from ..prices import get_price, get_series, option_intrinsic
 
     # Use today's positions as the constant share count, reprice at
     # recent dates.  Same trick as compute_header_summary; means we
@@ -87,6 +87,14 @@ def compute_daily_pnl(history: list[dict],
             px = get_price(sym, d_iso)
             if px is None:
                 fb = last_txn_price.get(sym)
+                # Same option intrinsic floor as the history walkers —
+                # otherwise an open contract sits flat at its purchase
+                # premium across the whole window while the snapshot
+                # series marks it at intrinsic, and the difference
+                # surfaces as a phantom one-day jump.
+                iv = option_intrinsic(sym, d_iso)
+                if iv is not None and iv > (fb or 0):
+                    fb = iv
                 if fb is None:
                     continue
                 from ..config import contract_multiplier

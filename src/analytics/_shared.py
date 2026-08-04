@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 
 from ..basis import _basis_dollars, BASIS_EFFECTS  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
-from ..prices import get_price, split_factor_since
+from ..prices import get_price, option_intrinsic, split_factor_since
 
 # ---------------------------------------------------------------------------
 # Shared constants / classifiers
@@ -801,6 +801,16 @@ def _value_at_date(txns_sorted: list[dict], target: str,
             total += qty * split_factor_since(sym, target) * px
         else:
             fb = last_txn_price.get(sym)
+            # Same intrinsic floor as the history walkers: yfinance
+            # can't quote option contracts, so the fallback is the last
+            # traded premium.  Without the floor a deep-ITM contract
+            # stays pinned at its purchase price here while the
+            # snapshot walker marks it at intrinsic — the mismatch
+            # shows up as phantom return in whichever direction the
+            # two paths are compared.
+            iv = option_intrinsic(sym, target)
+            if iv is not None and iv > (fb or 0):
+                fb = iv
             if fb is not None:
                 from ..config import contract_multiplier
                 total += qty * fb * contract_multiplier(sym)

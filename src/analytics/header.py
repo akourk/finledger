@@ -21,7 +21,7 @@ from ._shared import (
 from ..actions import BASIS_EFFECTS  # noqa: F401
 from ..basis import _basis_dollars  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
-from ..prices import get_price, split_factor_since
+from ..prices import get_price, option_intrinsic, split_factor_since
 
 
 def compute_header_summary(txns: list[dict], history: list[dict],
@@ -85,6 +85,16 @@ def compute_header_summary(txns: list[dict], history: list[dict],
             yest_total += qty * px
         else:
             fb = last_txn_price.get(sym)
+            # Apply the same option intrinsic floor history.py uses for
+            # TODAY's value.  Without it the two sides of the 1-day
+            # delta are priced by different rules: today's snapshot
+            # marks a deep-ITM contract at intrinsic while this branch
+            # pins yesterday at the purchase premium, so the whole
+            # intrinsic-over-cost gain reprints as a phantom "today's
+            # move" every single day the contract is open.
+            iv = option_intrinsic(sym, yest)
+            if iv is not None and iv > (fb or 0):
+                fb = iv
             if fb is not None:
                 # Contracts × per-share premium need the ×100 multiplier
                 # (matches the snapshot valuation in history.py).
