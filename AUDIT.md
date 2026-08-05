@@ -8,8 +8,8 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1 of 9 |
-| **Findings** | 5 open / 1 fixed |
+| **Segments complete** | 1 of 9, plus Segment 5 item 1 (pulled forward) |
+| **Findings** | 5 open / 2 fixed |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -19,18 +19,34 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 ## Findings
 
-Segment 1 is infrastructure and did no bug hunting. Every entry below
-is a **coverage** finding — code unprotected by construction — not a
-confirmed defect. None claims a wrong number.
-
 | ID | Sev | Claim |
 |---|---|---|
+| F-007 | high | *(fixed)* No test had ever tripped any of the 23 `data_health` checks — the suite's own safety net was entirely unverified |
 | F-001 | medium | The shipped sample portfolio is not exercised by any test; five broker parsers have zero executed lines |
 | F-002 | medium | Two basis-walker branches (`_remove_from_avg`, `_apply_split_to_lots`) are never executed |
 | F-003 | low | `snapshot.py` has 0% coverage — export/import wholly untested, including the anti-clobber guard |
 | F-004 | low | `normalize._amount_sign` is never executed (sign-split family — taxonomy 4) |
 | F-005 | low | Never-executed functions in `analytics/tax.py` (`_pick_by_year`), `main.py`, `metadata.py`, `actions.py`, `parsers/_helpers.py` |
 | F-006 | low | *(fixed)* `tools/mutate.py` round-tripped source through text-mode I/O, with a restore check that could not detect the corruption |
+
+F-001 through F-006 come from Segment 1, which is infrastructure and
+did no bug hunting; each is a **coverage** finding — code unprotected by
+construction — not a confirmed defect. F-007 comes from the
+pulled-forward verification-machinery audit.
+
+**F-007 is the most consequential finding so far.** Not one of the 23
+`data_health` checks had ever produced an issue in any test. They ran
+on every pipeline test and returned clean every time, so a change that
+disabled a detector would ship green — and the *next* real defect in
+that area would then ship green too. Compounding blindness rather than
+a single missed bug.
+
+Worth stating precisely what was and wasn't wrong: all ten
+high-severity checks were probed with a violating input and a clean
+near-miss, and **all ten fire correctly**. They were untested
+detectors, not broken ones. "These guards cannot fire" would have been
+the wrong claim, and the difference is exactly what the plan means by
+not reporting what you haven't reproduced.
 
 **F-001 is the one with leverage.** The sample snapshot contains all
 ten broker CSVs and runs end to end offline, but no test consumes it —
@@ -135,6 +151,29 @@ mechanically re-checkable.
   embeds today's date in many places, so a committed golden would show
   spurious diffs daily and train the reader to ignore it. It
   regenerates in seconds via `--record`.
+
+### Segment 5, item 1 — the verification machinery (2026-08-05, pulled forward)
+
+The plan recommends auditing the instruments before trusting anything
+measured with them. Done for `data_health.py`; `reconcile.py`,
+`alerts.py` and `changes.py` remain.
+
+**Method that did the work:** rather than reading 983 lines, ask
+coverage a sharper question — is the line that *constructs* each
+violation ever executed? A check function can run on every test and
+always return clean, so function-level coverage says nothing; the
+violation branch says everything. All 23 came back never-executed.
+
+Then, before claiming a defect, the necessary second step: feed each
+high-severity check an input that should trip it, and a near-miss that
+shouldn't. All ten behaved correctly. The finding is a test gap, not a
+broken detector — see F-007.
+
+**Fixed:** `tests/test_data_health_guards.py` (+21 tests, suite now
+499). Mutation-verified in both directions.
+
+**Still open:** the 13 `warn` / `info` checks, and the other three
+instruments (`reconcile.py`, `alerts.py`, `changes.py`).
 
 ---
 
