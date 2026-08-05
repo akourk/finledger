@@ -131,6 +131,32 @@ bracket's threshold is emitted as `null` (→ `Infinity` in JS via
 `_loadBracketTable`), never a non-finite float — the same no-`NaN`/`Infinity`
 rule from step 1.
 
+## Date-keyed figures: compute AT the date, never snap to a snapshot
+
+If your figure answers "what was X on date D" — a statement check, an as-of
+holdings view, a window boundary — **walk to D**. Use
+`analytics/_shared.py::_value_at_date(txns_sorted, target, filter_groups,
+bridges, cash_series)`; it applies history's valuation rules (USD-skipping,
+split adjustment, option-intrinsic floor, reconstructed broker cash) and
+agrees with `history`'s `by_account_group` within float noise.
+
+**Do not pick the nearest snapshot.** History is sampled semimonthly (15th /
+EOM / today), so a snapshot on an arbitrary D usually does not exist — and
+nearest-by-*absolute*-distance can resolve **forward in time**, letting
+activity that happened after D leak into a D-keyed answer. That shipped:
+`reconcile`'s balance check matched a statement dated the 4th to today's
+snapshot on the 5th, so a deposit made the day *after* the statement printed
+as a reconciliation break of exactly its own size. Treat `abs(...)` over two
+dates as a bug on sight.
+
+If a full walk is genuinely too expensive (it is O(txns) per date), take the
+latest snapshot **at or before** D — never the nearest — and surface the gap
+in the output so the consumer knows it got a different date.
+
+Test it with one assertion: add a txn dated *after* your figure's date and
+assert the figure does not move. That is what catches this whole class, and a
+fixture that hands the code a pre-built `history` will not.
+
 ## Test & verify
 
 - **Unit-test the module** like the others (`tests/test_*`): feed synthetic
@@ -151,6 +177,8 @@ rule from step 1.
 - The figure is computed in `analytics/`, keyed into `build_analytics`'s `out`,
   and read from `ANALYTICS.<key>` in `app.js` — no recompute in JS.
 - No `NaN`/`Infinity` can reach the JSON (zero-denominator guarded).
+- Any date-keyed figure is computed AT that date (or documented as snapping
+  backward), with a test that it doesn't move when activity is added after it.
 - If you touched tax brackets or §1256, both Python and JS copies agree.
 - `python -m pytest tests/ -q` is green and the tab renders in a re-bundled
   dashboard.
