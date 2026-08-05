@@ -38,6 +38,11 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Audit working directory — the findings ledger carries REAL portfolio
+# figures (that's the point: it never leaves the machine).  The
+# sanitized, committable summary is AUDIT.md at the repo root.
+audit/
+
 # IDE
 .vscode/
 .idea/
