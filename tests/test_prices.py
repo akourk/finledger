@@ -800,3 +800,180 @@ class TestScaledProxyMultiAnchor:
         assert doc["MYFUND"]["anchor_date"] == "2024-01-15"
         assert "anchors" not in doc["MYFUND"]
         assert "2024-06-14" not in _json.dumps(doc)
+
+
+class TestTodayFreshness:
+    """Phase 1 — ``covered_end`` records what we ASKED for, not what has
+    settled.
+
+    Two consequences the cache used to get wrong:
+
+    * A crypto bar is UTC-dated, so an evening local run legitimately
+      receives *tomorrow's* bar.  Recording that as ``covered_end`` made
+      the whole of the next local day look already-fetched, and crypto
+      was skipped for a full day.
+    * The moment any run of the day fetched today, ``covered_end ==
+      today`` and every later run that day became a no-op — prices froze
+      at whatever the first run captured, which made the
+      ``--refresh-prices`` speed flag load-bearing for correctness.
+    """
+
+    @staticmethod
+    def _pin_today(monkeypatch, iso: str) -> None:
+        from src import prices as _prices_mod
+        monkeypatch.setattr(_prices_mod, "_today",
+                            lambda: date.fromisoformat(iso))
+
+    # --- 1a: covered_end never names a future local date ---------------
+
+    def test_record_success_caps_covered_end_at_local_today(
+            self, isolated_workdir, monkeypatch):
+        from datetime import datetime
+        from src.prices import _load_meta, _record_success
+        self._pin_today(monkeypatch, "2026-08-04")   # Tuesday, local
+        # A UTC-dated crypto bar for 08-05 arrives on the evening of 08-04.
+        _record_success("ETH-USD", date(2026, 8, 1), date(2026, 8, 5),
+                        datetime.now())
+        assert _load_meta()["symbols"]["ETH-USD"]["covered_end"] == "2026-08-04"
+
+    def test_record_success_heals_a_stale_future_claim(
+            self, isolated_workdir, monkeypatch):
+        """A covered_end left in the future by an older build must be
+        pulled back, not preserved by the max()."""
+        from datetime import datetime
+        from src.prices import _load_meta, _record_success
+        self._pin_today(monkeypatch, "2026-08-05")
+        _load_meta()["symbols"]["ETH-USD"] = {
+            "covered_start": "2024-01-01",
+            "covered_end":   "2026-08-06",
+        }
+        _record_success("ETH-USD", date(2024, 1, 1), date(2026, 8, 5),
+                        datetime.now())
+        assert _load_meta()["symbols"]["ETH-USD"]["covered_end"] == "2026-08-05"
+
+    def test_latest_close_batch_caps_covered_end_but_keeps_the_bar(
+            self, isolated_workdir, monkeypatch):
+        """The --refresh-prices batch path writes covered_end straight
+        from the frame's newest index — the exact spot a UTC crypto bar
+        pushed the coverage claim into tomorrow.  The BAR is real data
+        and stays; only the claim is capped."""
+        import pandas as pd
+        from src import prices as _prices_mod
+        from src.prices import _load_meta, _load_prices, fetch_latest_close_batch
+
+        frame = pd.DataFrame(
+            {"Close": [3000.0, 3050.0]},
+            index=pd.to_datetime(["2026-08-04", "2026-08-05"]),
+        )
+
+        class _FakeYF:
+            @staticmethod
+            def download(**kwargs):
+                return frame
+
+        monkeypatch.setattr(_prices_mod, "_lazy_yf", lambda: _FakeYF())
+        self._pin_today(monkeypatch, "2026-08-04")   # still 08-04 locally
+        assert fetch_latest_close_batch(["ETH-USD"], verbose=False) == 1
+
+        assert _load_meta()["symbols"]["ETH-USD"]["covered_end"] == "2026-08-04"
+        assert _load_prices()["ETH-USD"]["2026-08-05"] == 3050.0, \
+            "the future-dated bar is real data and must be kept"
+
+    # --- 1b: today is never treated as covered -------------------------
+
+    def test_request_ending_today_fetches_even_when_covered_end_is_today(
+            self, isolated_workdir, monkeypatch):
+        from src.prices import _load_meta, _missing_ranges
+        self._pin_today(monkeypatch, "2026-08-05")   # Wednesday
+        _load_meta()["symbols"]["AAPL"] = {
+            "covered_start": "2024-01-01",
+            "covered_end":   "2026-08-05",
+        }
+        gaps = _missing_ranges("AAPL", date(2024, 1, 1), date(2026, 8, 5))
+        assert gaps == [(date(2026, 8, 5), date(2026, 8, 5))], \
+            "a second run on the same day must still refetch today"
+
+    def test_historical_request_is_unaffected(
+            self, isolated_workdir, monkeypatch):
+        """The clamp must not invent gaps for an ``end`` in the past —
+        that would refetch settled history on every run."""
+        from src.prices import _load_meta, _missing_ranges
+        self._pin_today(monkeypatch, "2026-08-05")
+        _load_meta()["symbols"]["FOO"] = {
+            "covered_start": "2024-01-01",
+            "covered_end":   "2024-03-15",
+        }
+        assert _missing_ranges("FOO", date(2024, 1, 1), date(2024, 3, 15)) == []
+
+    def test_weekend_run_still_yields_no_gap(
+            self, isolated_workdir, monkeypatch):
+        """Saturday's request walks back to Friday, which IS settled —
+        the clamp must not turn every weekend run into a refetch."""
+        from src.prices import _load_meta, _missing_ranges
+        self._pin_today(monkeypatch, "2026-08-08")   # Saturday
+        _load_meta()["symbols"]["FOO"] = {
+            "covered_start": "2024-01-01",
+            "covered_end":   "2026-08-07",           # Friday
+        }
+        assert _missing_ranges("FOO", date(2024, 1, 1), date(2026, 8, 8)) == []
+
+    # --- defect 2 regression -------------------------------------------
+
+    def test_crypto_covered_through_tomorrow_still_fetches_today(
+            self, isolated_workdir, monkeypatch, stub_prices):
+        """Observed at 22:42 local / 05:42 UTC: a crypto symbol had a bar
+        for the NEXT day and covered_end set to it, so the following
+        day's full run saw "up to date" and skipped crypto entirely."""
+        from src.prices import _load_meta, ensure_coverage, get_price
+        self._pin_today(monkeypatch, "2026-08-05")
+        _load_meta()["symbols"]["ETH-USD"] = {
+            "covered_start": "2024-01-01",
+            "covered_end":   "2026-08-06",   # tomorrow, from last night's run
+        }
+        stub_prices.set("ETH-USD", {"2026-08-05": 3100.0})
+        ensure_coverage(["ETH-USD"], "2024-01-01", "2026-08-05", verbose=False)
+        assert get_price("ETH-USD", "2026-08-05") == 3100.0, \
+            "a future-dated covered_end must not suppress today's fetch"
+        assert _load_meta()["symbols"]["ETH-USD"]["covered_end"] == "2026-08-05"
+
+    # --- 1c: force_today_for -------------------------------------------
+
+    def test_force_today_for_refetches_the_last_trading_day(
+            self, isolated_workdir, monkeypatch, stub_prices):
+        """Over a weekend the requested end walks back to Friday, which
+        the clamp considers settled — so only an explicit force
+        re-pulls it.  That is how a mutual-fund NAV that hadn't posted
+        when Friday evening's run went out finally lands."""
+        from src.prices import _load_meta, ensure_coverage, get_price
+        self._pin_today(monkeypatch, "2026-08-08")   # Saturday
+        _load_meta()["symbols"]["VFIAX"] = {
+            "covered_start": "2024-01-01",
+            "covered_end":   "2026-08-07",           # Friday
+        }
+        stub_prices.set("VFIAX", {"2026-08-07": 555.0})
+
+        ensure_coverage(["VFIAX"], "2024-01-01", "2026-08-08", verbose=False)
+        assert get_price("VFIAX", "2026-08-07") is None, \
+            "baseline: without the force a weekend run is a no-op"
+
+        ensure_coverage(["VFIAX"], "2024-01-01", "2026-08-08", verbose=False,
+                        force_today_for={"VFIAX"})
+        assert get_price("VFIAX", "2026-08-07") == 555.0
+
+    def test_main_passes_force_today_for(self):
+        """The hook shipped fully implemented and unwired for a while.
+        Asserted against the real source so a refactor that drops it
+        fails here rather than silently freezing held prices."""
+        import inspect
+        import src.main
+
+        src_text = inspect.getsource(src.main)
+        assert "force_today_for=force_today" in src_text, (
+            "main.py no longer forces a refresh of today's bar for held "
+            "symbols — prices will freeze at the first fetch of the day"
+        )
+        tail = src_text.split("force_today = ", 1)[1][:300]
+        assert "_BENCHMARK_SYMBOLS" in tail, (
+            "benchmarks must stay in the force-refresh set — a frozen "
+            "benchmark reports failure_count: 0 and nothing flags it"
+        )

@@ -806,9 +806,21 @@ def main():
         # `--refresh-caches` flag forces it.
         revalidate_stale_caches(sorted(all_symbols_ever),
                                 force=args.refresh_caches)
+        # Force today's bar for everything we still hold (+ benchmarks,
+        # + the underlyings the option intrinsic floor reads).  The
+        # cache records what we ASKED for, not what has settled, so
+        # without this a weekend / holiday run would keep whatever the
+        # first fetch of the last trading day captured — including a
+        # mutual-fund NAV that hadn't posted yet.  Deliberately NOT the
+        # full symbol set: closed positions and delisted tickers have
+        # nothing to refresh and just produce network noise.
+        force_today = (set(symbols_with_balance)
+                       | set(_BENCHMARK_SYMBOLS)
+                       | option_underlyings(symbols_with_balance))
         ensure_coverage(sorted(all_symbols_ever),
                         earliest_date, today_str,
-                        symbol_end_overrides=closed_position_ends)
+                        symbol_end_overrides=closed_position_ends,
+                        force_today_for=force_today)
 
     # Build last_prices for holdings.  Preference:
     #   1. Cache lookup at today's date (handles buy-and-hold assets whose

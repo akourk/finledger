@@ -100,6 +100,17 @@ _BACKOFF_CAP_DAYS  = 30
 # that legitimately have nothing to return.
 _NO_DATA_MIN_RANGE_DAYS = 7
 
+
+def _today() -> date:
+    """Local calendar date.  A single seam so tests can pin "today"
+    without a freezegun dependency (monkeypatch ``prices._today``).
+
+    Everything that reasons about coverage freshness goes through here:
+    ``covered_end`` is capped at this date, and ``_missing_ranges``
+    treats it as never-covered.
+    """
+    return datetime.now().date()
+
 # Controls yfinance's `auto_adjust`.  MUST be False; see module docstring
 # for the reasoning.  If this changes, the on-disk cache is invalidated on
 # next load because the values would be incompatible with existing entries.
@@ -781,14 +792,32 @@ def _record_failure(symbol: str, error: str, now: datetime) -> None:
     _meta_dirty = True
 
 
+def _cap_covered_end(value: str) -> str:
+    """Clamp a ``covered_end`` claim to the local calendar date.
+
+    A bar dated in the FUTURE is real data and stays in the shard —
+    crypto bars are UTC-dated, so an evening local run legitimately
+    receives tomorrow's bar and ``get_price`` should return it once that
+    date arrives.  What must never happen is the *coverage claim*
+    running ahead of the local calendar: ``_missing_ranges`` compares
+    the requested end against ``covered_end``, so a covered_end of
+    tomorrow makes the whole of tomorrow look already-fetched and the
+    symbol is skipped for an entire local day.
+    """
+    return min(value, _today().isoformat())
+
+
 def _record_success(symbol: str, start: date, end: date, now: datetime) -> None:
     global _meta_dirty
     meta = _load_meta()
     entry = meta["symbols"].setdefault(symbol, {})
     cs = entry.get("covered_start")
     ce = entry.get("covered_end")
+    end_s = end.isoformat()
     entry["covered_start"] = start.isoformat() if not cs else min(cs, start.isoformat())
-    entry["covered_end"]   = end.isoformat()   if not ce else max(ce, end.isoformat())
+    # Cap AFTER the max() so a future-dated claim left by an older
+    # cache heals itself on the next successful fetch.
+    entry["covered_end"]   = _cap_covered_end(end_s if not ce else max(ce, end_s))
     entry["last_fetch"]    = now.isoformat(timespec="seconds")
     entry["failure_count"] = 0
     entry.pop("retry_after", None)
@@ -1021,12 +1050,15 @@ def fetch_latest_close_batch(symbols: list[str], *,
         prices.setdefault(sym, {})[dt_str] = val
         _mark_prices_dirty(sym)
         _tr_factor_cache.pop(sym, None)
-        # Bump covered_end forward if we have a fresher date
+        # Bump covered_end forward if we have a fresher date.  Capped at
+        # the local date: crypto's UTC-dated bar can be tomorrow's, and
+        # claiming coverage of tomorrow skips the symbol for a whole
+        # local day (see _cap_covered_end).  The bar itself is kept.
         meta = _load_meta()
         entry = meta["symbols"].setdefault(sym, {})
         ce = entry.get("covered_end")
         if not ce or dt_str > ce:
-            entry["covered_end"] = dt_str
+            entry["covered_end"] = _cap_covered_end(dt_str)
         entry["last_fetch"] = now.isoformat(timespec="seconds")
         entry["failure_count"] = 0
         entry.pop("retry_after", None)
@@ -1377,6 +1409,15 @@ def _missing_ranges(symbol: str, start: date, end: date) -> list[tuple[date, dat
     cost.  Mutual funds publish their NAV ~1-2 hours after Friday's
     close, so by the time we run over a weekend, Friday's price is the
     correct "latest close" anyway.
+
+    **Today is never treated as covered.**  ``covered_end`` records what
+    we asked for, not what has settled — so the moment any run of the
+    day fetched today, ``covered_end == today`` and every later run that
+    day was a no-op, freezing prices at whatever the first run captured.
+    Clamping the effective coverage to *yesterday* makes a request
+    ending today always yield a one-day gap, so an intraday rerun picks
+    up the moved market.  Historical requests are unaffected: an ``end``
+    in the past compares against the same range as before.
     """
     end = _last_trading_day(end)
     meta = _load_meta()
@@ -1384,7 +1425,7 @@ def _missing_ranges(symbol: str, start: date, end: date) -> list[tuple[date, dat
     if not entry or not entry.get("covered_start"):
         return [(start, end)] if start <= end else []
     cs = _parse_iso(entry["covered_start"])
-    ce = _parse_iso(entry["covered_end"])
+    ce = min(_parse_iso(entry["covered_end"]), _today() - timedelta(days=1))
     gaps: list[tuple[date, date]] = []
     if start < cs:
         gaps.append((start, cs - timedelta(days=1)))
@@ -1554,11 +1595,16 @@ def ensure_coverage(symbols: list[str], start, end, *,
     yfinance for "today" on a position you no longer hold.
 
     ``force_today_for``: optional set of original (pre-proxy-expansion)
-    symbol names to force-refresh today's price for, even if the cache
-    claims today is already covered.  Used by ``--refresh-prices`` mode
-    on held + benchmark symbols only — passing every symbol-ever would
-    re-fetch hundreds of closed positions for nothing.  Doesn't bypass
-    backoff or no-fetch rules — a tombstoned symbol still won't be hit.
+    symbol names to force-refresh the latest trading day for, even if
+    the cache claims it is already covered.  ``main.py`` passes held +
+    benchmark + option-underlying symbols — passing every symbol-ever
+    would re-fetch hundreds of closed positions for nothing.  This is
+    the layer that covers what ``_missing_ranges``' "today is never
+    covered" clamp cannot: over a weekend or holiday the requested end
+    walks back to the last trading day, which IS settled-looking, so
+    only an explicit force re-pulls (e.g. a mutual-fund NAV that hadn't
+    posted when Friday evening's run went out).  Doesn't bypass backoff
+    or no-fetch rules — a tombstoned symbol still won't be hit.
     """
     force_today_set: set[str] = set(force_today_for or set())
     global _splits_dirty, _meta_dirty
