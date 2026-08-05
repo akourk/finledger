@@ -8,8 +8,9 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1 of 9, plus Segment 5 item 1 (pulled forward) |
-| **Findings** | 5 open / 2 fixed |
+| **Segments complete** | 1 of 9, plus Segment 5 item 1 (pulled forward, complete) |
+| **Findings** | 7 open / 4 fixed |
+| **Suite** | 478 → 545 tests, green |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -22,6 +23,10 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 | ID | Sev | Claim |
 |---|---|---|
 | F-007 | high | *(fixed)* No test had ever tripped any of the 23 `data_health` checks — the suite's own safety net was entirely unverified |
+| F-008 | medium | *(fixed)* The reconciliation panel's break-flagging path was never exercised — no test produced a balance row that wasn't "ok" |
+| F-009 | medium | *(fixed)* `alerts.py` had no test file; five of seven alert sources had never been emitted |
+| F-010 | low | The coverage-gap alert's lookback window silently halved when the history cadence went semimonthly |
+| F-011 | low | A malformed `[expected ±N]` token is indistinguishable from no token, and its error branch is unreachable |
 | F-001 | medium | The shipped sample portfolio is not exercised by any test; five broker parsers have zero executed lines |
 | F-002 | medium | Two basis-walker branches (`_remove_from_avg`, `_apply_split_to_lots`) are never executed |
 | F-003 | low | `snapshot.py` has 0% coverage — export/import wholly untested, including the anti-clobber guard |
@@ -172,8 +177,34 @@ broken detector — see F-007.
 **Fixed:** `tests/test_data_health_guards.py` (+21 tests, suite now
 499). Mutation-verified in both directions.
 
-**Still open:** the 13 `warn` / `info` checks, and the other three
-instruments (`reconcile.py`, `alerts.py`, `changes.py`).
+**Then the other three instruments.** Same method, three different
+outcomes — which is itself the useful result, because it shows the
+question discriminates:
+
+- **`reconcile.py`** (F-008) — 92% covered, but the *one* uncovered
+  decision was the balance status band, so the panel's break-flagging
+  path had never run. Worse than an ordinary gap: the plan's
+  ground-truth technique measures Segment 7 *through* this panel.
+- **`alerts.py`** (F-009) — no test file at all; five of seven alert
+  sources had never been emitted.
+- **`changes.py`** — needs nothing. `first_run` and
+  `skipped_empty_run` are both already pinned, matching its 95%. Worth
+  recording that a module passed.
+
+Two smaller findings fell out of reading `reconcile.py` closely: the
+coverage-gap alert's lookback is coupled to snapshot cadence and
+silently halved when history went semimonthly (F-010), and a malformed
+`[expected ±N]` token parses as no token at all (F-011). F-011 fails in
+the safe direction — it re-flags rather than masks — but silently. Both
+logged, neither fixed: they are behaviour changes, and the scope rule
+says log those rather than take them.
+
+**Fixed:** `tests/test_data_health_guards.py`,
+`tests/test_reconcile_guards.py`, `tests/test_alerts_guards.py`.
+Suite 478 → 545, green. Every addition mutation-verified: 26 mutations
+across the three modules, all CAUGHT.
+
+**Still open:** the 13 `warn` / `info` `data_health` checks.
 
 ---
 
