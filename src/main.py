@@ -179,12 +179,17 @@ def _refresh_prices_only(args) -> None:
     """Fast path: re-pull today's prices and regenerate the dashboard
     without re-processing CSVs.
 
-    Loads the previously-exported ``transactions.json`` (so all txns
-    keep their basis annotations from the prior full run), then runs
-    just the price-fetch + holdings rebuild + history + analytics +
-    export pipeline.  Saves ~2-3 seconds vs the full pipeline AND
-    forces yfinance to re-pull today's close even if the cache thinks
-    today is already covered (necessary for intraday refreshes).
+    Loads the previously-exported ``transactions.json``, re-walks basis
+    over those rows, then runs the price-fetch + holdings rebuild +
+    history + analytics + export pipeline.  Saves ~2-3 seconds vs the
+    full pipeline by skipping CSV scan / parse / dedupe / normalize.
+
+    **Speed only.**  This used to be the one path that re-pulled a
+    price the cache already claimed to cover, which made a speed flag
+    load-bearing for correctness.  Settle awareness
+    (``prices._settle_horizon``) means the full pipeline refetches
+    anything still moving too, so the two paths differ in what they
+    RE-PARSE, not in how fresh the prices are.
 
     Output is identical in shape to a full run — same JSON schema,
     same dashboard layout — so consumers don't need to special-case
@@ -451,12 +456,12 @@ def main():
     )
     parser.add_argument(
         "--refresh-prices", action="store_true",
-        help="Fast mode: skip CSV scanning, parsing, deduplication, "
-             "normalisation, and the basis walker.  Loads the previous "
-             "exports/transactions.json, force-refreshes today's prices "
-             "from yfinance, then re-runs history + analytics + dashboard. "
-             "Use when transactions haven't changed but you want updated "
-             "values reflecting today's market close.",
+        help="Fast mode: skip CSV scanning, parsing, deduplication and "
+             "normalisation.  Loads the previous "
+             "exports/transactions.json, re-prices it, then re-runs "
+             "history + analytics + dashboard.  Use when transactions "
+             "haven't changed.  This is purely a SPEED option — the "
+             "full pipeline refreshes prices just as thoroughly.",
     )
     parser.add_argument(
         "--export-snapshot", metavar="PATH", default=None,

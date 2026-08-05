@@ -1391,6 +1391,29 @@ process.
   adding a freezegun dependency.  This is the module's only timezone
   logic; `tzdata` arrives with pandas via yfinance, and the zone lookup
   degrades safely if it's ever absent.
+- **The store is DAILY, and going finer was considered and rejected.**
+  Don't propose an intraday / timestamped price series without new
+  information.  Measured at the time: the cache is ~437k daily points /
+  ~10.6 MB / ~24 bytes per point across 233 shards, and it is checked
+  into git.  One-minute bars for a single year across the same symbol
+  set would be ~22.3M points (~0.5 GB/yr) — and it can't be backfilled
+  anyway, since yfinance caps 1m history at 7 days and 2–90m at 60
+  days, so history would become a hybrid every consumer has to
+  special-case.  **Nothing would read it**: every price consumer is
+  daily-or-coarser (`history.compute_history` samples semimonthly,
+  `history.compute_daily_totals`, `analytics/_shared._value_at_date`,
+  `analytics/header.py`, `analytics/daily_pnl.py`,
+  `prices.option_intrinsic`).  Freshness questions are about the
+  PROVENANCE of one date's bar, which is what `settled_through` and
+  `last_fetch` answer — not about resolution.
+- **Known gap: crypto is not refetched over a weekend.**
+  `_missing_ranges` runs `end = _last_trading_day(end)` for every asset
+  class, so a Saturday request walks back to Friday and Saturday's
+  crypto bar is skipped until the next weekday run (which then fetches
+  the whole Sat–Mon gap, so nothing is lost permanently — the weekend
+  just displays Friday's mark).  `_settle_horizon` is already
+  weekend-correct for crypto, so making the end-clamp class-aware is a
+  small change if weekend marks start to matter.
 - **Weekend / holiday lookup walks backward** up to 7 days. Outside that
   window, `get_price` returns None and `compute_history` silently skips
   the position (reflected in `priced_pct`). Don't "fix" this with
