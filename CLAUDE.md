@@ -1480,6 +1480,33 @@ process.
   this changed balances only slightly — remaining statement deltas
   are statement composition (year-end accruals), not valuation.)
 
+## Repairing a suspect price cache
+
+`tools/repair_intraday_marks.py` audits cached daily bars against a
+fresh pull and, if warranted, rewinds `covered_end` / `settled_through`
+to a cutoff so the next run refetches that window through the normal
+batched path:
+
+```bash
+python -m tools.repair_intraday_marks --audit --since YYYY-MM-DD
+python -m tools.repair_intraday_marks --since YYYY-MM-DD && python -m src.main
+```
+
+It **rewinds coverage rather than deleting shards** on purpose:
+`_apply_fetch_success` merges, so a symbol whose refetch fails or
+returns nothing (delisted, tombstoned) keeps everything it already had.
+Deleting shards would permanently lose the history of tickers yfinance
+can no longer serve.
+
+Written for the pre-settle-awareness contamination: because the old
+cache never revisited a date once `covered_end` passed it, every day
+the pipeline was first run during market hours froze an intraday mark
+in as that day's close.  That is fixed going forward, but interior
+dates already in the cache do NOT self-heal — only a forward gap ever
+gets fetched.  Reach for this tool again after any change to fetch
+gating, or whenever a historical figure looks off in a way basis and
+transactions can't explain.
+
 ## Snapshot feature
 
 `src/snapshot.py` bundles every CSV in `data/` into a single JSON file
