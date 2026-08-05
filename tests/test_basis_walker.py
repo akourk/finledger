@@ -350,3 +350,90 @@ class TestLotProvenance:
         state = compute_basis_default(txns)
         assert self._origins(state, ("Coinbase", "CBETH-USD")) == [
             "reconstructed"]
+
+
+class TestWalkOrderIndependence:
+    """The walk must depend on the transactions, not on the order the
+    caller happened to hand them over in.
+
+    ``_sort_key`` groups by ``(date, account_group, symbol, direction)``
+    and several same-day rows in one symbol tie under it.  Python's sort
+    is stable, so before ``seq`` existed those ties resolved to the
+    incoming list order — and fin's two pipeline paths supply different
+    ones (``main()`` walks in parse order, ``--refresh-prices`` in the
+    order the JSON export was written in).  Same ledger, different lots
+    relieved, different realized gains.  See
+    ``pipeline_stages.assign_ingest_seq``, and
+    ``tests/test_pipeline_path_parity.py`` for the end-to-end version.
+    """
+
+    @staticmethod
+    def _seq(txns):
+        for i, t in enumerate(txns):
+            t["seq"] = i
+        return txns
+
+    @staticmethod
+    def _annotations(txns):
+        return {t["seq"]: (t.get("cost_basis"), t.get("realized_gain"),
+                           t.get("basis_effect"))
+                for t in txns}
+
+    def _rows(self):
+        """Two same-day buys at different prices, then a sell.  Under
+        HIFO the sell's basis depends entirely on which buy landed in
+        the pool first — exactly the tie that used to leak."""
+        return (
+            ("2024-01-01", "Coinbase", "BTC-USD", "Buy",  1, 100.0, 100.0),
+            ("2024-02-01", "Coinbase", "BTC-USD", "Buy",  1, 300.0, 300.0),
+            ("2024-02-01", "Coinbase", "BTC-USD", "Buy",  1, 500.0, 500.0),
+            ("2024-03-01", "Coinbase", "BTC-USD", "Sell", 2, 600.0, 1200.0),
+        )
+
+    @pytest.mark.parametrize("method", ["fifo", "lifo", "hifo"])
+    def test_reordered_input_gives_identical_annotations(self, method,
+                                                         isolated_workdir):
+        from src.basis import compute_basis_default
+        methods = {"Coinbase": method}
+
+        forward = self._seq(_txns(*self._rows()))
+        forward_state = compute_basis_default(forward, account_methods=methods)
+        expected = self._annotations(forward)
+
+        # Separate txn dicts so the second walk can't just overwrite the
+        # first walk's annotations.
+        reversed_ = self._seq(_txns(*self._rows()))
+        reversed_.reverse()
+        reversed_state = compute_basis_default(reversed_,
+                                               account_methods=methods)
+
+        assert self._annotations(reversed_) == expected
+        assert reversed_state["realized_total"] == pytest.approx(
+            forward_state["realized_total"])
+
+    def test_wrap_out_ties_with_a_same_day_buy(self, isolated_workdir):
+        """The case that hit production: ``Wrap Asset Out`` SUBTRACTS in
+        the balance walker but CARRIES basis in the lot walker, so the
+        two sorts disagree about whether it precedes a same-day Buy.
+        Whichever order arrives, the wrap must carry the same basis."""
+        from src.basis import compute_basis_default
+        rows = (
+            ("2024-01-01", "Coinbase", "ETH-USD", "Buy", 2, 500.0, 1000.0),
+            ("2024-02-05", "Coinbase", "ETH-USD", "Wrap Asset Out",
+             2, 0.0, 0.0),
+            ("2024-02-05", "Coinbase", "CBETH-USD", "Wrap Asset In",
+             2, 0.0, 0.0),
+            ("2024-02-05", "Coinbase", "ETH-USD", "Buy", 2, 1500.0, 3000.0),
+        )
+        methods = {"Coinbase": "hifo"}
+        a = self._seq(_txns(*rows))
+        b = list(a)
+        b[1], b[3] = b[3], b[1]          # buy before the wrap-out
+
+        compute_basis_default(a, account_methods=methods)
+        wrap_in_basis = next(t["cost_basis"] for t in a
+                             if t["action"] == "Wrap Asset In")
+        compute_basis_default(b, account_methods=methods)
+        assert next(t["cost_basis"] for t in b
+                    if t["action"] == "Wrap Asset In") == pytest.approx(
+            wrap_in_basis)

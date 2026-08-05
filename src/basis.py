@@ -239,6 +239,16 @@ def _sort_key(t: dict) -> tuple:
     earlier one).  Cross-key same-day pairing (Transfer In that needs a
     paired Transfer Out) is handled by pre-pairing below — this sort
     only has to keep lot mutations within a key in the right order.
+
+    **`seq` (the ingest index, see ``pipeline_stages.assign_ingest_seq``)
+    is the final tie-break, and it is what makes this a TOTAL order.**
+    Without it, several same-day trades in one symbol tie, Python's
+    stable sort falls back to the incoming list order, and the walk
+    silently depends on how its caller happened to order the list —
+    which the full pipeline and ``--refresh-prices`` do differently.
+    That produced materially different realized gains from the same
+    transactions.  Txns with no ``seq`` (hand-built dicts in unit
+    tests) all score 0 and keep the old stable-sort behaviour.
     """
     effect = _basis_effect(t)
     is_subtract = effect in ("remove", "transfer_out")
@@ -247,6 +257,7 @@ def _sort_key(t: dict) -> tuple:
         t.get("account_group", ""),
         t.get("symbol", ""),
         2 if is_subtract else 1,
+        t.get("seq") if isinstance(t.get("seq"), int) else 0,
     )
 
 
@@ -909,11 +920,17 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
         bo = t.get("basis_override")
         return float(bo) if bo is not None else default
 
+    # Canonical walk order, established ONCE up front.  Every pre-pass
+    # below reads this list rather than the caller's, so pairing and
+    # grouping decisions can't depend on the order the caller handed us
+    # (see _sort_key — the `seq` tie-break is what makes this total).
+    txns_sorted = sorted(txns, key=_sort_key)
+
     # Pre-pair transfers across accounts.  Each Transfer In either has a
     # matching Transfer Out (cross-group — basis carries), belongs to an
     # intra-group pair (no-op in the lot queue since both legs share the
     # same (account_group, symbol) key), or is unpaired (zero basis).
-    pairings = _pair_transfers(txns)
+    pairings = _pair_transfers(txns_sorted)
     tin_to_tout:  dict[int, dict] = pairings["tin_to_tout"]
     intra_group:  set[int]        = pairings["intra_group"]
     paired_touts: set[int]        = pairings["paired_touts"]
@@ -927,7 +944,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
 
     # Wrap/unwrap groups (basis-carrying conversions), processed
     # atomically the first time any leg is met.
-    wrap_groups = _pair_wraps(txns)
+    wrap_groups = _pair_wraps(txns_sorted)
     wrap_until = wrap_next_dates(wrap_groups)
     _sym_families = wrap_symbol_families(wrap_groups)
     wrap_done: set[tuple] = set()
@@ -947,7 +964,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
     # consume-THEN-push — under LIFO/HIFO a push-first order would let
     # the consume eat the fresh override lot itself.
     rebase_pairs: dict[int, tuple[dict, dict]] = {}   # id(either leg) → (tin, tout)
-    for _t in txns:
+    for _t in txns_sorted:
         if (id(_t) in intra_group and _basis_effect(_t) == "transfer_in"
                 and _t.get("basis_override") is not None):
             _tout = tin_to_tout.get(id(_t))
@@ -956,8 +973,6 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 rebase_pairs[id(_tout)] = (_t, _tout)
     rebase_done: set[int] = set()
     rebase_ann: dict[int, tuple[str, float]] = {}     # id(leg) → (effect, cost_basis)
-
-    txns_sorted = sorted(txns, key=_sort_key)
 
     for t in txns_sorted:
         effect = _basis_effect(t)

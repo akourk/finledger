@@ -264,12 +264,17 @@ def compute_history(txns: list[dict],
     from .cash_bridge import all_series as _bridge_all_series, balance_at, BRIDGE_MIN
     _bridge_series = _bridge_all_series(txns)
 
+    # Canonical walk order, established up front and fed to every
+    # pre-pass below — same rule as basis._walk (see basis._sort_key)
+    # so neither walker's decisions depend on the caller's list order.
+    txns_sorted = sorted(txns, key=_basis_sort_key)
+
     # Pre-pair cross-account transfers exactly like basis.py so basis
     # carries from source to destination on paired transfers, and
     # intra-group pairs (same (account_group, symbol) on both legs) stay
     # no-ops in the lot queue.  Without this, the latest history snapshot
     # would under-count total basis vs. main.py's FIFO holdings total.
-    pairings = _pair_transfers(txns)
+    pairings = _pair_transfers(txns_sorted)
     tin_to_tout  = pairings["tin_to_tout"]
     intra_group  = pairings["intra_group"]
     paired_touts = pairings["paired_touts"]
@@ -282,7 +287,7 @@ def compute_history(txns: list[dict],
     # whichever leg walks first (consume-then-push so LIFO/HIFO can't
     # eat the fresh override lot).  See the rebase block in basis.py.
     rebase_pairs: dict[int, tuple[dict, dict]] = {}
-    for _t in txns:
+    for _t in txns_sorted:
         if (id(_t) in intra_group and _basis_effect(_t) == "transfer_in"
                 and _t.get("basis_override") is not None):
             _tout = tin_to_tout.get(id(_t))
@@ -293,7 +298,7 @@ def compute_history(txns: list[dict],
 
     # Wrap/unwrap groups — basis-carrying conversions processed
     # atomically the first time any leg is met, exactly like basis.py.
-    wrap_groups = _pair_wraps(txns)
+    wrap_groups = _pair_wraps(txns_sorted)
     wrap_until = wrap_next_dates(wrap_groups)
     _sym_families = wrap_symbol_families(wrap_groups)
     wrap_done: set[tuple] = set()
@@ -304,9 +309,6 @@ def compute_history(txns: list[dict],
         m = account_methods.get(acct, "fifo")
         return m if m in ("fifo", "lifo", "hifo") else "fifo"
 
-    # Same sort as basis.py: within (date, account, symbol), adds before
-    # subtracts.  Required for correct same-day FIFO matching.
-    txns_sorted = sorted(txns, key=_basis_sort_key)
     balances: dict[tuple[str, str], float] = defaultdict(float)
     lots: dict[tuple[str, str], list[dict]] = defaultdict(list)
     # Fallback price basis per symbol — last non-zero `price` observed in a
