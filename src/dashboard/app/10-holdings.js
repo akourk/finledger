@@ -144,9 +144,20 @@ function renderPricesAsOf() {
   const time = t.toLocaleTimeString(undefined,
     { hour: 'numeric', minute: '2-digit' });
   const sameDay = stamp.slice(0, 10) === (DATA.generated || '').slice(0, 10);
-  el.textContent = ` · prices as of ${sameDay ? time : stamp.slice(0, 10) + ' ' + time}`;
+  const when = sameDay ? time : stamp.slice(0, 10) + ' ' + time;
+  // "provisional" = at least one held position is marked from a bar
+  // that can still change (a mid-session price, a fund NAV that has
+  // not struck). Showing an intraday figure is fine; presenting it as
+  // a close without saying so is what makes a broker reconciliation
+  // disagree at 11am and then differently again after the bell.
+  const live = (ANALYTICS.header_summary || {}).prices_provisional;
+  el.innerHTML = ` · prices as of ${when}`
+    + (live ? ' <span class="tb-provisional">· provisional</span>' : '');
   el.title = 'Oldest price fetch across held positions — the marks '
-           + 'behind this snapshot are no fresher than this.';
+           + 'behind this snapshot are no fresher than this.'
+           + (live ? '\n\nProvisional: at least one position is marked from '
+                   + 'a bar that has not settled yet, so its value will '
+                   + 'still move.' : '');
 }
 renderPricesAsOf();
 

@@ -1,10 +1,10 @@
 # Plan: price freshness & settle-awareness
 
-Status: **Phase 1 + Phase 1.5 shipped 2026-08-05. Phase 2 not started.**
-Written 2026-08-04.
+Status: **COMPLETE — all phases shipped 2026-08-05.** Written 2026-08-04.
 
-What actually landed (read the phase sections for the reasoning; the
-notes below record where the implementation differs from the plan):
+All four defects are fixed. What follows is the original plan, kept for
+its reasoning; the notes below record where the implementation differs
+from what was planned.
 
 - **Phase 1** — all three sub-parts, layered, because 1c did *not*
   subsume 1b. 1a alone stops new bad `covered_end` claims but a claim
@@ -17,7 +17,29 @@ notes below record where the implementation differs from the plan):
   portfolio's stalest held mark was ~21h old (a mutual-fund proxy whose
   NAV hadn't reposted) while every equity was current — i.e. it
   surfaced defect 3 on sight, which is what it was for.
-- **Not done:** defects 3 and 4 remain (they are Phase 2's job).
+- **Phase 2** — `_settle_class` / `_settle_horizon` + a per-symbol
+  `settled_through` in the meta sidecar; `_missing_ranges` gates on
+  `min(covered_end, settled_through)`. The target table below is now
+  the real behaviour, verified read-only against the live cache.
+  Two departures from the plan:
+  - **Phase 1's `force_today_for` wiring was REMOVED.** It was a blunt
+    stand-in for not knowing whether a bar had settled; keeping it
+    would force a fetch every run and undo the evening no-op Phase 2
+    exists to buy. A test now asserts `main.py` doesn't reintroduce it.
+    The parameter itself stays as a caller-controlled escape hatch.
+  - `_settle_class` decides "fund" from the US ticker convention (five
+    characters ending in X) plus the multi-word display names
+    `_classify_no_fetch` already knows. On the real cache that
+    captures exactly the 11 mutual funds and nothing else.
+
+### Known limitation, deliberately not fixed
+
+`_missing_ranges` still runs `end = _last_trading_day(end)` for every
+class, so **crypto is not refetched over a weekend** — Saturday's
+request walks back to Friday. Crypto's `_settle_horizon` is already
+weekend-correct, so making the end-clamp class-aware is a small change
+if weekend crypto marks start to matter. It was left alone here to keep
+Phase 2 to the four documented defects.
 
 Read this top-to-bottom before touching code. It carries design decisions
 that were already argued out — don't re-litigate them, just check the
@@ -150,7 +172,7 @@ held symbols.
 
 ---
 
-## Phase 2 — settle-awareness  (the real work; own a calendar)
+## Phase 2 — settle-awareness  (the real work; own a calendar)  ✅ SHIPPED
 
 **Goal:** refetch a date only *while it can still change*. This is
 strictly better than both today's behaviour and blanket always-fetch:

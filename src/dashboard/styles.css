@@ -34,6 +34,14 @@
     margin-bottom: 0;
   }
 
+  /* "provisional" next to the price stamp — a caveat, not an alarm:
+     an unsettled mark is normal during market hours, it just must not
+     be read as a close. */
+  .tb-provisional {
+    color: var(--yellow);
+    font-style: italic;
+  }
+
   /* Persistent top bar — always visible regardless of which tab is
      active.  Holds title, live summary (value / total return / 1-day
      change), and the reload button. */

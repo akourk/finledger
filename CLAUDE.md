@@ -96,7 +96,9 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     case) are served by ONE batched `yf.download` roundtrip, with a
     per-symbol serial fallback owning retry/failure bookkeeping.
     `cache/price_cache_meta.json` tracks per-symbol
-    `covered_start`, `covered_end`, `last_fetch`, `failure_count`,
+    `covered_start`, `covered_end`, `settled_through` (newest date whose
+    bar is final — see the settle-awareness invariants below),
+    `last_fetch`, `failure_count`,
     `retry_after`, and `tombstone` (true after 5 consecutive failures).
     Delisted / renamed tickers stop being retried.  Prices use
     `auto_adjust=False` — yfinance's `Close` column is still split-adjusted
@@ -272,7 +274,14 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       `app/10-holdings.js`).  Symbols the cache never fetches (fund
       display names without a proxy, corp-action stubs, cash)
       contribute nothing — they're priced from txn history and no
-      fetch timestamp describes them.
+      fetch timestamp describes them.  Alongside it,
+      `prices_provisional` (`prices.any_provisional`) is true when any
+      held position is marked from a bar that hasn't settled — the
+      stamp then reads `· provisional`.  A symbol with NO
+      `settled_through` is deliberately not flagged: the fetch path
+      treats unknown as unsettled because refetching is the safe error
+      there, but flagging every tombstoned / backed-off symbol would
+      leave the caveat permanently lit.
     - `concentration` — positions / sectors / account_groups /
       account_types each as a sorted-by-pct list, plus Herfindahl
       index, top-5 share, and risk flags.
@@ -1331,23 +1340,43 @@ process.
   invalidate (those cached prices already reflect the old splits).
 - **`covered_end` is a claim about what we ASKED for, never about what
   has settled — and it can never name a future local date.**  Both
-  write sites go through `_cap_covered_end` (clamped to `_today()`),
-  and `_missing_ranges` clamps the effective coverage to *yesterday* so
-  a request ending today always yields a one-day gap.  Two bugs lived
-  here: the first fetch of the day set `covered_end == today` and froze
-  every later full run that day (making the `--refresh-prices` speed
-  flag load-bearing for correctness), and a UTC-dated crypto bar
-  received on an evening run set `covered_end` to *tomorrow*, so the
-  next local day looked covered and crypto was skipped for a full day.
-  The future-dated bar itself is kept in the shard — it's real data and
-  `get_price` should return it once that date arrives; only the
-  coverage claim is capped.  `main.py` also passes `force_today_for`
-  (held + benchmarks + option underlyings), which covers what the clamp
-  cannot: over a weekend the requested end walks back to a
-  settled-looking Friday, so only an explicit force re-pulls a fund NAV
-  that hadn't posted when Friday evening's run went out.  `_today()` is
-  the single seam for "what is the local date" — tests monkeypatch it
-  rather than adding a freezegun dependency.
+  write sites go through `_cap_covered_end` (clamped to `_today()`).
+  Two bugs lived here: the first fetch of the day set
+  `covered_end == today` and froze every later full run that day
+  (making the `--refresh-prices` speed flag load-bearing for
+  correctness), and a UTC-dated crypto bar received on an evening run
+  set `covered_end` to *tomorrow*, so the next local day looked covered
+  and crypto was skipped for a full day.  The future-dated bar itself is
+  kept in the shard — it's real data and `get_price` should return it
+  once that date arrives; only the coverage claim is capped.
+- **A date is covered only once its bar can no longer CHANGE.**
+  Per-symbol `settled_through` in the meta sidecar is the newest final
+  date, written as `min(covered_end, _settle_horizon(symbol))` — both
+  bounds load-bearing (the horizon alone claims dates we hold no data
+  for; `covered_end` alone calls this morning's live mark a close).
+  `_missing_ranges` gates on `min(covered_end, settled_through)`, so a
+  live bar yields a gap and a settled one yields nothing (the run does
+  no network work at all).  This is what stops yfinance's intraday
+  daily bar being frozen in as if it were the close.  A cache with no
+  `settled_through` falls back to "today is never settled" — the prior
+  behaviour, so no migration.  **Do not add a `force_today_for` call in
+  `main.py`**: it existed briefly as a blunt stand-in for this and now
+  only undoes the evening no-op (pinned by a test).  The parameter
+  survives as a caller-controlled escape hatch.
+- **Settle times are deliberately LATE** (`_settle_horizon`): 16:20 ET
+  for the tape, 18:00 ET for a mutual-fund NAV strike, and crypto needs
+  the whole **UTC** day to be over.  Being wrong in the "not settled
+  yet" direction costs one redundant fetch returning the same number;
+  being wrong the other way leaves a stale figure the user trusts.
+  That asymmetry is why market half-days (13:00 ET close) need no
+  calendar, and why `_settle_class` is biased toward `fund` — a fund
+  mistaken for an equity gets marked final before its NAV strikes.
+  `_settle_class` is the companion to `_classify_no_fetch`; keep them
+  aligned.  `_now_utc()` / `_today()` are the clock seams — tests
+  monkeypatch `_now_utc` (which `_today` derives from) rather than
+  adding a freezegun dependency.  This is the module's only timezone
+  logic; `tzdata` arrives with pandas via yfinance, and the zone lookup
+  degrades safely if it's ever absent.
 - **Weekend / holiday lookup walks backward** up to 7 days. Outside that
   window, `get_price` returns None and `compute_history` silently skips
   the position (reflected in `priced_pct`). Don't "fix" this with

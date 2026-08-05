@@ -1365,6 +1365,30 @@ def last_fetch_at(symbol: str) -> str | None:
     return (_load_meta()["symbols"].get(target) or {}).get("last_fetch")
 
 
+def any_provisional(symbols) -> bool:
+    """True when any of ``symbols`` is currently marked from a bar that
+    can still change — a mid-session price stored as if it were a close.
+
+    A symbol with no ``settled_through`` at all is NOT flagged.  The
+    fetch path treats that as unsettled because refetching is the safe
+    error there; here the safe error is the opposite way.  Flagging
+    every symbol we simply haven't fetched recently (a tombstoned
+    ticker, one on backoff) would leave the caveat permanently lit and
+    stop meaning anything — and ``oldest_last_fetch`` already describes
+    that case more accurately.
+    """
+    meta = _load_meta()["symbols"]
+    for sym in symbols:
+        target = price_source_symbol(sym)
+        if not target:
+            continue
+        entry = meta.get(target) or {}
+        settled, covered = entry.get("settled_through"), entry.get("covered_end")
+        if settled and covered and covered > settled:
+            return True
+    return False
+
+
 def oldest_last_fetch(symbols) -> str | None:
     """The OLDEST ``last_fetch`` across ``symbols`` — a staleness floor.
 

@@ -1407,3 +1407,95 @@ class TestSettledThroughGating:
         _invalidate_prices_for_split_change(
             "SMX", [], [["2026-08-05", 0.1]], verbose=False)
         assert "settled_through" not in _load_meta()["symbols"]["SMX"]
+
+
+class TestProvisionalLabelling:
+    """Phase 2d — say so when a figure is still moving.
+
+    Showing an intraday mark is fine; presenting it as a close without
+    saying so is what made a broker reconciliation disagree at 11am and
+    then differently again after the bell.
+    """
+
+    def test_flags_a_bar_that_has_not_settled(self, isolated_workdir):
+        from src.prices import _load_meta, any_provisional
+        _load_meta()["symbols"]["AAPL"] = {
+            "covered_end":     "2026-08-05",
+            "settled_through": "2026-08-04",
+        }
+        assert any_provisional(["AAPL"]) is True
+
+    def test_settled_bar_is_not_flagged(self, isolated_workdir):
+        from src.prices import _load_meta, any_provisional
+        _load_meta()["symbols"]["AAPL"] = {
+            "covered_end":     "2026-08-05",
+            "settled_through": "2026-08-05",
+        }
+        assert any_provisional(["AAPL"]) is False
+
+    def test_one_unsettled_position_flags_the_whole_snapshot(
+            self, isolated_workdir):
+        from src.prices import _load_meta, any_provisional
+        meta = _load_meta()["symbols"]
+        meta["AAPL"] = {"covered_end": "2026-08-05",
+                        "settled_through": "2026-08-05"}
+        meta["VFIAX"] = {"covered_end": "2026-08-05",
+                         "settled_through": "2026-08-04"}
+        assert any_provisional(["AAPL", "VFIAX"]) is True
+
+    def test_unknown_settlement_is_not_flagged(self, isolated_workdir):
+        """The fetch path treats a missing `settled_through` as
+        unsettled because refetching is the safe error there.  Here the
+        safe error runs the other way: flagging every symbol we simply
+        have not fetched lately would leave the caveat permanently lit
+        and stop meaning anything."""
+        from src.prices import _load_meta, any_provisional
+        _load_meta()["symbols"]["DELISTED"] = {
+            "covered_end": "2025-01-15",
+            "tombstone": True,
+        }
+        assert any_provisional(["DELISTED"]) is False
+
+    def test_header_summary_carries_the_flag(self, stub_prices, monkeypatch):
+        from datetime import datetime, timezone
+        from src.analytics.header import compute_header_summary
+        from src.history import compute_history
+        from src import prices as _prices_mod
+
+        # 11:00 ET on 2026-08-04 — the bar we store is a live mark.
+        monkeypatch.setattr(
+            _prices_mod, "_now_utc",
+            lambda: datetime(2026, 8, 4, 15, 0, tzinfo=timezone.utc))
+        stub_prices.set("AAA", {"2026-08-03": 10.0, "2026-08-04": 11.0})
+        _prices_mod.ensure_coverage(["AAA"], "2026-08-03", "2026-08-04",
+                                    verbose=False)
+
+        txns = [{
+            "date": "2026-08-03", "account": "Robinhood",
+            "account_group": "Robinhood", "account_type": "Taxable",
+            "symbol": "AAA", "action": "Buy", "raw_action": "Buy",
+            "quantity": 10.0, "price": 10.0, "fees": 0.0, "amount": 100.0,
+            "description": "", "source": "rh.csv",
+        }]
+        history = compute_history(txns, {"AAA": "Technology"})
+        assert history
+        summary = compute_header_summary(txns, history, [],
+                                         {"net_contributed": 100.0})
+        assert summary["prices_provisional"] is True
+
+        # After the close settles, the same snapshot is not provisional.
+        _prices_mod._load_meta()["symbols"]["AAA"]["settled_through"] = "2026-08-04"
+        summary = compute_header_summary(txns, history, [],
+                                         {"net_contributed": 100.0})
+        assert summary["prices_provisional"] is False
+
+    def test_dashboard_renders_the_caveat(self):
+        from pathlib import Path
+        from src import dashboard
+
+        pkg = Path(dashboard.__file__).parent
+        app_js = dashboard._read_app_js()
+        styles = (pkg / "styles.css").read_text(encoding="utf-8")
+        assert "prices_provisional" in app_js
+        assert "provisional" in app_js
+        assert ".tb-provisional" in styles
