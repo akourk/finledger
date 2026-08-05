@@ -82,13 +82,19 @@ def export_json(txns: list[dict], output_path: Path, *,
         "date", "account_group", "account_type", "account", "symbol",
         "action", "raw_action", "quantity", "price", "fees", "amount",
         "balance", "value", "cost_basis", "realized_gain", "cash_flow",
-        "holding_days", "basis_effect", "description", "source",
+        "holding_days", "basis_effect", "description", "source", "seq",
     ]
 
     # Internal analytics intermediates that live on the txn dict in memory
     # but should not bloat the exported JSON.  ``lot_breakdown`` is the
     # per-lot FIFO detail consumed by analytics/tax.py (form_8949, ST/LT
     # split); the dashboard reads the precomputed results, not the raw lots.
+    #
+    # NOTE: ``seq`` is deliberately NOT in here.  ``--refresh-prices``
+    # reloads this file instead of re-parsing the CSVs, and `seq` is the
+    # only record of the order the full pipeline's lot walkers ran in —
+    # strip it and the refresh path silently relieves different lots.
+    # See pipeline_stages.assign_ingest_seq.
     _INTERNAL_FIELDS = {"lot_breakdown", "basis_override"}
 
     def _ordered(txn: dict) -> dict:

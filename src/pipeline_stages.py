@@ -33,6 +33,58 @@ from .config import ACCOUNT_TYPES, CASH_SYMBOLS, contract_multiplier
 
 
 # ---------------------------------------------------------------------------
+# Stage 0: ingest sequence
+# ---------------------------------------------------------------------------
+
+def assign_ingest_seq(txns: list[dict]) -> list[dict]:
+    """Stamp each txn with its position in the ingest order (``seq``).
+
+    The lot walkers sort by ``(date, account_group, symbol, direction)``,
+    which leaves genuine ties — several same-day trades in one symbol.
+    Python's sort is stable, so those ties used to be resolved by
+    whatever order the list happened to arrive in, and the two pipeline
+    paths arrive differently: ``main()`` walks basis in parse order,
+    while ``--refresh-prices`` re-loads the exported JSON (sorted by
+    date + account, then re-sorted by ``walk_balances``).  Same
+    transactions, different same-day sequence, different lots relieved
+    — the refresh path reported materially different realized gains
+    than the full run on identical data.
+
+    ``seq`` freezes the ingest order as data, so it survives the JSON
+    round trip and both paths walk the same sequence.  Parse order is
+    also the *right* tie-break: within a broker CSV the rows are in
+    execution order, so a same-day buy-then-sell relieves the lot the
+    broker actually relieved.
+
+    Assigned once, after every synthesis step that can append rows
+    (transfer reconciliation, external-funding synths, balance
+    anchors) — see ``main.main``.  Mutates in place and returns the
+    same list for convenience.
+    """
+    for i, t in enumerate(txns):
+        t["seq"] = i
+    return txns
+
+
+def restore_ingest_order(txns: list[dict]) -> list[dict]:
+    """Re-sort a round-tripped txn list back into ingest order.
+
+    The inverse of :func:`assign_ingest_seq`, for ``--refresh-prices``
+    (which loads ``exports/transactions.json`` rather than re-parsing
+    the CSVs).  Raises ``ValueError`` when any txn is missing ``seq``
+    — an export written before this field existed can't be ordered
+    faithfully, and silently guessing is exactly the bug ``seq`` is
+    here to prevent.
+    """
+    missing = sum(1 for t in txns if not isinstance(t.get("seq"), int))
+    if missing:
+        raise ValueError(
+            f"{missing} of {len(txns)} transaction(s) have no `seq` field"
+        )
+    return sorted(txns, key=lambda t: t["seq"])
+
+
+# ---------------------------------------------------------------------------
 # Stage 1: dust filter
 # ---------------------------------------------------------------------------
 

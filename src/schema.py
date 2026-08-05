@@ -57,6 +57,10 @@ class Transaction(TypedDict, total=False):
     - ``realized_gain``  realized gain on Sell (basis walker)
     - ``holding_days``   days held (basis walker, for short/long-term)
     - ``basis_effect``   classification used by the walker
+    - ``seq``            ingest-order index; the lot walkers' final sort
+                         tie-break, so same-day rows are relieved in the
+                         same sequence on every pipeline path (see
+                         ``pipeline_stages.assign_ingest_seq``)
     """
     # Core (always present after parsing)
     date:        str
@@ -81,6 +85,7 @@ class Transaction(TypedDict, total=False):
     realized_gain:  Optional[float]
     holding_days:   Optional[int]
     basis_effect:   str
+    seq:            int
 
 
 # ---------------------------------------------------------------------------

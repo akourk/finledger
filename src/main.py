@@ -199,7 +199,7 @@ def _refresh_prices_only(args) -> None:
 
     from .pipeline_stages import (
         build_basis_methods_totals, build_holdings, compute_cash_principal,
-        walk_balances,
+        restore_ingest_order, walk_balances,
     )
 
     output_path = Path(args.output) if args.output else (EXPORT_DIR / "transactions.json")
@@ -214,10 +214,28 @@ def _refresh_prices_only(args) -> None:
     sector_of_existing = data.get("sector_of", {}) or {}
     print(f"  {len(txns)} transactions, {len(sector_of_existing)} symbol sectors")
 
+    # Restore the ingest order the full pipeline walked in.  The export
+    # is sorted for readability, so without this the lot walkers and the
+    # basis stampers below see a different same-day sequence than
+    # main() did and relieve different lots — the refresh path used to
+    # report materially different realized gains from identical data.
+    # See pipeline_stages.assign_ingest_seq.
+    try:
+        txns = restore_ingest_order(txns)
+    except ValueError as exc:
+        print(f"  {output_path} predates the `seq` transaction field ({exc}).\n"
+              f"  Refresh mode can't reproduce the full pipeline's lot "
+              f"ordering without it — run the full pipeline once to "
+              f"rewrite the export: python -m src.main")
+        sys.exit(1)
+
     # Stage: walk balances (with USD-non-Savings skip rule).  This is
     # the same stage main() uses for the full pipeline — single source
-    # of truth.
-    txns, balances = walk_balances(txns)
+    # of truth.  Annotates the same txn dicts in place; `walked` is
+    # main()'s post-walk ordering, while `txns` stays in ingest order
+    # for the basis stampers (which match rows first-come, so they must
+    # see main()'s sequence).
+    walked, balances = walk_balances(txns)
 
     # Held symbols across all account groups (for the price refresh).
     final_bal: dict[str, float] = defaultdict(float)
@@ -337,6 +355,12 @@ def _refresh_prices_only(args) -> None:
     # full pipeline so the refresh path's reconciliation panel matches.
     retirement_meta["reconcile"] = merge_auto_reconcile_rows(
         retirement_meta.get("reconcile"), load_robinhood_1099_income(DATA_DIR))
+
+    # Stamping done — hand the rest of the pipeline the post-walk
+    # ordering, which is what main() passes to history / analytics /
+    # export.  (Both walkers sort internally, so this is about keeping
+    # the two paths' exported row order identical, not correctness.)
+    txns = walked
 
     print("Computing portfolio history with refreshed prices...")
     history = compute_history(txns, sector_of,
@@ -631,6 +655,18 @@ def main():
         txn["quantity"] = abs(float(txn.get("quantity", 0) or 0))
         txn["amount"] = abs(float(txn.get("amount", 0) or 0))
         txn["fees"] = abs(float(txn.get("fees", 0) or 0))
+
+    # --- Step 4e-ii: Freeze the ingest order as `seq` ---
+    # Every row that will ever exist now exists (parse + dedupe + all the
+    # reconciliation / synthesis steps above), so this is the last moment
+    # the order is meaningful and the first at which it's complete.  The
+    # lot walkers use `seq` as their final sort tie-break, which makes
+    # their order TOTAL rather than "whatever the caller passed" — see
+    # pipeline_stages.assign_ingest_seq for the divergence that motivated
+    # it.  Must precede every order-sensitive consumer below: the
+    # cost-basis / acquisition stampers and the basis walker itself.
+    from .pipeline_stages import assign_ingest_seq
+    assign_ingest_seq(txns)
 
     # --- Step 4e-bis: Cost basis (FIFO, annotated onto txns in place) ---
     # Annotates each txn with cost_basis, realized_gain (sells only), and

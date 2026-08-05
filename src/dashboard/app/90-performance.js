@@ -1935,13 +1935,16 @@ document.getElementById('performanceContent')?.addEventListener('click', e => {
 // Detect columns from data
 const NUMERIC_FIELDS = new Set([
   'quantity', 'price', 'fees', 'amount', 'balance', 'value',
-  'cost_basis', 'realized_gain', 'cash_flow', 'holding_days',
+  'cost_basis', 'realized_gain', 'cash_flow', 'holding_days', 'seq',
 ]);
 const HIDDEN_BY_DEFAULT = new Set([
   'description', 'account', 'source', 'raw_action',
   // Basis-walker outputs — useful but noisy by default; visible via
   // the "show:" chip list when the user wants them.
   'cost_basis', 'realized_gain', 'cash_flow', 'holding_days', 'basis_effect',
+  // Ingest-order index — plumbing for the lot walkers' sort, not a
+  // figure anyone reads off the ledger.
+  'seq',
 ]);
 
 const columns = txns.length > 0
