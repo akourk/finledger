@@ -580,7 +580,7 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   the total basis rescaled to the destination quantity (`_rescale_lots`,
   dates preserved), push to the destination symbol.  Each leg is annotated
   with its own per-symbol basis delta (out −, in +) so
-  `derive_basis_by_key_from_txns` (the parity check + refresh path) stays
+  `derive_basis_by_key_from_txns` (the data-health parity check) stays
   in sync.  Gain is realized only at the eventual real sale.  This matches
   how brokers (Coinbase 1099-DA) report wrapping — mapping it to Buy/Sell
   (the old behaviour) wrongly realized the full gain at every wrap.  NOTE:
@@ -1239,6 +1239,20 @@ process.
 - **`BASIS_EFFECTS` lives in `src/actions.py`** and is re-exported
   through `basis.BASIS_EFFECTS` for backward compatibility.  The
   source of truth is the catalog; `basis.py` imports.
+- **A published basis figure always comes from the walker's lot state
+  (`state_to_holdings`), never from re-summing the per-txn
+  annotations.**  Those annotations are rounded to cents for
+  readability, so summing thousands of them accumulates a cent or two
+  per position.  `derive_basis_by_key_from_txns` exists only for
+  `data_health._check_lot_queue_parity`, which is why that check
+  carries a $0.05 tolerance rather than demanding equality — don't
+  tighten it to zero, and don't build a displayed figure on the
+  reconstruction.  `main._refresh_prices_only` did exactly that, and
+  the two pipeline paths disagreed on holdings basis by cents for
+  identical transactions.  It now stamps overrides and walks basis up
+  front, the same way `main()` does.  Pinned by
+  `test_pipeline_path_parity.py` — its fixture carries sub-cent
+  fractional fills specifically so that test isn't vacuous.
 - **Symbol-aware classifier**: `basis._basis_effect` returns `"ignore"`
   for any txn where symbol is `USD` or empty, regardless of action. Cash
   events belong in `cash_summary`, not the lot queue. All other

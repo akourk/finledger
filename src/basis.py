@@ -1363,13 +1363,22 @@ def derive_basis_by_key_from_txns(txns: list[dict]) -> dict[tuple[str, str], flo
     """Reconstruct ``{(account_group, symbol): running_cost_basis}``
     from per-txn ``basis_effect`` + ``cost_basis`` annotations.
 
-    Used in two places (so it MUST stay in sync with the basis walker):
+    Its consumer is ``analytics.data_health._check_lot_queue_parity``,
+    which asserts the txn-level annotations stay internally consistent
+    with the holdings table — so this MUST stay in sync with the basis
+    walker's effect vocabulary.
 
-    1. ``main._refresh_prices_only`` — to populate ``fifo_basis_by_key``
-       from a previously-exported JSON without re-walking every lot.
-    2. ``analytics.data_health._check_lot_queue_parity`` — to assert
-       the txn-level annotations are internally consistent with the
-       holdings table.
+    **This is an approximation, and only good enough for that check.**
+    Every ``cost_basis`` annotation is rounded to cents for
+    readability, so summing thousands of them accumulates a cent or two
+    per position versus the walker's own lot state (which sums at full
+    precision and rounds once).  That is why the parity check carries a
+    tolerance rather than demanding equality, and why nothing that
+    PUBLISHES a basis figure may be built on this — ``main`` and
+    ``main._refresh_prices_only`` both read ``state_to_holdings`` off
+    the walker.  ``_refresh_prices_only`` used to reconstruct here
+    instead, and the two pipeline paths reported holdings basis a
+    couple of cents apart for identical transactions.
 
     The basis walker writes one of these effect values onto every
     txn it processes:

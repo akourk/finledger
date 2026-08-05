@@ -465,6 +465,11 @@ def _check_lot_queue_parity(txns: list[dict],
             continue   # no FIFO basis tracked (e.g. no Buy ever); skip
         key = (h.get("account_group", ""), sym)
         expected = walked_basis.get(key, 0.0)
+        # The tolerance is not slack — `derive_basis_by_key_from_txns`
+        # sums per-txn annotations that are each rounded to cents, so on
+        # a position built from many fills it lands a cent or two from
+        # the walker's full-precision total.  Don't tighten this to 0;
+        # fix the annotations' precision first if you need to.
         if abs(held_cb - expected) > 0.05:
             drift.append((key, held_cb, expected, held_cb - expected))
 

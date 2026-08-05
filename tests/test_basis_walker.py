@@ -437,3 +437,63 @@ class TestWalkOrderIndependence:
         assert next(t["cost_basis"] for t in b
                     if t["action"] == "Wrap Asset In") == pytest.approx(
             wrap_in_basis)
+
+
+class TestAnnotationReconstructionIsApproximate:
+    """`derive_basis_by_key_from_txns` re-sums the per-txn `cost_basis`
+    annotations, which are rounded to cents for readability.  On a
+    position built from many sub-cent fills that lands a couple of cents
+    away from the walker's own lot state.
+
+    This is fine for its one consumer — the data-health parity check,
+    which carries a tolerance — and NOT fine for anything that publishes
+    a basis figure.  `main._refresh_prices_only` used to publish from
+    it, which is how the two pipeline paths came to disagree on holdings
+    basis for identical transactions.
+    """
+
+    def _fills(self, n=10):
+        """`n` fractional-share buys whose per-txn basis rounds UP by
+        $0.003 each — the shape a fractional-share or crypto broker
+        actually reports."""
+        return _txns(*[
+            (f"2024-02-{i + 1:02d}", "Broker", "DUST", "Buy", 3.0, 10.0023,
+             30.007)
+            for i in range(n)
+        ])
+
+    def test_reconstruction_drifts_from_the_walker(self, isolated_workdir):
+        from src.basis import (compute_basis_default,
+                               derive_basis_by_key_from_txns,
+                               state_to_holdings)
+        txns = self._fills()
+        state = compute_basis_default(txns)
+        walked = {(r["account_group"], r["symbol"]): r["cost_basis"]
+                  for r in state_to_holdings(state, "fifo")}
+        rebuilt = derive_basis_by_key_from_txns(txns)
+        key = ("Broker", "DUST")
+
+        # The walker sums remaining lots at full precision, rounding
+        # once: 10 × 30.007 = 300.07.
+        assert walked[key] == pytest.approx(300.07)
+        # The reconstruction sums ten values already rounded to 30.01.
+        assert round(rebuilt[key], 2) == pytest.approx(300.10)
+        assert walked[key] != round(rebuilt[key], 2), (
+            "premise gone: without real drift here, the parity test that "
+            "depends on this shape stops guarding anything"
+        )
+
+    def test_drift_stays_inside_the_data_health_tolerance(self,
+                                                          isolated_workdir):
+        """The parity check's $0.05 band has to absorb this, or every
+        real run would report a spurious high-severity integrity issue."""
+        from src.basis import (compute_basis_default,
+                               derive_basis_by_key_from_txns,
+                               state_to_holdings)
+        txns = self._fills()
+        state = compute_basis_default(txns)
+        walked = {(r["account_group"], r["symbol"]): r["cost_basis"]
+                  for r in state_to_holdings(state, "fifo")}
+        rebuilt = derive_basis_by_key_from_txns(txns)
+        key = ("Broker", "DUST")
+        assert abs(walked[key] - rebuilt[key]) <= 0.05

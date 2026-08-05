@@ -71,6 +71,17 @@ def _write_wrap_ordering_trap(tmp: Path) -> None:
         f.write("HYSA,2024-01-05,Deposit,USD,5000,1,5000,deposit\n")
         f.write("HYSA,2024-07-01,Interest,USD,200,1,200,interest\n")
         f.write("Retirement Acct,2024-01-05,Buy,VOO,10,100,1000,contribution\n")
+        # Sub-cent amounts, repeated.  Brokers report fractional-share
+        # and crypto fills to more than two decimals, and the per-txn
+        # `cost_basis` annotation is rounded to cents for readability —
+        # so a position built from many such fills is the case where
+        # reconstructing basis by summing those annotations drifts from
+        # the lot walker's own total.  Ten rows at +$0.003 of rounding
+        # each puts the two a full 3 cents apart, which is what makes
+        # `test_holdings_cost_basis_matches` below non-vacuous.
+        for i in range(10):
+            f.write(f"Retirement Acct,2024-02-{i + 1:02d},Buy,DUST,3,10.0023,"
+                    f"30.007,fractional fill {i + 1}\n")
 
     with open(tmp / "data" / "metadata.csv", "w",
               newline="", encoding="utf-8") as f:

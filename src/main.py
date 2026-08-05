@@ -253,6 +253,43 @@ def _refresh_prices_only(args) -> None:
     # see main()'s sequence).
     walked, balances = walk_balances(txns)
 
+    # Stamp user-supplied cost-basis overrides and broker-reported lot
+    # data onto the loaded txns.  The exported JSON strips the stamps,
+    # so they must be re-applied before anything walks lots — the basis
+    # walk below AND history.compute_history both honour them, and the
+    # refresh path would silently disagree with the full run otherwise.
+    from .cost_basis_overrides import match_and_stamp as _stamp_cb
+    _stamp_cb(txns, retirement_meta.get("cost_basis_overrides"))
+    from .broker_lots import (load_acquisition_lots, load_disposal_lots,
+                              load_robinhood_1099_income,
+                              merge_auto_reconcile_rows,
+                              stamp_acquisition_basis)
+    disposal_lots = load_disposal_lots(DATA_DIR, txns)
+    stamp_acquisition_basis(txns, load_acquisition_lots(DATA_DIR))
+    # Auto Reconcile Income rows from consolidated 1099s — mirrors the
+    # full pipeline so the refresh path's reconciliation panel matches.
+    retirement_meta["reconcile"] = merge_auto_reconcile_rows(
+        retirement_meta.get("reconcile"), load_robinhood_1099_income(DATA_DIR))
+
+    # Walk cost basis, exactly as main() does, and read the per-key
+    # totals off the walker's own lot state.
+    #
+    # This used to reconstruct them by summing each txn's `cost_basis`
+    # annotation instead (`derive_basis_by_key_from_txns`).  Those
+    # annotations are rounded to cents for readability, so summing
+    # thousands of them accumulated a cent or two per position, and the
+    # two pipeline paths reported different holdings basis for the same
+    # transactions.  `state_to_holdings` sums the remaining lots at full
+    # precision and rounds once — the same number main() publishes.
+    # The reconstruction still exists, for the data-health parity check
+    # it was really written for.
+    fifo_state = compute_basis_default(
+        txns, account_methods=retirement_meta.get("lot_methods"),
+        disposal_lots=disposal_lots)
+    fifo_basis_by_key: dict[tuple[str, str], float] = {}
+    for row in state_to_holdings(fifo_state, "fifo"):
+        fifo_basis_by_key[(row["account_group"], row["symbol"])] = row["cost_basis"]
+
     # Held symbols across all account groups (for the price refresh).
     final_bal: dict[str, float] = defaultdict(float)
     for (_, sym), q in balances.items():
@@ -289,15 +326,6 @@ def _refresh_prices_only(args) -> None:
     # intrinsic value from the underlying's cached price (see
     # prices.option_intrinsic — yfinance can't price the contracts).
     apply_option_intrinsic_floor(last_prices, held_symbols, today_str)
-
-    # FIFO basis by (account, symbol) — derived from per-txn
-    # basis_effect annotations on the loaded txns, so we don't re-walk.
-    # ``derive_basis_by_key_from_txns`` is the single source of truth
-    # for this reconstruction (also used by the lot-queue parity check
-    # in data_health) — handles transfer_out, zero_basis, etc., not
-    # just "add" and "remove".
-    from .basis import derive_basis_by_key_from_txns
-    fifo_basis_by_key = derive_basis_by_key_from_txns(txns)
 
     # Stage: build holdings (uses the same dust filter + cash-principal
     # logic as main()).
@@ -340,33 +368,12 @@ def _refresh_prices_only(args) -> None:
 
     cash = data.get("cash_summary", {}) or {}
 
-    # Stamp user-supplied cost-basis overrides BEFORE the history walk —
-    # history.compute_history honours basis_override on lot-creating
-    # branches (the exported JSON strips the stamp, so it must be
-    # re-applied on load).
-    from .cost_basis_overrides import match_and_stamp as _stamp_cb
-    _stamp_cb(txns, retirement_meta.get("cost_basis_overrides"))
-
-    # Broker-reported disposal lots + acquisition basis — same sources
-    # as the full pipeline (see the main() call sites); the history
-    # walker and the FIFO re-walk below must see the same overrides or
-    # the refresh path would silently disagree with the full run.
-    from .broker_lots import (load_acquisition_lots, load_disposal_lots,
-                              load_robinhood_1099_income,
-                              merge_auto_reconcile_rows,
-                              stamp_acquisition_basis)
-    disposal_lots = load_disposal_lots(DATA_DIR, txns)
-    stamp_acquisition_basis(txns, load_acquisition_lots(DATA_DIR))
-
-    # Auto Reconcile Income rows from consolidated 1099s — mirrors the
-    # full pipeline so the refresh path's reconciliation panel matches.
-    retirement_meta["reconcile"] = merge_auto_reconcile_rows(
-        retirement_meta.get("reconcile"), load_robinhood_1099_income(DATA_DIR))
-
-    # Stamping done — hand the rest of the pipeline the post-walk
-    # ordering, which is what main() passes to history / analytics /
-    # export.  (Both walkers sort internally, so this is about keeping
-    # the two paths' exported row order identical, not correctness.)
+    # Stamping and the basis walk both happened up top, on the
+    # ingest-ordered list they need.  From here on, hand the pipeline
+    # the post-walk ordering — what main() passes to history /
+    # analytics / export.  (Both walkers sort internally, so this is
+    # about keeping the two paths' exported row order identical, not
+    # correctness.)
     txns = walked
 
     print("Computing portfolio history with refreshed prices...")
@@ -378,18 +385,14 @@ def _refresh_prices_only(args) -> None:
           f"to {history[-1]['date'] if history else '—'}")
 
     print("Computing analytics...")
-    # Re-derive the FIFO lot-state so the tax tab's "approaching
-    # long-term" horizon can enumerate open lots.  Idempotent — the
-    # walker re-writes identical annotations onto txns it's already
-    # seen, and we only need state["lots"] downstream.
-    refresh_fifo_state = compute_basis_default(
-        txns, account_methods=retirement_meta.get("lot_methods"),
-        disposal_lots=disposal_lots)
+    # `fifo_state` is the walk from up top — the same lot state that
+    # produced the holdings basis, reused here for the tax tab's
+    # "approaching long-term" horizon.
     analytics = build_analytics(txns, history, holdings, holdings_by_account,
                                  retirement_meta,
                                  cash_summary=cash,
                                  basis_methods=basis_methods,
-                                 fifo_state=refresh_fifo_state)
+                                 fifo_state=fifo_state)
 
     export_json(txns, output_path, holdings=holdings,
                 holdings_by_account=holdings_by_account,
