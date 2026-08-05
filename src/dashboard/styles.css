@@ -47,7 +47,11 @@
      change), and the reload button. */
   .top-bar {
     display: flex;
-    align-items: flex-start;
+    /* One shared vertical axis for all three children.  `flex-start`
+       plus the button's own `align-self: center` gave the title, the
+       stat box and the button three different anchors, which read as
+       staggered rather than aligned. */
+    align-items: center;
     gap: 20px;
     flex-wrap: wrap;
     margin-bottom: 20px;
@@ -55,15 +59,24 @@
 
   .top-bar-title {
     flex: 0 0 auto;
+    /* Absorbs the slack, so the stat box and Refresh sit together at
+       the right edge instead of the box swallowing the gap. */
+    margin-right: auto;
   }
 
   .top-bar-summary {
-    flex: 1 1 auto;
+    /* Hug the stats.  Growing (`1 1 auto`) stretched the border to the
+       full remaining width while the items stayed left-packed, leaving
+       a large empty region inside the box — the whitespace belongs
+       OUTSIDE the border, where it reads as layout. */
+    flex: 0 1 auto;
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 22px;
-    padding: 10px 14px;
+    /* Horizontal padding matches the inter-item gap so the first and
+       last stats aren't tighter to the border than to each other. */
+    gap: 20px;
+    padding: 10px 20px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -113,7 +126,6 @@
 
   .top-bar-refresh {
     flex: 0 0 auto;
-    align-self: center;
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--border);
