@@ -7,8 +7,8 @@ so the dashboard can show a trust-at-a-glance panel and ``alerts.py`` can
 flag material drift.
 
 Row kinds (Type / Symbol=account_group / Date / Amount):
-  - ``balance``       value of an account_group on a date (vs nearest
-                      history snapshot)
+  - ``balance``       value of an account_group on a date (the ledger is
+                      walked to that EXACT date — see ``_computed_balance``)
   - ``realized``      net realized gain for an account/year, EXCLUDING
                       §1256 (matches a 1099-B equity grand-total)
   - ``section_1256``  net §1256 gain for an account/year
@@ -26,7 +26,12 @@ from __future__ import annotations
 import re
 from datetime import date as _date
 
-from ._shared import INCOME_ACTION_KINDS
+from ._shared import (
+    INCOME_ACTION_KINDS,
+    _balance_sort_key,
+    _value_at_date,
+    cash_bridge_series,
+)
 from .tax import SECTION_1256_UNDERLYINGS, _parse_option_symbol
 
 
@@ -65,24 +70,40 @@ def _status(kind: str, reported: float, delta: float) -> str:
     return "warn" if pct < 0.02 else "off"
 
 
-def _computed_balance(history, account_group, target):
-    """Account-group value from the history snapshot nearest ``target``.
-    Returns (value, gap_days) or (None, None)."""
-    if not history or target is None:
-        return None, None
-    best = None
-    for s in history:
-        d = _parse_iso(s.get("date"))
-        if not d:
-            continue
-        gap = abs((d - target).days)
-        if best is None or gap < best[0]:
-            best = (gap, s)
-    if best is None:
-        return None, None
-    gap, snap = best
-    val = float((snap.get("by_account_group") or {}).get(account_group, 0.0))
-    return val, gap
+def _computed_balance(txns_sorted, cash_series, account_group, target):
+    """Account-group value at close-of-day ``target``, walked exactly.
+
+    This used to snap to the history snapshot NEAREST ``target``, which
+    was a real bug.  History is sampled semimonthly (15th / EOM / today),
+    so a statement dated the 4th of a month resolved to *today's*
+    snapshot when today was the 5th — and every transaction in between
+    leaked into the comparison.  A deposit made the day AFTER the
+    statement date printed as a reconciliation break of exactly that
+    deposit's size.
+
+    Snapping BACKWARD instead would be causally sound but still wrong
+    for the case this panel is built to serve: a ``Balance Anchor`` row
+    is documented to pair with a ``Reconcile Balance`` at the SAME date,
+    so a backward snap would exclude the anchor's own true-up and report
+    a delta exactly equal to the drift the anchor just corrected.
+
+    ``_value_at_date`` applies the same valuation rules as
+    ``history.compute_history`` (USD-skipping, split adjustment,
+    option-intrinsic floor, reconstructed broker cash), and was verified
+    against every snapshot date to agree within float-summation noise —
+    so this is the figure the snapshot would carry, just without
+    requiring a snapshot to exist on that date.
+
+    ``bridges`` is deliberately empty: a rollover bridge exists to stop
+    TWR seeing a phantom drop while money is in transit between
+    custodians, but the broker's statement shows the real, depressed
+    balance.  Reconciliation compares against what the statement
+    literally says.
+    """
+    if _parse_iso(target) is None:      # `_value_at_date` compares ISO strings
+        return None
+    return _value_at_date(
+        txns_sorted, target[:10], frozenset({account_group}), [], cash_series)
 
 
 def _computed_realized(txns, account_group, year, *, s1256: bool) -> float:
@@ -148,6 +169,21 @@ def compute_reconciliation(txns, history, reconcile_meta):
     if not reconcile_meta:
         return None
 
+    # Balance rows walk the whole ledger to their statement date, so
+    # build the shared inputs once rather than per row.  `last_snapshot`
+    # bounds what fin can speak to: a statement dated past the final
+    # snapshot (i.e. the future) gets "nodata" instead of silently being
+    # answered with today's positions.
+    txns_sorted = cash_series = None
+    last_snapshot = ""
+    if any(r.get("kind") == "balance" for r in reconcile_meta):
+        txns_sorted = sorted(txns, key=_balance_sort_key)
+        cash_series = cash_bridge_series(txns)
+        for s in (history or []):
+            d = (s.get("date") or "")[:10]
+            if d > last_snapshot:
+                last_snapshot = d
+
     rows = []
     for r in reconcile_meta:
         kind = r.get("kind")
@@ -159,9 +195,11 @@ def compute_reconciliation(txns, history, reconcile_meta):
         detail = ""
 
         if kind == "balance":
-            computed, gap = _computed_balance(history, ag, _parse_iso(date_s))
-            if computed is not None and gap and gap > 7:
-                detail = f"nearest snapshot {gap}d away"
+            if last_snapshot and date_s[:10] > last_snapshot:
+                computed = None
+            else:
+                computed = _computed_balance(
+                    txns_sorted, cash_series, ag, date_s)
             label = f"Balance @ {date_s}"
         elif kind == "realized":
             computed = _computed_realized(txns, ag, yr, s1256=False)

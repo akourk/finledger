@@ -6,15 +6,36 @@ from src.analytics.reconcile import compute_reconciliation
 
 
 def _history():
+    """Snapshot dates only.
+
+    Balance rows are computed by walking the ledger to the statement
+    date, so the snapshots' *values* are irrelevant — history is
+    consulted purely for its last date, which bounds what fin can
+    answer for (a statement dated past it gets "nodata").
+    """
     return [
-        {"date": "2025-12-31", "by_account_group": {"Roth IRA": 100000.0}},
-        {"date": "2026-01-31", "by_account_group": {"Roth IRA": 110000.0}},
-        {"date": "2026-05-31", "by_account_group": {"Roth IRA": 200000.00}},
+        {"date": "2025-12-31", "by_account_group": {}},
+        {"date": "2026-01-31", "by_account_group": {}},
+        {"date": "2026-05-31", "by_account_group": {}},
+    ]
+
+
+def _balance_txns():
+    """Ledger backing the balance tests.
+
+    ``ZZFUND`` is deliberately not a real ticker: the price cache can't
+    resolve it, so ``_value_at_date`` falls back to the last transaction
+    price and the tests stay deterministic without a stubbed fetch.
+    100 units @ $2,000 = $200,000 held from 2026-01-05 onward.
+    """
+    return [
+        {"account_group": "Roth IRA", "symbol": "ZZFUND", "date": "2026-01-05",
+         "action": "Buy", "quantity": 100.0, "price": 2000.0, "amount": 200000.0},
     ]
 
 
 def _txns():
-    return [
+    return _balance_txns() + [
         # Robinhood 2025 equity realized: +1000 and -200 = +800 net
         {"account_group": "Robinhood", "symbol": "AAPL", "date": "2025-03-01",
          "realized_gain": 1000.0},
@@ -43,7 +64,7 @@ def test_returns_none_without_reconcile_rows():
     assert compute_reconciliation(_txns(), _history(), []) is None
 
 
-def test_balance_matches_nearest_snapshot():
+def test_balance_walks_ledger_to_statement_date():
     rec = compute_reconciliation(_txns(), _history(), [
         {"kind": "balance", "account_group": "Roth IRA",
          "date": "2026-05-31", "amount": 200065.00, "note": "stmt"},
@@ -52,6 +73,45 @@ def test_balance_matches_nearest_snapshot():
     assert row["computed"] == 200000.00
     assert row["delta"] == round(200000.00 - 200065.00, 2)
     assert row["status"] == "ok"   # ~0.03% off
+
+
+def test_balance_excludes_activity_after_the_statement_date():
+    """REGRESSION: a balance row is as-of its own date.
+
+    History is sampled semimonthly (15th / EOM / today), so a statement
+    dated the 4th used to resolve to the NEAREST snapshot — today's, one
+    day later — and swept up every transaction in between.  A deposit
+    made the day AFTER the statement printed as a break of exactly that
+    deposit's size.
+    """
+    txns = _balance_txns() + [
+        {"account_group": "Roth IRA", "symbol": "ZZFUND", "date": "2026-08-05",
+         "action": "Buy", "quantity": 5.0, "price": 2000.0, "amount": 10000.0},
+    ]
+    history = _history() + [
+        {"date": "2026-07-31", "by_account_group": {}},
+        {"date": "2026-08-05", "by_account_group": {}},   # nearest to 08-04
+    ]
+    rec = compute_reconciliation(txns, history, [
+        {"kind": "balance", "account_group": "Roth IRA",
+         "date": "2026-08-04", "amount": 200000.00, "note": "stmt"},
+    ])
+    row = rec["rows"][0]
+    assert row["computed"] == 200000.00   # not 210000 — the 08-05 buy is later
+    assert row["delta"] == 0.0
+    assert row["status"] == "ok"
+
+
+def test_balance_after_last_snapshot_is_nodata():
+    """A statement dated past fin's final snapshot has no answer — say so
+    rather than quietly reporting today's positions against it."""
+    rec = compute_reconciliation(_txns(), _history(), [
+        {"kind": "balance", "account_group": "Roth IRA",
+         "date": "2027-01-31", "amount": 200000.00},
+    ])
+    row = rec["rows"][0]
+    assert row["computed"] is None
+    assert row["status"] == "nodata"
 
 
 def test_realized_excludes_section_1256():
@@ -96,10 +156,14 @@ def test_other_income_is_rewards_and_lending_not_dividends():
 def test_balance_band_looser_than_form_figures():
     """A ~1.06% gap is 'ok' for a balance (proxy drift / price-timing
     noise) but 'warn' for an exact form figure like income."""
-    hist = [{"date": "2026-03-31", "by_account_group": {"401K": 59366.40}}]
-    rec = compute_reconciliation([], hist, [
+    hist = [{"date": "2026-03-31", "by_account_group": {}}]
+    txns = [{"account_group": "401K", "symbol": "ZZCIT", "date": "2026-01-05",
+             "action": "Buy", "quantity": 100.0, "price": 593.664,
+             "amount": 59366.40}]
+    rec = compute_reconciliation(txns, hist, [
         {"kind": "balance", "account_group": "401K",
          "date": "2026-03-31", "amount": 60000.00}])
+    assert rec["rows"][0]["computed"] == 59366.40
     assert rec["rows"][0]["status"] == "ok"     # ~1.06% balance → ok
 
     rec2 = compute_reconciliation(

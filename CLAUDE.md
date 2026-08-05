@@ -220,7 +220,18 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       ground truth from `Reconcile *` rows in `metadata.csv`
       (`{rows: [{kind, account_group, label, reported, computed,
       delta, status, note, detail}], summary: {total, ok, warn,
-      off}}`).  Kinds: `balance` (vs nearest history snapshot),
+      off}}`).  Kinds: `balance` (the ledger is walked to the EXACT
+      statement date via `_shared._value_at_date`, which applies
+      `history`'s valuation rules — it does NOT snap to a history
+      snapshot.  Snapping was a bug: history is semimonthly,
+      so a statement dated the 4th resolved to *today's* snapshot on
+      the 5th and swept up the day between — a deposit made AFTER the
+      statement date printed as a break of exactly its own size.
+      Snapping backward would break the documented `Balance Anchor` +
+      `Reconcile Balance` same-date pairing instead.  Rollover bridges
+      are deliberately NOT applied: a statement shows the real,
+      in-transit-depressed balance.  A row dated past the last snapshot
+      reports `nodata`),
       `realized` (excl §1256), `section_1256`, `income`
       (div+int+lending — brokers bundle stock-lending "substitute
       interest" into the 1099-INT; verified Robinhood Interest+Lending ==
