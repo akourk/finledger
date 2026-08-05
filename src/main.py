@@ -208,6 +208,22 @@ def _refresh_prices_only(args) -> None:
               f"from. Run the full pipeline first: python -m src.main")
         sys.exit(1)
 
+    # Personal metadata + account-mapping overrides FIRST.  `config`
+    # ships ACCOUNT_GROUPS / ACCOUNT_TYPES empty and metadata.csv fills
+    # them in, so every stage that asks "is this account Savings /
+    # Retirement?" is wrong until this runs.  It used to sit two-thirds
+    # of the way down, after the balance walk, cash-principal and
+    # holdings build had already consulted an EMPTY map — which silently
+    # labelled every holding "Taxable" (the fallback) and dropped the
+    # cash principal of every Savings account, so the refresh path's
+    # account-type splits and cost-basis total disagreed with the full
+    # pipeline's on identical data.
+    retirement_meta = parse_metadata(DATA_DIR)
+    if retirement_meta.get("account_groups"):
+        ACCOUNT_GROUPS.update(retirement_meta["account_groups"])
+    if retirement_meta.get("account_types"):
+        ACCOUNT_TYPES.update(retirement_meta["account_types"])
+
     print(f"Loading previous export from {output_path}...")
     data = _json.loads(output_path.read_text(encoding="utf-8"))
     txns               = data.get("transactions", []) or []
@@ -304,15 +320,6 @@ def _refresh_prices_only(args) -> None:
     save_sector_cache()
     enrich_holdings(holdings, verbose=False)
     enrich_holdings(holdings_by_account, verbose=False)
-
-    # Personal metadata + account-mapping overrides.  Loaded BEFORE the
-    # basis_methods rebuild loop below since that loop calls
-    # ACCOUNT_TYPES.get(...) — overrides need to be in place first.
-    retirement_meta = parse_metadata(DATA_DIR)
-    if retirement_meta.get("account_groups"):
-        ACCOUNT_GROUPS.update(retirement_meta["account_groups"])
-    if retirement_meta.get("account_types"):
-        ACCOUNT_TYPES.update(retirement_meta["account_types"])
 
     # Stage: rebuild basis_methods totals from per-method holdings (with
     # fresh prices) + fold cash.  Mirrors the full pipeline exactly.

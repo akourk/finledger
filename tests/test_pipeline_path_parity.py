@@ -63,12 +63,24 @@ def _write_wrap_ordering_trap(tmp: Path) -> None:
         f.write("Crypto Wallet,2024-02-05,Buy,CBETH,2,1500,3000,pricey lot\n")
         # Realize the carried basis.
         f.write("Crypto Wallet,2024-06-01,Sell,ETH,2,4000,8000,exit\n")
+        # A Savings account and a Retirement account, so the fixture
+        # also covers account-type-dependent logic.  Savings USD is the
+        # one place holdings basis comes from `cash_principal` rather
+        # than the lot walker, and interest must stay OUT of principal
+        # (it's the gain).
+        f.write("HYSA,2024-01-05,Deposit,USD,5000,1,5000,deposit\n")
+        f.write("HYSA,2024-07-01,Interest,USD,200,1,200,interest\n")
+        f.write("Retirement Acct,2024-01-05,Buy,VOO,10,100,1000,contribution\n")
 
     with open(tmp / "data" / "metadata.csv", "w",
               newline="", encoding="utf-8") as f:
         f.write("Type,Date,Amount,Symbol,Note\n")
         f.write("Account Group,,,Crypto Wallet,Crypto\n")
         f.write("Account Type,,,Crypto,Taxable\n")
+        f.write("Account Group,,,HYSA,HYSA\n")
+        f.write("Account Type,,,HYSA,Savings\n")
+        f.write("Account Group,,,Retirement Acct,Retire\n")
+        f.write("Account Type,,,Retire,Retirement\n")
         # HIFO makes the two candidate lots distinguishable: FIFO would
         # take the cheap lot under either ordering.
         f.write("Lot Method,,,Crypto,HIFO\n")
@@ -128,6 +140,19 @@ def both_paths(isolated_workdir, stub_prices):
 
     violations = []
     for argv in (["--skip-rename"], ["--refresh-prices"]):
+        if argv[0] == "--refresh-prices":
+            # Simulate a FRESH PROCESS.  ACCOUNT_GROUPS / ACCOUNT_TYPES
+            # are module-level dicts that ship empty and metadata.csv
+            # fills in; the full run above leaves them populated, so an
+            # in-process second run would inherit them and never
+            # exercise the ordering that matters.  That is exactly why
+            # the "refresh labels every account Taxable" bug survived a
+            # green suite — clearing them here is what makes this
+            # fixture representative of `python -m src.main
+            # --refresh-prices` on the command line.
+            from src.config import ACCOUNT_GROUPS, ACCOUNT_TYPES
+            ACCOUNT_GROUPS.clear()
+            ACCOUNT_TYPES.clear()
         exc = _run(argv)
         if exc is not None:
             violations.append((argv[0], exc))
@@ -209,6 +234,54 @@ class TestRealizedGainParity:
         separately from the realized figures above."""
         assert both_paths.violations == [], "\n".join(
             f"{path}: {exc}" for path, exc in both_paths.violations)
+
+
+class TestAccountMetadataParity:
+    """``config`` ships ACCOUNT_GROUPS / ACCOUNT_TYPES EMPTY; metadata.csv
+    fills them in.  Any stage that asks "is this account Savings /
+    Retirement?" is therefore wrong until ``parse_metadata`` has run.
+
+    The refresh path used to load metadata two-thirds of the way down —
+    after the balance walk, the cash-principal stage and the holdings
+    build had all already consulted an empty map.  Every holding came
+    back labelled "Taxable" (the fallback) and every Savings account
+    lost its cash principal, so the same portfolio reported different
+    account-type splits and a different cost-basis total depending on
+    which command was run last.
+    """
+
+    def _by_key(self, data):
+        return {(h["account_group"], h["symbol"]): h
+                for h in data["holdings_by_account"]}
+
+    def test_account_types_match(self, both_paths):
+        f = {g: h["account_type"]
+             for g, h in ((k[0], v) for k, v in self._by_key(both_paths.full).items())}
+        r = {g: h["account_type"]
+             for g, h in ((k[0], v) for k, v in self._by_key(both_paths.refresh).items())}
+        assert r == f
+        # Not vacuous: the fixture has a non-Taxable account, so a
+        # fallback-to-Taxable regression actually shows up here.
+        assert set(f.values()) - {"Taxable"}, \
+            "fixture lost its non-Taxable accounts — this test would be vacuous"
+
+    def test_holdings_cost_basis_matches(self, both_paths):
+        f = {k: h.get("cost_basis") for k, h in self._by_key(both_paths.full).items()}
+        r = {k: h.get("cost_basis") for k, h in self._by_key(both_paths.refresh).items()}
+        assert r == f
+
+    def test_savings_cash_principal_survives_both_paths(self, both_paths):
+        """Savings USD is the one holding whose basis comes from
+        ``compute_cash_principal`` rather than the lot walker, and that
+        stage silently returns nothing when ACCOUNT_TYPES is empty."""
+        for label, data in (("full", both_paths.full),
+                            ("refresh", both_paths.refresh)):
+            usd = [h for h in data["holdings_by_account"]
+                   if h["symbol"] == "USD" and h["account_type"] == "Savings"]
+            assert usd, f"{label}: Savings USD holding missing"
+            # Principal only — the $200 of interest is the GAIN, and
+            # folding it into basis would make the account read 0%.
+            assert usd[0]["cost_basis"] == pytest.approx(5000.0), label
 
 
 class TestIngestSeq:
