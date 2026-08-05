@@ -21,7 +21,9 @@ from ._shared import (
 from ..actions import BASIS_EFFECTS  # noqa: F401
 from ..basis import _basis_dollars  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
-from ..prices import get_price, option_intrinsic, split_factor_since
+from ..prices import (
+    get_price, oldest_last_fetch, option_intrinsic, split_factor_since,
+)
 
 
 def compute_header_summary(txns: list[dict], history: list[dict],
@@ -118,9 +120,22 @@ def compute_header_summary(txns: list[dict], history: list[dict],
     total_return_pct = ((total_return / net_contributed)
                         if net_contributed > 0 else None)
 
+    # When the marks behind this snapshot were actually pulled.  `as_of`
+    # is only a DATE, which reads as "current" all day even when the
+    # prices behind it were captured at 7am — that ambiguity is exactly
+    # what makes a mid-session reconciliation against a broker
+    # confusing.  Positions the cache never prices (fund display names,
+    # unfetchable stubs) contribute nothing; their mark comes from
+    # transaction history and no fetch timestamp describes it.
+    prices_as_of = oldest_last_fetch(
+        {pos.get("symbol", "") for pos in today_positions
+         if pos.get("symbol") and pos.get("symbol") not in CASH_SYMBOLS}
+    )
+
     return {
         "as_of": today,
         "prev_day": yest,
+        "prices_as_of": prices_as_of,
         "value": round(today_total, 2),
         "prev_day_value": round(yest_total, 2),
         "change_1d": round(change_1d, 2),

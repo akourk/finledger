@@ -261,7 +261,18 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       `total_return_pct` — the SINGLE source for the Total Return
       figure; the top bar and the Performance tab's all-time anchor
       card both read these fields (they used to derive it
-      independently and disagreed by rounding cents).
+      independently and disagreed by rounding cents).  Plus
+      `prices_as_of`: the OLDEST `last_fetch` across held positions
+      (`prices.oldest_last_fetch`) — a staleness FLOOR, never the
+      newest.  `as_of` is only a date, so a snapshot reads as
+      "current" all day even when its marks were pulled at 7am;
+      that ambiguity is what makes a mid-session reconciliation
+      against a broker statement confusing.  Rendered next to the
+      Generated stamp in the top bar (`renderPricesAsOf` in
+      `app/10-holdings.js`).  Symbols the cache never fetches (fund
+      display names without a proxy, corp-action stubs, cash)
+      contribute nothing — they're priced from txn history and no
+      fetch timestamp describes them.
     - `concentration` — positions / sectors / account_groups /
       account_types each as a sorted-by-pct list, plus Herfindahl
       index, top-5 share, and risk flags.
@@ -1318,6 +1329,25 @@ process.
   today-basis — mixing them mis-values every pre-split snapshot by the
   split ratio.  First-time splits *backfills* deliberately do NOT
   invalidate (those cached prices already reflect the old splits).
+- **`covered_end` is a claim about what we ASKED for, never about what
+  has settled — and it can never name a future local date.**  Both
+  write sites go through `_cap_covered_end` (clamped to `_today()`),
+  and `_missing_ranges` clamps the effective coverage to *yesterday* so
+  a request ending today always yields a one-day gap.  Two bugs lived
+  here: the first fetch of the day set `covered_end == today` and froze
+  every later full run that day (making the `--refresh-prices` speed
+  flag load-bearing for correctness), and a UTC-dated crypto bar
+  received on an evening run set `covered_end` to *tomorrow*, so the
+  next local day looked covered and crypto was skipped for a full day.
+  The future-dated bar itself is kept in the shard — it's real data and
+  `get_price` should return it once that date arrives; only the
+  coverage claim is capped.  `main.py` also passes `force_today_for`
+  (held + benchmarks + option underlyings), which covers what the clamp
+  cannot: over a weekend the requested end walks back to a
+  settled-looking Friday, so only an explicit force re-pulls a fund NAV
+  that hadn't posted when Friday evening's run went out.  `_today()` is
+  the single seam for "what is the local date" — tests monkeypatch it
+  rather than adding a freezegun dependency.
 - **Weekend / holiday lookup walks backward** up to 7 days. Outside that
   window, `get_price` returns None and `compute_history` silently skips
   the position (reflected in `priced_pct`). Don't "fix" this with

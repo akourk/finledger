@@ -127,6 +127,29 @@ function _rolloverBridgeAdjustment(snapshotDate, filterSet) {
 document.getElementById('generated').textContent =
   (DATA.generated || '').replace('T', ' ').slice(0, 16);
 
+// Price freshness, next to the generation stamp.  `as_of` is only a
+// DATE, so a snapshot reads as "current" all day even when the marks
+// behind it were pulled at 7am — which is what makes a mid-session
+// reconciliation against a broker statement confusing.  The stamp is
+// the OLDEST fetch across held positions (a staleness floor), so it
+// never flatters.  Same-day shows just the time; anything older keeps
+// its date, because that is the case worth noticing.
+function renderPricesAsOf() {
+  const el = document.getElementById('pricesAsOf');
+  if (!el) return;
+  const stamp = (ANALYTICS.header_summary || {}).prices_as_of;
+  if (!stamp) { el.textContent = ''; return; }
+  const t = new Date(stamp);
+  if (isNaN(t)) { el.textContent = ''; return; }
+  const time = t.toLocaleTimeString(undefined,
+    { hour: 'numeric', minute: '2-digit' });
+  const sameDay = stamp.slice(0, 10) === (DATA.generated || '').slice(0, 10);
+  el.textContent = ` · prices as of ${sameDay ? time : stamp.slice(0, 10) + ' ' + time}`;
+  el.title = 'Oldest price fetch across held positions — the marks '
+           + 'behind this snapshot are no fresher than this.';
+}
+renderPricesAsOf();
+
 // Render the persistent top-bar summary: portfolio value, total
 // return ($ + %), and 1-day change ($ + %).  Reads precomputed
 // header_summary from analytics.py for the 1-day figures (needs

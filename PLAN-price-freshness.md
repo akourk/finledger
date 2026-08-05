@@ -1,6 +1,23 @@
 # Plan: price freshness & settle-awareness
 
-Status: **not started**. Written 2026-08-04 for a later session.
+Status: **Phase 1 + Phase 1.5 shipped 2026-08-05. Phase 2 not started.**
+Written 2026-08-04.
+
+What actually landed (read the phase sections for the reasoning; the
+notes below record where the implementation differs from the plan):
+
+- **Phase 1** — all three sub-parts, layered, because 1c did *not*
+  subsume 1b. 1a alone stops new bad `covered_end` claims but a claim
+  already in the meta file still suppresses the fetch; 1b neutralizes
+  those; and 1c is the only thing that re-pulls over a weekend, when
+  `_last_trading_day` walks the request back to a settled-looking
+  Friday. All three have a mutation-verified test.
+- **Phase 1.5** — `prices_as_of` on `header_summary`, rendered beside
+  the Generated stamp. Its first real run immediately showed the
+  portfolio's stalest held mark was ~21h old (a mutual-fund proxy whose
+  NAV hadn't reposted) while every equity was current — i.e. it
+  surfaced defect 3 on sight, which is what it was for.
+- **Not done:** defects 3 and 4 remain (they are Phase 2's job).
 
 Read this top-to-bottom before touching code. It carries design decisions
 that were already argued out — don't re-litigate them, just check the
@@ -55,7 +72,7 @@ questions about *the provenance of one date's bar*, not about resolution.
 
 ---
 
-## Phase 1 — stop lying about coverage  (small, ship first)
+## Phase 1 — stop lying about coverage  (small, ship first)  ✅ SHIPPED
 
 **Goal:** today's bar is always refetchable; `covered_end` can never name
 a future local date.
@@ -110,7 +127,7 @@ leaked between in-process runs.)
 
 ---
 
-## Phase 1.5 — surface what we already know  (highest value per line)
+## Phase 1.5 — surface what we already know  (highest value per line)  ✅ SHIPPED
 
 `last_fetch` is **already recorded and already accurate** for every
 symbol. It just never reaches the UI. Surfacing it would have made this
@@ -203,7 +220,10 @@ Render as `· provisional` in the header.
 
 `tests/test_prices.py`, with a frozen clock (`freezegun` is **not** a
 dependency — inject a `now` parameter or monkeypatch a `_now()` helper
-rather than adding one):
+rather than adding one).  Phase 1 already added `prices._today()` as
+the single seam for "what is the local date" and
+`TestTodayFreshness._pin_today` as the monkeypatch helper — extend that
+pattern to a `_now()` rather than starting a second convention:
 - equity settles after 16:00 ET but not at 15:59
 - fund still unsettled at 16:30 ET, settled at 18:30 ET
 - crypto unsettled until the UTC day ends — **use the exact scenario from

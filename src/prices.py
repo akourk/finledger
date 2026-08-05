@@ -1200,6 +1200,52 @@ def option_underlyings(symbols) -> set[str]:
     return out
 
 
+def price_source_symbol(symbol: str) -> str | None:
+    """The ticker whose cache entry actually backs ``symbol``'s price.
+
+    Proxied symbols resolve to their proxy; an option contract resolves
+    to the underlying its intrinsic floor reads.  Returns ``None`` for
+    anything the cache never fetches (cash, fund display names with no
+    proxy, corp-action stubs) — those are priced from transaction
+    history, so no fetch timestamp describes them.
+    """
+    entry = _proxy_entry(symbol)
+    if entry is not None:
+        symbol = entry[0]
+    else:
+        parsed = parse_option_symbol(symbol or "")
+        if parsed:
+            symbol = parsed["underlying"]
+    if _classify_no_fetch(symbol):
+        return None
+    return symbol
+
+
+def last_fetch_at(symbol: str) -> str | None:
+    """ISO timestamp of the last successful fetch backing ``symbol``, or
+    ``None`` when nothing in the cache does.
+
+    This is the only accurate freshness signal fin has: ``covered_end``
+    is a date, and a date says nothing about whether the bar behind it
+    is this morning's stale open or the settled close.
+    """
+    target = price_source_symbol(symbol)
+    if not target:
+        return None
+    return (_load_meta()["symbols"].get(target) or {}).get("last_fetch")
+
+
+def oldest_last_fetch(symbols) -> str | None:
+    """The OLDEST ``last_fetch`` across ``symbols`` — a staleness floor.
+
+    Deliberately oldest, not newest: one ticker refreshed a second ago
+    says nothing about the fund whose NAV last landed yesterday, and the
+    number the user is looking at is only as fresh as its stalest input.
+    """
+    stamps = [s for s in (last_fetch_at(sym) for sym in symbols) if s]
+    return min(stamps) if stamps else None
+
+
 def apply_option_intrinsic_floor(last_prices: dict[str, float],
                                  symbols, on_date) -> int:
     """Floor each option symbol's entry in ``last_prices`` at its

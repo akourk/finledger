@@ -977,3 +977,120 @@ class TestTodayFreshness:
             "benchmarks must stay in the force-refresh set — a frozen "
             "benchmark reports failure_count: 0 and nothing flags it"
         )
+
+
+class TestPriceFreshnessSurfacing:
+    """Phase 1.5 — ``last_fetch`` was already recorded and already
+    accurate; it just never reached the UI.  ``as_of`` is only a DATE,
+    so a snapshot reads as "current" all day even when the marks behind
+    it were pulled at 7am — which is exactly what makes a mid-session
+    reconciliation against a broker statement confusing.
+    """
+
+    def test_price_source_resolves_proxies_and_option_underlyings(
+            self, isolated_workdir, monkeypatch):
+        import json as _json
+        from src.config import CACHE_DIR
+        from src import prices
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        (CACHE_DIR / "symbol_proxy_map.json").write_text(_json.dumps({
+            "MYFUND": {"proxy": "VFIAX", "method": "scaled",
+                       "anchor_date": "2024-01-15", "anchor_price": 100.0},
+        }), encoding="utf-8")
+
+        assert prices.price_source_symbol("AAPL") == "AAPL"
+        assert prices.price_source_symbol("MYFUND") == "VFIAX"
+        assert prices.price_source_symbol(
+            "ACME 1/15/2028 Call $100.00") == "ACME"
+        # Nothing in the cache backs these — they're priced from txn
+        # history, so no fetch timestamp describes them.
+        assert prices.price_source_symbol("USD") is None
+        assert prices.price_source_symbol("Some Fund Display Name") is None
+
+    def test_oldest_last_fetch_is_a_floor_not_the_newest(
+            self, isolated_workdir):
+        from src.prices import _load_meta, oldest_last_fetch
+        meta = _load_meta()["symbols"]
+        meta["AAA"] = {"last_fetch": "2026-08-05T11:04:00"}
+        meta["BBB"] = {"last_fetch": "2026-08-05T07:12:00"}
+        meta["CCC"] = {"last_fetch": "2026-08-05T09:30:00"}
+        assert oldest_last_fetch(["AAA", "BBB", "CCC"]) == "2026-08-05T07:12:00"
+
+    def test_oldest_last_fetch_ignores_unfetchable_symbols(
+            self, isolated_workdir):
+        """A multi-word fund name has no fetch timestamp at all — it
+        must be skipped, not treated as infinitely stale (which would
+        suppress the stamp for every portfolio holding one)."""
+        from src.prices import _load_meta, oldest_last_fetch
+        _load_meta()["symbols"]["AAA"] = {"last_fetch": "2026-08-05T11:04:00"}
+        assert oldest_last_fetch(
+            ["AAA", "USD", "Some Fund Display Name"]) == "2026-08-05T11:04:00"
+        assert oldest_last_fetch(["USD", "Some Fund Display Name"]) is None
+
+    def test_header_summary_reports_the_oldest_held_fetch(self, stub_prices):
+        """The stamp must be the staleness FLOOR across held positions:
+        one ticker refreshed a second ago says nothing about the fund
+        whose NAV last landed hours earlier."""
+        from src.analytics.header import compute_header_summary
+        from src.history import compute_history
+        from src.prices import _load_meta, ensure_coverage
+
+        stub_prices.set("AAA", {"2026-08-03": 10.0, "2026-08-04": 11.0})
+        stub_prices.set("BBB", {"2026-08-03": 20.0, "2026-08-04": 21.0})
+        ensure_coverage(["AAA", "BBB"], "2026-08-03", "2026-08-04",
+                        verbose=False)
+
+        def _buy(sym, price):
+            return {
+                "date": "2026-08-03", "account": "Robinhood",
+                "account_group": "Robinhood", "account_type": "Taxable",
+                "symbol": sym, "action": "Buy", "raw_action": "Buy",
+                "quantity": 10.0, "price": price, "fees": 0.0,
+                "amount": price * 10, "description": "", "source": "rh.csv",
+            }
+
+        txns = [_buy("AAA", 10.0), _buy("BBB", 20.0)]
+        history = compute_history(txns, {"AAA": "Technology", "BBB": "Technology"})
+        assert history
+
+        meta = _load_meta()["symbols"]
+        meta["AAA"]["last_fetch"] = "2026-08-04T11:04:00"
+        meta["BBB"]["last_fetch"] = "2026-08-04T07:12:00"
+
+        summary = compute_header_summary(txns, history, [],
+                                         {"net_contributed": 300.0})
+        assert summary["prices_as_of"] == "2026-08-04T07:12:00"
+
+    def test_header_summary_tolerates_no_fetchable_positions(self, stub_prices):
+        """A portfolio of nothing but cash / unfetchable funds must
+        report no stamp rather than crashing or inventing one."""
+        from src.analytics.header import compute_header_summary
+        from src.history import compute_history
+
+        txns = [{
+            "date": "2026-08-03", "account": "Apple Savings",
+            "account_group": "Apple Savings", "account_type": "Savings",
+            "symbol": "USD", "action": "Deposit", "raw_action": "Deposit",
+            "quantity": 500.0, "price": 0.0, "fees": 0.0, "amount": 500.0,
+            "description": "", "source": "apple.csv",
+        }]
+        history = compute_history(txns, {"USD": "Cash"})
+        assert history
+        summary = compute_header_summary(txns, history, [],
+                                         {"net_contributed": 500.0})
+        assert summary["prices_as_of"] is None
+
+    def test_dashboard_renders_the_stamp(self):
+        """The figure is only worth computing if it reaches the header
+        bar — guard the element and its renderer against a bundle
+        refactor dropping one side."""
+        from pathlib import Path
+        from src import dashboard
+
+        pkg = Path(dashboard.__file__).parent
+        template = (pkg / "template.html").read_text(encoding="utf-8")
+        app_js = dashboard._read_app_js()
+        assert 'id="pricesAsOf"' in template
+        assert "prices_as_of" in app_js
+        assert "renderPricesAsOf()" in app_js
