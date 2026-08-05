@@ -1094,3 +1094,143 @@ class TestPriceFreshnessSurfacing:
         assert 'id="pricesAsOf"' in template
         assert "prices_as_of" in app_js
         assert "renderPricesAsOf()" in app_js
+
+
+def _utc(iso: str):
+    """UTC instant from an ISO string, for pinning the settle clock."""
+    from datetime import datetime, timezone
+    return datetime.fromisoformat(iso).replace(tzinfo=timezone.utc)
+
+
+class TestSettleClass:
+    """Phase 2a — which settle rule applies to a symbol.
+
+    Biased toward ``fund`` on purpose: a fund mistaken for an equity is
+    marked final before its NAV strikes, which produces a wrong number.
+    The reverse costs one redundant fetch that returns the same value.
+    """
+
+    def test_crypto_by_suffix_and_by_config(self, isolated_workdir):
+        from src.prices import _settle_class
+        assert _settle_class("ETH-USD") == "crypto"
+        assert _settle_class("BTC-USD") == "crypto"
+        assert _settle_class("USDC") == "crypto"      # config.CRYPTO_SYMBOLS
+
+    def test_mutual_funds_by_ticker_shape_and_display_name(self, isolated_workdir):
+        from src.prices import _settle_class
+        # US convention: five characters ending in X.
+        for sym in ("VFIAX", "SWPPX", "FSELX", "USNQX"):
+            assert _settle_class(sym) == "fund", sym
+        # Multi-word "tickers" are fund display names.
+        assert _settle_class("Vanguard Employee Benefit Index Fund") == "fund"
+
+    def test_equities_and_etfs_settle_with_the_tape(self, isolated_workdir):
+        from src.prices import _settle_class
+        for sym in ("AAPL", "SPY", "QQQ", "GOOGL", "ENVXW"):
+            assert _settle_class(sym) == "equity", sym
+
+    def test_proxy_target_owns_the_settle_rule(self, isolated_workdir):
+        """Several proxies ARE mutual funds; the proxy is what actually
+        gets fetched, so it decides when the bar goes final."""
+        import json as _json
+        from src.config import CACHE_DIR
+        from src.prices import _settle_class
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        (CACHE_DIR / "symbol_proxy_map.json").write_text(_json.dumps({
+            "Some 401K Collective Trust": {
+                "proxy": "VFIAX", "method": "scaled",
+                "anchor_date": "2024-01-15", "anchor_price": 100.0},
+        }), encoding="utf-8")
+        assert _settle_class("Some 401K Collective Trust") == "fund"
+
+
+class TestSettleHorizon:
+    """Phase 2b — the newest date whose bar can no longer change.
+
+    Cutoffs are deliberately late.  Being wrong in the "not settled yet"
+    direction costs one redundant fetch returning the same number; being
+    wrong the other way leaves a stale figure the user trusts.  That is
+    also why market half-days need no calendar.
+    """
+
+    def test_equity_settles_after_the_tape_not_at_the_bell(
+            self, isolated_workdir):
+        from datetime import date
+        from src.prices import _settle_horizon
+        # Wednesday 2026-08-05, EDT (UTC-4).
+        assert _settle_horizon("AAPL", _utc("2026-08-05T20:19:00")) \
+            == date(2026, 8, 4), "16:19 ET — the close has not posted yet"
+        assert _settle_horizon("AAPL", _utc("2026-08-05T20:21:00")) \
+            == date(2026, 8, 5), "16:21 ET — settled"
+
+    def test_fund_stays_live_past_the_equity_close(self, isolated_workdir):
+        """Defect 3: a run between the equity close and the NAV strike
+        mixes today's equity closes with YESTERDAY's fund NAVs."""
+        from datetime import date
+        from src.prices import _settle_horizon
+        assert _settle_horizon("VFIAX", _utc("2026-08-05T20:30:00")) \
+            == date(2026, 8, 4), "16:30 ET — equities done, NAV not struck"
+        assert _settle_horizon("VFIAX", _utc("2026-08-05T22:30:00")) \
+            == date(2026, 8, 5), "18:30 ET — NAV struck"
+
+    def test_crypto_is_unsettled_until_the_utc_day_ends(self, isolated_workdir):
+        """The exact scenario behind defect 2: 22:42 local is already
+        05:42 UTC the NEXT day, so the UTC-dated bar fin receives is for
+        a day that has barely started."""
+        from datetime import date
+        from src.prices import _settle_horizon
+        assert _settle_horizon("ETH-USD", _utc("2026-08-05T05:42:00")) \
+            == date(2026, 8, 4)
+        # Once the UTC day is over, that bar is final.
+        assert _settle_horizon("ETH-USD", _utc("2026-08-06T00:05:00")) \
+            == date(2026, 8, 5)
+
+    def test_crypto_ignores_weekends(self, isolated_workdir):
+        """Crypto trades Saturdays — its horizon must not walk back to
+        Friday the way an equity's does."""
+        from datetime import date
+        from src.prices import _settle_horizon
+        # Sunday 2026-08-09, 12:00 UTC.
+        assert _settle_horizon("BTC-USD", _utc("2026-08-09T12:00:00")) \
+            == date(2026, 8, 8), "Saturday's UTC day is over and final"
+
+    def test_dst_is_handled_by_the_zone_not_a_fixed_offset(
+            self, isolated_workdir):
+        """Same wall-clock ET time either side of the DST switch must
+        classify the same.  A fixed UTC offset would get one of these
+        wrong by an hour — enough to mark a bar final before the close."""
+        from datetime import date
+        from src.prices import _settle_horizon
+        # 2026-03-20 (Friday, EDT = UTC-4): 20:30Z is 16:30 ET → settled.
+        assert _settle_horizon("AAPL", _utc("2026-03-20T20:30:00")) \
+            == date(2026, 3, 20)
+        # 2026-11-20 (Friday, EST = UTC-5): the SAME 20:30Z is only
+        # 15:30 ET → still trading.
+        assert _settle_horizon("AAPL", _utc("2026-11-20T20:30:00")) \
+            == date(2026, 11, 19)
+        # 21:30Z is 16:30 ET in November → settled.
+        assert _settle_horizon("AAPL", _utc("2026-11-20T21:30:00")) \
+            == date(2026, 11, 20)
+
+    def test_weekend_horizon_walks_back_to_friday(self, isolated_workdir):
+        from datetime import date
+        from src.prices import _settle_horizon
+        # Sunday 2026-08-09, 12:00 ET.
+        assert _settle_horizon("AAPL", _utc("2026-08-09T16:00:00")) \
+            == date(2026, 8, 7)
+        # Saturday evening, past both cutoffs — still Friday.
+        assert _settle_horizon("VFIAX", _utc("2026-08-09T02:00:00")) \
+            == date(2026, 8, 7)
+
+    def test_horizon_degrades_safely_without_a_tz_database(
+            self, isolated_workdir, monkeypatch):
+        """pandas hard-requires tzdata so this should never fire, but if
+        the zone is missing we must fall back to "nothing today is
+        final" rather than taking the module down."""
+        from datetime import date
+        from src import prices as _prices_mod
+        monkeypatch.setattr(_prices_mod, "_MARKET_TZ", None)
+        monkeypatch.setattr(_prices_mod, "_today", lambda: date(2026, 8, 5))
+        assert _prices_mod._settle_horizon(
+            "AAPL", _utc("2026-08-05T23:00:00")) == date(2026, 8, 4)

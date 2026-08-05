@@ -62,9 +62,10 @@ import json
 import math
 import re
 from bisect import bisect_right
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .config import CACHE_DIR, CRYPTO_SYMBOLS, SYMBOL_MAP
 
@@ -101,15 +102,118 @@ _BACKOFF_CAP_DAYS  = 30
 _NO_DATA_MIN_RANGE_DAYS = 7
 
 
+def _now_utc() -> datetime:
+    """Current instant, timezone-aware UTC.
+
+    The single clock seam for freshness reasoning — tests monkeypatch
+    this rather than adding a freezegun dependency.  ``_today`` derives
+    from it, so pinning one pins both.  (The ``datetime.now()`` calls
+    elsewhere in this module stamp ``last_fetch`` in naive local time;
+    that format is what the dashboard parses, so leave it alone.)
+    """
+    return datetime.now(timezone.utc)
+
+
 def _today() -> date:
-    """Local calendar date.  A single seam so tests can pin "today"
-    without a freezegun dependency (monkeypatch ``prices._today``).
+    """Local calendar date.
 
     Everything that reasons about coverage freshness goes through here:
-    ``covered_end`` is capped at this date, and ``_missing_ranges``
-    treats it as never-covered.
+    ``covered_end`` is capped at this date, and settle horizons are
+    compared against it.
     """
-    return datetime.now().date()
+    return _now_utc().astimezone().date()
+
+
+# ---------------------------------------------------------------------------
+# Settle awareness
+#
+# A price is worth refetching only while it can still CHANGE.  yfinance's
+# daily bar carries a live price during market hours, so a bar fetched at
+# 11:00 is a provisional mark that will be replaced by the real close —
+# but fin used to store it as the close and never look again.  Knowing
+# when each asset class goes final is what lets us refetch until then and
+# skip entirely afterwards.
+#
+# Times are deliberately LATE.  Getting it wrong in the "not settled yet"
+# direction costs one redundant fetch that returns the same number;
+# getting it wrong the other way leaves a stale figure the user trusts.
+# That asymmetry is why half-days (13:00 ET close the day after
+# Thanksgiving, Christmas Eve) need no calendar: we simply keep treating
+# the bar as live until the normal cutoff.
+# ---------------------------------------------------------------------------
+
+try:
+    _MARKET_TZ = ZoneInfo("America/New_York")
+except Exception:   # pragma: no cover - no IANA tz database available
+    # pandas (via yfinance) hard-requires `tzdata`, so this should never
+    # fire.  If it somehow does, degrade to "nothing intraday is ever
+    # final" rather than taking the module down for a nicety.
+    _MARKET_TZ = None
+
+# 16:00 ET close plus tape-settle slack.
+_EQUITY_SETTLE_ET = dt_time(16, 20)
+# Mutual funds strike NAV in the evening; a run between the equity close
+# and this cutoff would otherwise mix today's equity closes with
+# YESTERDAY's fund NAVs in one snapshot.
+_FUND_SETTLE_ET = dt_time(18, 0)
+
+
+def _settle_class(symbol: str) -> str:
+    """``crypto`` / ``fund`` / ``equity`` — which settle rule applies.
+
+    Companion to ``_classify_no_fetch`` (which decides whether we fetch
+    at all); keep the two aligned when either one's rules change.
+
+    Classification is deliberately biased toward ``fund``: a fund
+    mistaken for an equity gets marked final before its NAV strikes,
+    which is the one failure mode that produces a wrong number instead
+    of a redundant fetch.
+    """
+    entry = _proxy_entry(symbol)
+    if entry is not None:
+        # Several proxies ARE mutual funds (VFIAX, VIVLX) — the proxy is
+        # what actually gets fetched, so it owns the settle rule.
+        symbol = entry[0]
+    symbol = (symbol or "").strip()
+    if symbol.endswith("-USD") or symbol in CRYPTO_SYMBOLS:
+        return "crypto"
+    # Multi-word "tickers" are fund display names (same rule as
+    # _classify_no_fetch), and the US convention for a mutual-fund
+    # ticker is five characters ending in X — SWPPX, VFIAX, FSELX.
+    if " " in symbol:
+        return "fund"
+    if len(symbol) == 5 and symbol.isalpha() and symbol.endswith("X"):
+        return "fund"
+    # Everything else, ETFs included — they trade intraday and settle
+    # with the tape.
+    return "equity"
+
+
+def _settle_horizon(symbol: str, now: datetime | None = None) -> date:
+    """The newest date whose bar for ``symbol`` can no longer change.
+
+    Anything after this is still live, so a cached value for it is a
+    provisional mark rather than a close.
+    """
+    now = now or _now_utc()
+    cls = _settle_class(symbol)
+    if cls == "crypto":
+        # Crypto bars are UTC-dated and keep moving until the UTC day is
+        # over — which is why an evening local run legitimately receives
+        # a bar dated tomorrow.
+        return now.astimezone(timezone.utc).date() - timedelta(days=1)
+    if _MARKET_TZ is None:
+        return _today() - timedelta(days=1)
+    market_now = now.astimezone(_MARKET_TZ)
+    cutoff = _FUND_SETTLE_ET if cls == "fund" else _EQUITY_SETTLE_ET
+    day = market_now.date()
+    if market_now.time() < cutoff:
+        day -= timedelta(days=1)
+    # Weekends have no bar to settle; walk back the same way the fetch
+    # range does.  Market holidays aren't modelled — a holiday just
+    # leaves the day looking settled with no data to show for it, which
+    # is the same no-op the fetch path already tolerates.
+    return _last_trading_day(day)
 
 # Controls yfinance's `auto_adjust`.  MUST be False; see module docstring
 # for the reasoning.  If this changes, the on-disk cache is invalidated on
