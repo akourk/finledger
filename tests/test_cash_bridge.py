@@ -190,6 +190,61 @@ def test_external_funding_synth_leaves_total_return_unchanged():
     assert added_cash == pytest.approx(80.0)
 
 
+def test_bridge_reaches_the_holdings_table_too():
+    """The bridge must feed the Holdings build, not just the history
+    snapshots.
+
+    The Overview header reads the latest snapshot (bridge applied) while
+    the Holdings table, allocation donut, sector split and concentration
+    view are all built from `balances` (bridge NOT applied).  Without
+    this injection those two halves of the dashboard disagree by the
+    full bridged amount.
+
+    It stayed invisible while Coinbase was the only bridged group —
+    its reconstructed balance ends at ~$0 by construction — so a
+    brokerage account simply holding uninvested cash is the first case
+    that exposes it.
+    """
+    from src.cash_bridge import inject_into_holdings
+
+    txns = [
+        _t("2024-01-01", "Deposit", 10000.0),
+        _t("2024-01-02", "Buy", 10000.0, symbol="AAPL"),
+        _t("2024-06-01", "Sell", 12500.0, symbol="AAPL"),
+    ]
+    balances: dict = {}
+    last_prices: dict = {}
+    basis: dict = {}
+    injected = inject_into_holdings(txns, balances, last_prices, basis,
+                                    "2024-06-30")
+
+    assert injected == pytest.approx(12500.0)
+    assert balances[("Robinhood", "USD")] == pytest.approx(12500.0)
+    # Cash basis is face value, matching what the snapshot walker adds
+    # to total_cost_basis — so the row shows $0 unrealized, not a
+    # phantom gain equal to the whole balance.
+    assert basis[("Robinhood", "USD")] == pytest.approx(12500.0)
+    assert last_prices["USD"] == 1.0
+
+
+def test_holdings_injection_skips_sub_threshold_balances():
+    from src.cash_bridge import inject_into_holdings
+
+    txns = [
+        _t("2024-01-01", "Deposit", 1000.0),
+        _t("2024-01-02", "Buy", 999.60, symbol="AAPL"),
+    ]
+    balances: dict = {}
+    last_prices: dict = {}
+    basis: dict = {}
+    injected = inject_into_holdings(txns, balances, last_prices, basis,
+                                    "2024-06-30")
+    assert injected == 0.0
+    assert balances == {} and basis == {}
+    # No phantom USD price when nothing was injected.
+    assert "USD" not in last_prices
+
+
 def test_groups_are_tracked_independently():
     txns = [
         _t("2024-01-01", "Deposit", 1000.0, group="Robinhood"),

@@ -268,8 +268,13 @@ def _refresh_prices_only(args) -> None:
     # Stage: build holdings (uses the same dust filter + cash-principal
     # logic as main()).
     cash_principal_by_key = compute_cash_principal(txns)
+    # Same bridge injection as the full path — see main()'s call site.
+    from .cash_bridge import inject_into_holdings
+    basis_for_holdings = dict(fifo_basis_by_key)
+    inject_into_holdings(txns, balances, last_prices,
+                         basis_for_holdings, today_str)
     holdings, holdings_by_account = build_holdings(
-        balances, last_prices, dict(fifo_basis_by_key), cash_principal_by_key,
+        balances, last_prices, basis_for_holdings, cash_principal_by_key,
     )
 
     # Sector enrichment (cheap, cache-first)
@@ -788,6 +793,14 @@ def main():
     # gain.  Stage extracted to pipeline_stages.
     from .pipeline_stages import build_holdings, compute_cash_principal
     cash_principal_by_key = compute_cash_principal(txns)
+
+    # Reconstructed broker cash joins the holdings inputs so the
+    # Holdings table / allocation / concentration agree with the header
+    # (which reads the latest history snapshot, where the bridge already
+    # applies).  See cash_bridge.inject_into_holdings.
+    from .cash_bridge import inject_into_holdings
+    inject_into_holdings(txns, balances, last_prices,
+                         fifo_basis_by_key, today_str)
 
     # Build holdings_by_account + holdings.  Encapsulates the dust
     # filter and the basis-source-routing rules (FIFO walker for

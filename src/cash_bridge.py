@@ -235,6 +235,43 @@ def synthesize_external_funding(txns: list[dict], group: str) -> list[dict]:
     return txns + extra
 
 
+def inject_into_holdings(txns: list[dict],
+                         balances: dict,
+                         last_prices: dict,
+                         basis_by_key: dict,
+                         as_of: str) -> float:
+    """Add each bridged group's reconstructed cash to the inputs of
+    ``pipeline_stages.build_holdings``.
+
+    The history snapshots already carry the bridge, so without this the
+    Overview header (read from the latest snapshot) and the Holdings
+    table (built from ``balances``) disagree by the full bridged
+    amount — along with the allocation donut, the sector breakdown and
+    the concentration view, which all derive from holdings.
+
+    This stayed invisible while Coinbase was the only bridged group,
+    because its reconstructed balance ends at ~$0 by construction.  A
+    brokerage account that simply holds uninvested cash makes the gap
+    a visible fraction of the portfolio.
+
+    Mutates the three dicts in place and returns the total injected.
+    Cash carries basis == face value, matching what the snapshot walker
+    adds to ``total_cost_basis``, so unrealized gain on the row is $0.
+    """
+    injected = 0.0
+    for group, series in all_series(txns).items():
+        bal = round(balance_at(series, as_of), 2)
+        if bal < BRIDGE_MIN:
+            continue
+        key = (group, "USD")
+        balances[key] = balances.get(key, 0.0) + bal
+        basis_by_key[key] = basis_by_key.get(key, 0.0) + bal
+        injected += bal
+    if injected:
+        last_prices.setdefault("USD", 1.0)
+    return injected
+
+
 def balance_at(series: list[tuple[str, float]], date: str) -> float:
     """Most recent end-of-day balance at or before ``date``, clamped at 0.
 
