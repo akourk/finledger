@@ -911,6 +911,30 @@ def _cap_covered_end(value: str) -> str:
     return min(value, _today().isoformat())
 
 
+def _record_settled_through(entry: dict, symbol: str) -> None:
+    """Record how far into ``entry``'s coverage the bars are FINAL.
+
+    ``covered_end`` alone can't answer "is this value done moving?" —
+    yfinance's daily bar carries a live price during market hours, so a
+    bar fetched at 11:00 is a provisional mark stored as if it were the
+    close.  What makes a cached date final is that we fetched it AFTER
+    that date settled, which is exactly ``min(covered_end, horizon)``.
+
+    Both bounds are load-bearing.  The horizon alone would claim
+    settlement for dates we hold no data for; ``covered_end`` alone
+    would call this morning's live mark a close.  Neither input moves
+    backwards in normal operation, so the result doesn't either — no
+    max() against the stored value is needed, and adding one would only
+    let the claim outrun coverage when the meta file is hand-edited
+    (which it is designed to be).
+    """
+    covered_end = entry.get("covered_end")
+    if not covered_end:
+        return
+    entry["settled_through"] = min(covered_end,
+                                   _settle_horizon(symbol).isoformat())
+
+
 def _record_success(symbol: str, start: date, end: date, now: datetime) -> None:
     global _meta_dirty
     meta = _load_meta()
@@ -922,6 +946,7 @@ def _record_success(symbol: str, start: date, end: date, now: datetime) -> None:
     # Cap AFTER the max() so a future-dated claim left by an older
     # cache heals itself on the next successful fetch.
     entry["covered_end"]   = _cap_covered_end(end_s if not ce else max(ce, end_s))
+    _record_settled_through(entry, symbol)
     entry["last_fetch"]    = now.isoformat(timespec="seconds")
     entry["failure_count"] = 0
     entry.pop("retry_after", None)
@@ -1163,6 +1188,7 @@ def fetch_latest_close_batch(symbols: list[str], *,
         ce = entry.get("covered_end")
         if not ce or dt_str > ce:
             entry["covered_end"] = _cap_covered_end(dt_str)
+        _record_settled_through(entry, sym)
         entry["last_fetch"] = now.isoformat(timespec="seconds")
         entry["failure_count"] = 0
         entry.pop("retry_after", None)
@@ -1560,14 +1586,20 @@ def _missing_ranges(symbol: str, start: date, end: date) -> list[tuple[date, dat
     close, so by the time we run over a weekend, Friday's price is the
     correct "latest close" anyway.
 
-    **Today is never treated as covered.**  ``covered_end`` records what
-    we asked for, not what has settled — so the moment any run of the
-    day fetched today, ``covered_end == today`` and every later run that
-    day was a no-op, freezing prices at whatever the first run captured.
-    Clamping the effective coverage to *yesterday* makes a request
-    ending today always yield a one-day gap, so an intraday rerun picks
-    up the moved market.  Historical requests are unaffected: an ``end``
-    in the past compares against the same range as before.
+    **A date is only covered once its bar can no longer change.**
+    ``covered_end`` records what we ASKED for, not what has settled, so
+    on its own it froze prices at whatever the first run of the day
+    captured — and a bar fetched mid-session is a live mark stored as if
+    it were the close.  Effective coverage is therefore
+    ``min(covered_end, settled_through)``: a symbol whose newest bar is
+    still live yields a gap and gets refetched, and one that is fully
+    settled yields nothing at all, so an evening run does no network
+    work.  Historical requests are unaffected — an ``end`` in the past
+    compares against the same range as before.
+
+    A missing ``settled_through`` (any cache written before settle
+    awareness landed) falls back to "today is never settled", which is
+    the prior behaviour — so old caches keep working with no migration.
     """
     end = _last_trading_day(end)
     meta = _load_meta()
@@ -1575,7 +1607,10 @@ def _missing_ranges(symbol: str, start: date, end: date) -> list[tuple[date, dat
     if not entry or not entry.get("covered_start"):
         return [(start, end)] if start <= end else []
     cs = _parse_iso(entry["covered_start"])
-    ce = min(_parse_iso(entry["covered_end"]), _today() - timedelta(days=1))
+    settled = entry.get("settled_through")
+    horizon = (_parse_iso(settled) if settled
+               else _today() - timedelta(days=1))
+    ce = min(_parse_iso(entry["covered_end"]), horizon)
     gaps: list[tuple[date, date]] = []
     if start < cs:
         gaps.append((start, cs - timedelta(days=1)))
@@ -1615,6 +1650,7 @@ def _invalidate_prices_for_split_change(symbol: str, old_splits, new_splits,
     if entry:
         entry.pop("covered_start", None)
         entry.pop("covered_end", None)
+        entry.pop("settled_through", None)
         _meta_dirty = True
     if verbose:
         print(f"    {symbol}: split history changed — cached prices "

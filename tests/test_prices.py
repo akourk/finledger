@@ -960,22 +960,20 @@ class TestTodayFreshness:
                         force_today_for={"VFIAX"})
         assert get_price("VFIAX", "2026-08-07") == 555.0
 
-    def test_main_passes_force_today_for(self):
-        """The hook shipped fully implemented and unwired for a while.
-        Asserted against the real source so a refactor that drops it
-        fails here rather than silently freezing held prices."""
+    def test_main_relies_on_settle_awareness_not_a_blunt_force(self):
+        """main.py briefly forced a refresh of every held symbol every
+        run, as a stand-in for not knowing whether a bar had settled.
+        `_settle_horizon` answers that properly now, so re-adding the
+        force would only undo the evening no-op it exists to buy.
+        Asserted against the real source so it doesn't creep back."""
         import inspect
         import src.main
 
         src_text = inspect.getsource(src.main)
-        assert "force_today_for=force_today" in src_text, (
-            "main.py no longer forces a refresh of today's bar for held "
-            "symbols — prices will freeze at the first fetch of the day"
-        )
-        tail = src_text.split("force_today = ", 1)[1][:300]
-        assert "_BENCHMARK_SYMBOLS" in tail, (
-            "benchmarks must stay in the force-refresh set — a frozen "
-            "benchmark reports failure_count: 0 and nothing flags it"
+        assert "force_today_for=" not in src_text, (
+            "main.py is forcing a price refresh again — settle awareness "
+            "already refetches exactly the bars that can still change, so "
+            "this just re-breaks the offline-fast evening run"
         )
 
 
@@ -1234,3 +1232,178 @@ class TestSettleHorizon:
         monkeypatch.setattr(_prices_mod, "_today", lambda: date(2026, 8, 5))
         assert _prices_mod._settle_horizon(
             "AAPL", _utc("2026-08-05T23:00:00")) == date(2026, 8, 4)
+
+
+class TestSettledThroughGating:
+    """Phase 2c — refetch a date only while it can still change.
+
+    Strictly better than both the old behaviour and blanket
+    always-fetch: an intraday mark keeps getting replaced until the real
+    close lands, and once everything held is final the run does no
+    network work at all.
+    """
+
+    @staticmethod
+    def _pin(monkeypatch, iso_utc: str) -> None:
+        """Pin the whole clock — `_today` derives from `_now_utc`."""
+        from src import prices as _prices_mod
+        monkeypatch.setattr(_prices_mod, "_now_utc", lambda: _utc(iso_utc))
+
+    def test_intraday_fetch_does_not_mark_the_day_final(
+            self, isolated_workdir, monkeypatch, stub_prices):
+        """Defect 4: yfinance's daily bar carries a LIVE price during
+        market hours and fin stored it as the close.  Coverage may reach
+        today; settled coverage must not."""
+        from src.prices import _load_meta, ensure_coverage
+        # Wednesday 2026-08-05, 11:00 ET.
+        self._pin(monkeypatch, "2026-08-05T15:00:00")
+        stub_prices.set("AAPL", {"2026-08-05": 200.0})
+        ensure_coverage(["AAPL"], "2026-08-01", "2026-08-05", verbose=False)
+
+        entry = _load_meta()["symbols"]["AAPL"]
+        assert entry["covered_end"] == "2026-08-05"
+        assert entry["settled_through"] == "2026-08-04", \
+            "an 11:00 bar is a live mark, not a close"
+
+    def test_unsettled_symbol_is_refetched_regardless_of_covered_end(
+            self, isolated_workdir, monkeypatch):
+        from datetime import date
+        from src.prices import _load_meta, _missing_ranges
+        self._pin(monkeypatch, "2026-08-05T15:00:00")   # 11:00 ET
+        _load_meta()["symbols"]["AAPL"] = {
+            "covered_start":   "2024-01-01",
+            "covered_end":     "2026-08-05",
+            "settled_through": "2026-08-04",
+        }
+        assert _missing_ranges("AAPL", date(2024, 1, 1), date(2026, 8, 5)) \
+            == [(date(2026, 8, 5), date(2026, 8, 5))]
+
+    def test_settled_symbol_is_not_refetched(
+            self, isolated_workdir, monkeypatch):
+        """The evening no-op.  This is what settle awareness buys, and
+        what an unconditional force would take away."""
+        from datetime import date
+        from src.prices import _load_meta, _missing_ranges
+        self._pin(monkeypatch, "2026-08-06T00:00:00")   # 20:00 ET
+        _load_meta()["symbols"]["AAPL"] = {
+            "covered_start":   "2024-01-01",
+            "covered_end":     "2026-08-05",
+            "settled_through": "2026-08-05",
+        }
+        assert _missing_ranges("AAPL", date(2024, 1, 1), date(2026, 8, 5)) == []
+
+    def test_the_full_intraday_then_close_cycle(
+            self, isolated_workdir, monkeypatch, stub_prices):
+        """End to end: a mid-session run stores a live mark, a later run
+        the same day replaces it with the real close, and a third run
+        after settlement does nothing."""
+        from src.prices import _load_meta, ensure_coverage, get_price
+
+        # 11:00 ET — live mark.
+        self._pin(monkeypatch, "2026-08-05T15:00:00")
+        stub_prices.set("AAPL", {"2026-08-05": 200.0})
+        ensure_coverage(["AAPL"], "2026-08-01", "2026-08-05", verbose=False)
+        assert get_price("AAPL", "2026-08-05") == 200.0
+
+        # 17:00 ET — the tape has settled; the close replaces the mark.
+        self._pin(monkeypatch, "2026-08-05T21:00:00")
+        stub_prices.set("AAPL", {"2026-08-05": 204.5})
+        ensure_coverage(["AAPL"], "2026-08-01", "2026-08-05", verbose=False)
+        assert get_price("AAPL", "2026-08-05") == 204.5, \
+            "the settled close must overwrite the intraday mark"
+        assert _load_meta()["symbols"]["AAPL"]["settled_through"] == "2026-08-05"
+
+        # 20:00 ET — nothing left to do.  A fetch here would overwrite
+        # the real close with whatever the stub hands back.
+        self._pin(monkeypatch, "2026-08-06T00:00:00")
+        stub_prices.set("AAPL", {"2026-08-05": 999.0})
+        ensure_coverage(["AAPL"], "2026-08-01", "2026-08-05", verbose=False)
+        assert get_price("AAPL", "2026-08-05") == 204.5, \
+            "a settled bar must not be refetched"
+
+    def test_funds_refetch_after_the_equity_close(
+            self, isolated_workdir, monkeypatch, stub_prices):
+        """Defect 3, the case that used to need a blunt force: a run
+        between the equity close and the NAV strike gets no fund data,
+        so the fund must still be pending on the next run."""
+        from datetime import date
+        from src.prices import _load_meta, _missing_ranges
+        # 16:30 ET — equities done, NAV not struck.  The 16:30 run got
+        # no fund row back, so coverage stopped at the prior day.
+        self._pin(monkeypatch, "2026-08-05T20:30:00")
+        _load_meta()["symbols"]["VFIAX"] = {
+            "covered_start":   "2024-01-01",
+            "covered_end":     "2026-08-04",
+            "settled_through": "2026-08-04",
+        }
+        assert _missing_ranges("VFIAX", date(2024, 1, 1), date(2026, 8, 5)) \
+            == [(date(2026, 8, 5), date(2026, 8, 5))]
+
+        # Same cache, same symbol, Saturday: the equity horizon has long
+        # since walked back to Friday, but Friday's NAV is still missing.
+        self._pin(monkeypatch, "2026-08-08T16:00:00")   # Sat 12:00 ET
+        assert _missing_ranges("VFIAX", date(2024, 1, 1), date(2026, 8, 8)) \
+            == [(date(2026, 8, 5), date(2026, 8, 7))]
+
+    def test_a_later_intraday_fetch_does_not_advance_the_claim(
+            self, isolated_workdir, monkeypatch):
+        """The next morning's fetch extends coverage to a day that is
+        still trading — the settle claim must stay where it was."""
+        from src.prices import _record_settled_through
+        entry = {"covered_end": "2026-08-05", "settled_through": "2026-08-05"}
+        # Next morning, 09:00 ET — today's bar is live again.
+        self._pin(monkeypatch, "2026-08-06T13:00:00")
+        entry["covered_end"] = "2026-08-06"
+        _record_settled_through(entry, "AAPL")
+        assert entry["settled_through"] == "2026-08-05"
+
+    def test_settled_through_never_outruns_coverage(
+            self, isolated_workdir, monkeypatch):
+        """Long past the cutoff but we only hold data through the 3rd —
+        the claim is bounded by what we actually have."""
+        from src.prices import _record_settled_through
+        self._pin(monkeypatch, "2026-08-06T00:00:00")   # 20:00 ET
+        entry = {"covered_end": "2026-08-03"}
+        _record_settled_through(entry, "AAPL")
+        assert entry["settled_through"] == "2026-08-03"
+
+    def test_cache_without_settled_through_keeps_working(
+            self, isolated_workdir, monkeypatch):
+        """Every cache written before this landed lacks the field.  It
+        must fall back to the prior "today is never settled" rule rather
+        than needing a migration."""
+        from datetime import date
+        from src.prices import _load_meta, _missing_ranges
+        self._pin(monkeypatch, "2026-08-06T00:00:00")   # 20:00 ET
+        _load_meta()["symbols"]["AAPL"] = {
+            "covered_start": "2024-01-01",
+            "covered_end":   "2026-08-05",
+        }
+        assert _missing_ranges("AAPL", date(2024, 1, 1), date(2026, 8, 5)) \
+            == [(date(2026, 8, 5), date(2026, 8, 5))]
+
+    def test_crypto_evening_run_does_not_settle_the_utc_day(
+            self, isolated_workdir, monkeypatch, stub_prices):
+        """Defect 2 under the new rule: the bar fin receives at 22:42
+        local is for a UTC day that has barely started."""
+        from src.prices import _load_meta, ensure_coverage
+        # 2026-08-04 22:42 local US-Pacific == 2026-08-05 05:42 UTC.
+        self._pin(monkeypatch, "2026-08-05T05:42:00")
+        stub_prices.set("ETH-USD", {"2026-08-05": 3100.0})
+        ensure_coverage(["ETH-USD"], "2024-01-01", "2026-08-05", verbose=False)
+        entry = _load_meta()["symbols"]["ETH-USD"]
+        assert entry["settled_through"] == "2026-08-04", \
+            "the UTC day is still running — that bar can still move"
+
+    def test_split_invalidation_clears_the_settle_claim(self, isolated_workdir):
+        """Wiping a symbol's prices must wipe its settle claim too, or
+        the meta file keeps asserting freshness for data that is gone."""
+        from src.prices import _invalidate_prices_for_split_change, _load_meta
+        _load_meta()["symbols"]["SMX"] = {
+            "covered_start":   "2024-01-01",
+            "covered_end":     "2026-08-05",
+            "settled_through": "2026-08-05",
+        }
+        _invalidate_prices_for_split_change(
+            "SMX", [], [["2026-08-05", 0.1]], verbose=False)
+        assert "settled_through" not in _load_meta()["symbols"]["SMX"]
