@@ -1,7 +1,19 @@
 # Plan: full application audit
 
-Status: **not started**. Written 2026-08-05, immediately after the
-price-freshness work, by the session that did it.
+Status: **executed 2026-08-05/06 — segments 1–7 and 9 complete**, with
+Segment 8's sweeps largely absorbed into the others. Results are in
+`AUDIT.md` (committed, sanitized) and `audit/findings.md` (gitignored,
+carries real figures). **Read AUDIT.md's executive summary before
+re-running any of this** — it records what was found, what came back
+clean, and three patterns that are worth more than the individual
+findings.
+
+The short version: fin's logic held up. Two live defects across the
+whole audit; everything else was correct code that could be broken
+silently. Suite 478 → 777, coverage 84.9% → 88.6%.
+
+Written 2026-08-05, immediately after the price-freshness work, by the
+session that did it.
 
 Updated 2026-08-05, later the same day: a user-reported bug in the
 reconciliation panel turned out to be a bug class the taxonomy was
