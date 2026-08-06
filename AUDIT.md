@@ -8,9 +8,9 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1 of 9, plus Segment 5 item 1 (pulled forward, complete) |
-| **Findings** | 7 open / 4 fixed |
-| **Suite** | 478 → 545 tests, green |
+| **Segments complete** | 1 of 9, Segment 5 item 1 (pulled forward), Segment 2 partial |
+| **Findings** | 7 open / 6 fixed |
+| **Suite** | 478 → 554 tests, green |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -22,6 +22,8 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-012 | medium | *(fixed)* `txn_external_cash_flow`'s carve-outs are pinned only in the firing direction, contrary to the documented claim — all three `and` guards could be deleted with the suite green |
+| F-013 | medium | *(fixed)* `_consume_lots_capped`'s descending-index lot removal was unprotected while its identical sibling in `_consume_lots` was |
 | F-007 | high | *(fixed)* No test had ever tripped any of the 23 `data_health` checks — the suite's own safety net was entirely unverified |
 | F-008 | medium | *(fixed)* The reconciliation panel's break-flagging path was never exercised — no test produced a balance row that wasn't "ok" |
 | F-009 | medium | *(fixed)* `alerts.py` had no test file; five of seven alert sources had never been emitted |
@@ -205,6 +207,88 @@ Suite 478 → 545, green. Every addition mutation-verified: 26 mutations
 across the three modules, all CAUGHT.
 
 **Still open:** the 13 `warn` / `info` `data_health` checks.
+
+### Segment 2 — Mutation: the invariant core (2026-08-05, in progress)
+
+**Method note, learned the expensive way.** `tools/gen_mutations.py`
+proposes mutations from the AST, filtered to lines the suite actually
+executes. The first `basis.py` run emitted 67 candidates and most were
+`<= 1e-12` → `< 1e-12` boundary flips — **equivalent mutants**, which
+can only behave differently if a float is exactly 1e-12. They survive,
+they mean nothing, and they bury the real signal. This is precisely the
+noise that makes a blanket `mutmut` sweep unhelpful on this codebase,
+reproduced in miniature by an unfiltered generator.
+
+Curating epsilon comparisons out left 55 semantically meaningful
+mutations: `min`/`max` swaps that change how much of a lot is consumed,
+`reverse=` flips that change consume order, `and`→`or` on the documented
+`txn_external_cash_flow` carve-outs, and `!=`→`==` on the lot-method
+gates.
+
+`actions.py` generates **zero** candidates and correctly so — it is a
+declarative catalog with no branching, so its correctness is structural
+(what the table says) rather than conditional. `test_actions_catalog.py`
+is the right instrument for it; mutation is not.
+
+**Result: 55 mutations, 15 caught, 40 survived.** Most survivors are
+zero-boundary flips (`<= 0` → `< 0`) whose observable difference needs a
+quantity of exactly zero; those are logged but not individually chased.
+Two survivors had real weight, and both became findings:
+
+- **F-012** — the `and` guards in `txn_external_cash_flow`'s carve-outs
+  all survived. This one is worth dwelling on: CLAUDE.md states the
+  helper is pinned by a named test, and it *is* — but only in the
+  direction where the rule fires. The existing test covers marker +
+  right account and non-marker + right account, and never marker +
+  **wrong** account, which is exactly what the `account_group` half of
+  each condition rejects. So a documented safety claim was true and
+  insufficient at the same time.
+- **F-013** — `_consume_lots_capped` deletes emptied lots by index,
+  correct only descending. Its identical sibling in `_consume_lots` is
+  protected; this one wasn't, because no test consumed two or more lots
+  to exhaustion in a single *reserving* call.
+
+Both rules were already **correct** — a probe confirmed the behaviour
+before any test was written. Nothing was wrong in the output; the guards
+were simply deletable with the suite green. No source changed.
+
+**A method note that generalises.** My first reading dismissed two of
+the three carve-out survivors as equivalent mutants, reasoning that the
+inner description check made the outer account check redundant. Probing
+the actual function showed the opposite — a non-Roth account carrying
+the same marker returns 0, so the account check is load-bearing. The
+lesson is the plan's own rule in miniature: **don't classify a survivor
+by reading it, run it.**
+
+### Verified clean (no finding)
+
+Recorded deliberately — a checked-and-clean result is worth as much to
+the next segment as a defect, and re-deriving it costs the same as
+finding it did.
+
+- **Option intrinsic-floor call sites** (Segment 3's explicit
+  sub-task). CLAUDE.md requires the floor at every txn-price fallback,
+  and the existing static guard in `test_option_floor_parity.py`
+  catches *modules*, not *call sites*. Enumerated all seven documented
+  sites — both pipeline paths' `last_prices`, both history walkers,
+  `analytics/header.py`, `analytics/daily_pnl.py`,
+  `analytics/_shared.py::_value_at_date` — and all seven apply it. The
+  two other modules referencing `last_prices` are consumers of an
+  already-floored dict, not independent fallbacks:
+  `pipeline_stages.build_holdings` is called *after*
+  `apply_option_intrinsic_floor` in both paths, and `cash_bridge` only
+  sets `USD = 1.0`.
+- **Lot-walker branch parity** (Segment 3's main job, partial). The two
+  walkers dispatch the same eight basis effects in the same order
+  (`add`, `zero_basis`, `remove`, `transfer_out`, `transfer_in`,
+  `wrap_out`/`wrap_in`, `split`, and the `ignore`-with-quantity case),
+  and `history.py` now imports `_consume_lots`, `_pair_wraps`,
+  `_rescale_lots`, `_consume_for_rebase` and `_rebase_is_move` directly
+  from `basis.py` rather than reimplementing them. The structural drift
+  CLAUDE.md warns about has largely been closed by that sharing. Note
+  this is a *branch-structure* check, not a semantic one — Segment 3
+  should still compare the bodies.
+- **`changes.py`** — see above; already pinned.
 
 ---
 
