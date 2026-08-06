@@ -194,10 +194,27 @@ class TestSampleDrivesAFullRun:
     exactly one — it proves the sample still produces a dashboard, not
     that any particular figure is right."""
 
+    # The underlying of the sample's OPEN option contract. Seeded so the
+    # intrinsic floor has something to floor AGAINST — with an empty
+    # cache the contract falls back to its purchase premium and the
+    # floor never engages, which would make the test below vacuous.
+    UNDERLYING_PRICE = 400.0
+    OPEN_STRIKE = 250.0
+
     @pytest.fixture
     def exported(self, isolated_workdir, sample_data, stub_prices):
         import json
         import sys
+        from datetime import date, timedelta
+
+        from src.prices import ensure_coverage
+
+        today = date.today()
+        series = {(today - timedelta(days=n)).isoformat(): self.UNDERLYING_PRICE
+                  for n in range(0, 400, 7)}
+        stub_prices.set("AAPL", series)
+        stub_prices.set_sector("AAPL", "Technology")
+        ensure_coverage([("AAPL")], today - timedelta(days=400), today)
 
         argv_save = sys.argv
         sys.argv = ["fin", "--skip-rename"]
@@ -400,6 +417,82 @@ class TestSampleDrivesAFullRun:
         holding = [h for h in exported["holdings_by_account"]
                    if h["symbol"] == "MATIC-USD"]
         assert holding[0]["cost_basis"] == pytest.approx(1400.0)
+
+    def test_option_exercise_pairs_its_cash_leg(self, exported):
+        """Robinhood writes an exercise as TWO rows and fin must pair them.
+
+        The contract disposal (OEXCS, quantity "1S", no amount) carries
+        no proceeds; the cash payout (OCC, "Option Maturity: Cash
+        Component") carries no contract. The parser joins them on
+        (date, underlying) — the OCC description is generic, so the
+        instrument is the only usable key — and rolls the cash into the
+        OEXCS row, dropping the OCC.
+
+        Neither code was in the sample before, so this pairing had no
+        end-to-end coverage at all.
+        """
+        txns = exported["transactions"]
+        exercises = [t for t in txns if t.get("action") == "Option Exercise"]
+        assert exercises, "the sample lost its option exercise"
+        ex = exercises[0]
+
+        assert ex["amount"] > 0, (
+            "the exercise carries no proceeds — the OCC cash leg was not "
+            "rolled in, so the disposal looks worthless"
+        )
+        assert ex["realized_gain"] == pytest.approx(
+            ex["amount"] - ex["cost_basis"]), (
+            "realized gain should be the cash payout minus the contract's "
+            "basis"
+        )
+        # The OCC row must be CONSUMED, not left as a second transaction.
+        assert not [t for t in txns
+                    if "Cash Component" in (t.get("description") or "")], (
+            "the OCC row survived as its own transaction — its cash would "
+            "be counted twice"
+        )
+        # The contract leaves the book.
+        assert not [h for h in exported["holdings_by_account"]
+                    if h["symbol"] == ex["symbol"]], (
+            "the exercised contract is still held"
+        )
+
+    def test_open_contract_is_floored_at_intrinsic_value(self, exported):
+        """An OPEN deep-ITM contract must track its underlying.
+
+        yfinance cannot price option contracts, so an open one is marked
+        at its last traded premium — which goes stale the moment the
+        underlying moves. `prices.option_intrinsic` floors that mark at
+        intrinsic value from the underlying's cached close.
+
+        CLAUDE.md records this floor shipping MISSING at three of its six
+        call sites, reprinting the entire intrinsic-over-cost gap as a
+        phantom daily move. The sample's only other contract expires, so
+        before this fixture no valuation ever saw a live premium.
+        """
+        holdings = [h for h in exported["holdings_by_account"]
+                    if " Call " in h["symbol"] or " Put " in h["symbol"]]
+        assert holdings, "no open option contract in the sample"
+        h = holdings[0]
+
+        premium = h["cost_basis"] / h["quantity"] / 100.0
+        intrinsic = self.UNDERLYING_PRICE - self.OPEN_STRIKE
+        assert intrinsic > premium, (
+            "fixture is not deep enough ITM for the floor to bite — the "
+            "premium already exceeds intrinsic, so this proves nothing"
+        )
+
+        assert h["price"] == pytest.approx(intrinsic, abs=0.02), (
+            f"contract marked at {h['price']} but intrinsic is {intrinsic}; "
+            f"a mark at the {premium} purchase premium means the floor "
+            "never applied"
+        )
+        # ...and the x100 contract multiplier is applied to the value.
+        assert h["value"] == pytest.approx(
+            h["quantity"] * h["price"] * 100.0, abs=0.05), (
+            "option value must scale by the contract multiplier"
+        )
+        assert h["unrealized_gain"] > 0
 
     def test_pipeline_completes_and_emits_both_artifacts(
         self, isolated_workdir, sample_data, stub_prices

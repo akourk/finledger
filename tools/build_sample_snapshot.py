@@ -224,6 +224,48 @@ def _build(tmp: Path) -> None:
          "Instrument": "AAPL",
          "Description": "Option Expiration for AAPL 6/21/2024 Call $200.00",
          "Quantity": "1"},
+        # --- Option EXERCISE: OEXCS paired with its OCC cash leg -------
+        # Robinhood writes an exercise as TWO rows: the contract
+        # disposal (OEXCS, quantity "1S", no amount) and the cash payout
+        # (OCC, "Option Maturity: Cash Component", qty 0, amount).  The
+        # parser pairs them on (date, underlying) because the OCC
+        # description is generic, and rolls the cash into the OEXCS row.
+        # Neither code appeared in the sample before, so the pairing was
+        # unreachable end to end.
+        {"Activity Date": "9/3/2024", "Trans Code": "BTO",
+         "Instrument": "MSFT",
+         "Description": "MSFT 1/17/2025 Call $400.00",
+         "Quantity": "1", "Price": "$15.00", "Amount": "($1500.00)"},
+        {"Activity Date": "1/17/2025", "Trans Code": "OEXCS",
+         "Instrument": "MSFT",
+         "Description": "MSFT 1/17/2025 Call $400.00",
+         "Quantity": "1S", "Amount": ""},
+        {"Activity Date": "1/17/2025", "Trans Code": "OCC",
+         "Instrument": "MSFT",
+         "Description": "Option Maturity: Cash Component",
+         "Quantity": "0", "Amount": "$2903.00"},
+
+        # --- An OPEN, deep-ITM contract held across every snapshot -----
+        # This is what unlocks the intrinsic floor.  yfinance cannot
+        # price option contracts, so an open one is marked at its last
+        # traded premium — which goes stale the moment the underlying
+        # moves.  `prices.option_intrinsic` FLOORS that mark at intrinsic
+        # value from the underlying's cached close, so a deep-ITM
+        # contract tracks its underlying instead of sitting frozen at the
+        # purchase price.
+        #
+        # CLAUDE.md records that this floor shipped MISSING at three of
+        # its six call sites, reprinting the whole intrinsic-over-cost
+        # gap as a phantom daily move.  The sample's only other contract
+        # expires, so no valuation ever saw a live premium.
+        #
+        # Dates are relative so the fixture cannot rot: bought 60 days
+        # ago, expiring ~400 days out, therefore always open.
+        {"Activity Date": _mdy(_recent(60)), "Trans Code": "BTO",
+         "Instrument": "AAPL",
+         "Description": f"AAPL {_mdy(_recent(-400))} Call $250.00",
+         "Quantity": "1", "Price": "$20.00", "Amount": "($2000.00)"},
+
         {"Activity Date": "11/8/2024", "Trans Code": "Buy",
          "Instrument": "VTI", "Description": "Vanguard Total Stock Market",
          "Quantity": "8", "Price": "$280.00", "Amount": "($2240.00)"},
