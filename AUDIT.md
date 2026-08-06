@@ -8,9 +8,9 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1, 2, Segment 5 item 1 (pulled forward); Segment 3 substantially; Segment 4 begun |
-| **Findings** | 6 open / 11 fixed |
-| **Suite** | 478 → 593 tests, green · `src/` coverage 84.9% → 88.0% |
+| **Segments complete** | 1, 2, 4, Segment 5 item 1 (pulled forward); Segment 3 substantially |
+| **Findings** | 7 open / 11 fixed |
+| **Suite** | 478 → 636 tests, green · `src/` coverage 84.9% → 88.0% |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -22,6 +22,7 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-018 | medium | `metadata.csv` silently degrades invalid input, and three documented clamps reject-to-default instead of clamping |
 | F-017 | **high** | *(tier 1 fixed)* A date-format change silently drops every row in every parser, with no output — 7 of 8 sample broker files went to zero rows in silence |
 | F-016 | medium | *(fixed)* Two documented `prices.py` behaviours had no test — the failure-backoff cap and `covered_end` monotonicity |
 | F-015 | medium | *(fixed)* The Split basis rule is implemented twice, verbatim, and neither copy was executed by any test |
@@ -456,10 +457,50 @@ non-obvious and looks like a real bug — normalizing without that update
 makes every scoped rule miss and every action fall through to
 title-case.
 
-Items 2, 3 and 5 (post-parse invariant property tests, sign-split
-placement, metadata `Type` handling) remain. Item 2 is partly covered
-already by `tests/test_sample_snapshot.py`, which asserts non-negative
-quantity/price/fees/amount across all nine parsers.
+**F-017 tier 2 also fixed** — the partial-loss case tier 1 structurally
+cannot see. A file that loses *some* rows still parses to a non-zero
+count, so nothing notices and those transactions are simply absent.
+Counted without touching a single parser: each calls exactly one
+`_date_*` helper, once per row, inside the try/except that drops it, and
+none tries several formats speculatively — so a raise from those helpers
+*is* a dropped row, exactly. The helpers tally and re-raise unchanged;
+`parse_all_files` reads and resets per file. Blank dates are deliberately
+not counted (spacer rows are structural, and counting them would put a
+permanent false warning on files that contain them). Real corpus: zero
+warnings, so no rows are being lost today either.
+
+**Item 3 — sign splits: clean, now pinned.** Every direction-ambiguous
+raw action must be split *before* the `abs()`, because once abs() has run
+the direction is unrecoverable. Robinhood `ACH` and Voya `TRANSFER` are
+both correct and are now pinned in both directions, with magnitudes
+asserted equal so the split can't later be "fixed" by leaking a negative
+through instead. Also pinned: the two canonical actions must differ *and*
+land on opposite balance effects — a split that normalization collapses
+back into one action would be silently useless. Removing or inverting
+either split is caught.
+
+**Item 5 — metadata: F-018.** Three documented clamps do not clamp.
+`Retirement Age = 20` gives 67 rather than 30, `Pay Frequency = 13`
+gives 26 rather than 12, `State Tax Rate = 25` gives 0.0 rather than
+0.20 — each REJECTS an out-of-range value to its default. That is a
+defensible choice, just a different one than documented, so CLAUDE.md
+was corrected for all three rather than the behaviour changed: switching
+reject-to-default into real clamping would move planning figures for
+anyone relying on today's result, and that is the user's call.
+
+The sharper half is that every rejection and coercion is **silent**. A
+non-numeric `Annual Expenses` becomes `0.0`, and the Planning tab
+multiplies it by 25 for the FI number — so a fat-fingered row reports a
+$0 FI target rather than refusing to guess. A malformed date is stored
+raw and consumers slice `date[:4]` for a tax year. 26 tests now pin the
+real behaviour; the recommended fix is a warning on rejection, the same
+additive shape as F-017 tier 1, which removes the silence without moving
+a figure.
+
+Item 2 (post-parse invariant property tests) is covered by
+`tests/test_sample_snapshot.py` and `tests/test_parser_sign_splits.py`,
+which assert non-negative quantity/price/fees/amount across all nine
+parsers. **Segment 4 is complete.**
 
 ### Verified clean (no finding)
 

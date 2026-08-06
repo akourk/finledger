@@ -723,8 +723,10 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     encode reliably).  Pair it with a `State Tax Rate` row for a
     single representative marginal rate.
   - `State Tax Rate` — Amount = marginal state income tax rate as a
-    decimal (e.g. `0.093`; `9.3` is also accepted and divided by 100;
-    clamped to `[0, 0.20]`, default `0`).  Added to the federal
+    decimal (e.g. `0.093`; `9.3` is also accepted and divided by 100).
+    A value outside `[0, 0.20]` is REJECTED to the default `0` — it is
+    not clamped to the bound, so `25` yields 0%, not 20%.  Added to the
+    federal
     marginal for the Tax tab's "Combined" rate display and the
     estimated-capital-gains-tax computation.
   - `Target Allocation` — Symbol = sector bucket (matches the
@@ -791,8 +793,10 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     override preserves fin's ST/LT character ratio
     (`_realized_override_delta`) and is surfaced via
     `rate_estimates_by_year[Y].realized_override_accounts`.
-  - `Retirement Age` — Amount = integer age (sanity-clamped to
-    30..100, default 67).  Drives the Monte Carlo simulation
+  - `Retirement Age` — Amount = integer age.  Accepted range is
+    30..100; anything outside it is REJECTED to the default 67 (not
+    clamped to the bound — `20` yields 67, not 30).  Drives the Monte
+    Carlo simulation
     horizon (`analytics/__init__.py` `years_to_60` is now
     `target_age - age`) and the default value of the Planning
     tab's projection-age input.
@@ -854,9 +858,15 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     inconsistency: savings interest counted toward `ttm_actual` but
     contributed nothing to `forecast_12mo`, so the two silently
     disagreed.
-  - `Pay Frequency` — Amount = pay periods per year, snapped to
-    12 / 24 / 26 / 52 (default 26 = biweekly).  Annualizes the
-    paycheck rows.
+  - `Pay Frequency` — Amount = pay periods per year.  Must be exactly
+    one of 12 / 24 / 26 / 52; any other value is REJECTED to the
+    default 26 = biweekly (it is not snapped to the nearest — `13`
+    yields 26, not 12).  Annualizes the paycheck rows.
+    **All three of the above reject rather than clamp, and do so
+    SILENTLY** — a mistyped value is indistinguishable from an absent
+    one.  Likewise a non-numeric `Amount` becomes `0.0` and a malformed
+    `Date` is stored unvalidated (see AUDIT.md F-018).  Pinned by
+    `tests/test_metadata_edge_cases.py`.
   - `Tax Return` — a figure from a FILED 1040.  Date = tax year,
     Symbol = field (`Total Tax` = line 24, `AGI` = line 11,
     `Withholding` = line 25d, `Wages` = 1z, `Capital Gains` = line 7),
