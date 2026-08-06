@@ -521,3 +521,126 @@ class TestSampleDrivesAFullRun:
         # The dashboard is a single self-contained file; a truncated
         # bundle still "exists".
         assert len(dashboard.read_text(encoding="utf-8")) > 50_000
+
+
+class TestRolloverBridge:
+    """A custodian rollover must not read as a drawdown.
+
+    The sample liquidates its Voya plan and the proceeds land at the new
+    record-keeper a month later. In between the money is INVISIBLE:
+    `main.py` deliberately skips USD balances outside Savings, so the
+    account reads zero and the charts show a dip to nothing followed by
+    a full recovery. The money never left the portfolio — it was between
+    custodians — and `detect_rollover_bridges` exists to add it back to
+    the effective balance for exactly that window.
+
+    Consumers: TWR, annual returns, XIRR, the history chart, drawdown
+    and monthly P&L. None had an end-to-end path to this before.
+    """
+
+    @pytest.fixture
+    def exported(self, isolated_workdir, sample_data, stub_prices):
+        import json
+        import sys
+
+        argv_save = sys.argv
+        sys.argv = ["fin", "--skip-rename"]
+        try:
+            from src.main import main
+            main()
+        finally:
+            sys.argv = argv_save
+        return json.loads(
+            (isolated_workdir / "exports" / "transactions.json")
+            .read_text(encoding="utf-8"))
+
+    def test_a_bridge_is_detected(self, exported):
+        bridges = (exported["analytics"] or {}).get("rollover_bridges") or []
+        assert bridges, "the sample lost its custodian rollover"
+        b = bridges[0]
+        assert b["group"] == "Rollover IRA"
+        assert b["start_date"] < b["end_date"], "a bridge must span time"
+        assert b["amount"] > 0
+
+    def test_the_fixture_really_does_go_dark_in_the_window(self, exported):
+        """Not-vacuous guard.
+
+        If the account never actually reads zero between the legs, there
+        is no phantom dip, nothing for the bridge to correct, and the
+        assertions above would pass while testing nothing.
+        """
+        bridges = (exported["analytics"] or {}).get("rollover_bridges") or []
+        b = bridges[0]
+        inside = [s for s in exported["history"]
+                  if b["start_date"] <= s["date"][:10] < b["end_date"]]
+        assert inside, (
+            "no snapshot falls inside the in-flight window — widen the gap "
+            "between the legs or this proves nothing"
+        )
+        assert all((s.get("by_account_group") or {}).get("Rollover IRA", 0) == 0
+                   for s in inside), (
+            "the account did not go dark mid-rollover, so there is no dip "
+            "for the bridge to smooth"
+        )
+
+    def test_the_covered_distribution_is_not_flagged(self, exported):
+        """A bridged rollover must NOT trip the unbridged-distribution
+        warning — that alert is for money that left and never came back."""
+        dh = (exported["analytics"] or {}).get("data_health")
+        issues = dh if isinstance(dh, list) else (dh or {}).get("issues") or []
+        kinds = {i.get("kind") for i in issues if isinstance(i, dict)}
+        assert "unbridged_retirement_distribution" not in kinds
+
+
+class TestUnbridgedDistributionWarning:
+    """The `warn` check that backs the bridge, pinned both ways.
+
+    CLAUDE.md names it as the first place to look when the history chart
+    shows an account dipping to $0 around a custodian transfer.
+    """
+
+    def _distribution(self, **kw):
+        base = {"date": "2025-04-10", "account": "Voya 401K",
+                "account_group": "Rollover IRA", "account_type": "Retirement",
+                "symbol": "FUND", "action": "Distribution", "quantity": 10.0,
+                "price": 100.0, "fees": 0.0, "amount": 5000.0,
+                "description": "", "source": "t.csv"}
+        base.update(kw)
+        return base
+
+    def test_fires_for_an_uncovered_retirement_distribution(self,
+                                                            isolated_workdir):
+        from src.analytics.data_health import _check_unbridged_retirement_distribution
+
+        issues = _check_unbridged_retirement_distribution(
+            [self._distribution()], {"rollover_bridges": []})
+        assert issues, (
+            "a $5,000 retirement Distribution with no covering bridge must "
+            "be flagged — unflagged, it renders as a dip to $0"
+        )
+        assert issues[0]["severity"] == "warn"
+
+    def test_silent_when_a_bridge_covers_it(self, isolated_workdir):
+        from src.analytics.data_health import _check_unbridged_retirement_distribution
+
+        bridges = [{"group": "Rollover IRA", "start_date": "2025-04-10",
+                    "end_date": "2025-05-12", "amount": 5000.0}]
+        assert _check_unbridged_retirement_distribution(
+            [self._distribution()], {"rollover_bridges": bridges}) == []
+
+    def test_silent_below_the_dollar_threshold(self, isolated_workdir):
+        """Small distributions are ordinary activity, not a rollover."""
+        from src.analytics.data_health import _check_unbridged_retirement_distribution
+
+        assert _check_unbridged_retirement_distribution(
+            [self._distribution(amount=100.0)], {"rollover_bridges": []}) == []
+
+    def test_silent_for_a_taxable_account(self, isolated_workdir):
+        """The check is about RETIREMENT custodian moves; a withdrawal
+        from a taxable account is just a withdrawal."""
+        from src.analytics.data_health import _check_unbridged_retirement_distribution
+
+        assert _check_unbridged_retirement_distribution(
+            [self._distribution(account_group="Robinhood",
+                                account_type="Taxable")],
+            {"rollover_bridges": []}) == []

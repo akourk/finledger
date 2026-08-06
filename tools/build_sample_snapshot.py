@@ -501,6 +501,36 @@ def _build(tmp: Path) -> None:
         {"Activity Date": "2023-01-13", "Activity": "DIVIDEND",
          "Fund": "VANG TARGET 2055", "Money Source": "Before-Tax",
          "# of Units": "0.1", "Unit Price": "115.00", "Amount": "11.50"},
+
+        # --- A custodian rollover, in flight for a month ---------------
+        # The plan is liquidated (WITHDRAWAL -> Distribution) and the
+        # proceeds land at the new record-keeper a month later
+        # (TRANSFER with positive units -> Transfer In).  Same
+        # account_group on both legs, which is what
+        # detect_rollover_bridges matches on.
+        #
+        # In between, the money is invisible: main.py deliberately skips
+        # USD balances outside Savings, so the account reads ZERO for a
+        # month and the charts show a dip to nothing followed by a full
+        # recovery.  That is not a drawdown — the money never left the
+        # portfolio, it was between custodians — and the bridge exists to
+        # add it back to the effective balance for exactly that window.
+        #
+        # Consumers: TWR, annual returns, XIRR, the JS history chart,
+        # drawdown and monthly P&L.  None of them had an end-to-end path
+        # to this before, and CLAUDE.md names an unbridged distribution
+        # as the first thing to look for when the history chart dips to
+        # $0 around a transfer.
+        #
+        # 32 days apart (inside the 90-day window) and equal amounts
+        # (inside the 5% tolerance), with two semimonthly snapshots
+        # falling inside the gap.
+        {"Activity Date": "2025-04-10", "Activity": "WITHDRAWAL",
+         "Fund": "VANG TARGET 2055", "Money Source": "Before-Tax",
+         "# of Units": "9.6", "Unit Price": "125.00", "Amount": "1200.00"},
+        {"Activity Date": "2025-05-12", "Activity": "TRANSFER",
+         "Fund": "VANG TARGET 2055", "Money Source": "Before-Tax",
+         "# of Units": "9.6", "Unit Price": "125.00", "Amount": "1200.00"},
     ])
 
     # USAA Roth IRA — a single contribution.
