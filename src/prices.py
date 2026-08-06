@@ -67,7 +67,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .config import CACHE_DIR, CRYPTO_SYMBOLS, SYMBOL_MAP
+from .config import CACHE_DIR, CRYPTO_SYMBOLS, SYMBOL_MAP, load_json_cache
 
 # Prices are sharded one JSON file per symbol under PRICES_DIR — only
 # symbols with new data get rewritten on save, git diffs scope to the
@@ -402,11 +402,9 @@ def _load_prices() -> dict[str, dict[str, float]]:
 def _load_meta() -> dict:
     global _meta
     if _meta is None:
-        if PRICE_META_FILE.exists():
-            with open(PRICE_META_FILE, "r", encoding="utf-8") as f:
-                _meta = json.load(f)
-        else:
-            _meta = {"version": 1, "auto_adjusted": _AUTO_ADJUST, "symbols": {}}
+        _meta = load_json_cache(
+            PRICE_META_FILE,
+            {"version": 1, "auto_adjusted": _AUTO_ADJUST, "symbols": {}})
         _meta.setdefault("symbols", {})
     return _meta
 
@@ -443,11 +441,7 @@ def _invalidate_if_policy_changed() -> None:
 def _load_splits() -> dict[str, list[list]]:
     global _splits
     if _splits is None:
-        if SPLITS_CACHE_FILE.exists():
-            with open(SPLITS_CACHE_FILE, "r", encoding="utf-8") as f:
-                _splits = json.load(f)
-        else:
-            _splits = {}
+        _splits = load_json_cache(SPLITS_CACHE_FILE, {})
     return _splits
 
 

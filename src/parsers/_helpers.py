@@ -25,7 +25,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from ..config import CACHE_DIR
+from ..config import CACHE_DIR, load_json_cache
 from ..scanner import detect_broker
 from ..schema import Transaction
 
@@ -60,12 +60,8 @@ def reset_ticker_renames_cache() -> None:
 def _load_ticker_renames() -> dict:
     global _ticker_renames
     if _ticker_renames is None:
-        path = CACHE_DIR / "ticker_renames.json"
-        if path.exists():
-            with open(path, encoding="utf-8") as f:
-                _ticker_renames = json.load(f)
-        else:
-            _ticker_renames = {}
+        _ticker_renames = load_json_cache(
+            CACHE_DIR / "ticker_renames.json", {})
     return _ticker_renames
 
 

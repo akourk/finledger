@@ -21,7 +21,7 @@ fallen-back so no symbol gets looked up twice in one run.
 import json
 from pathlib import Path
 
-from .config import CACHE_DIR, CASH_SYMBOLS
+from .config import CACHE_DIR, CASH_SYMBOLS, load_json_cache
 
 SECTOR_CACHE_FILE = CACHE_DIR / "sector_cache.json"
 
@@ -44,11 +44,7 @@ _yf = None
 def _load_cache() -> dict[str, str]:
     global _cache
     if _cache is None:
-        if SECTOR_CACHE_FILE.exists():
-            with open(SECTOR_CACHE_FILE, "r", encoding="utf-8") as f:
-                _cache = json.load(f)
-        else:
-            _cache = {}
+        _cache = load_json_cache(SECTOR_CACHE_FILE, {})
     return _cache
 
 

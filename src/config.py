@@ -23,6 +23,38 @@ def _resolve(env_var: str, default: Path) -> Path:
     return Path(override).resolve() if override else default
 
 
+def load_json_cache(path, default):
+    """Load a JSON cache file, or return ``default`` when it is absent.
+
+    A CORRUPT file raises with the path in the message.  These caches
+    are documented as hand-editable and safe to delete, so the user is
+    actively invited to edit exactly the files whose failure mode was a
+    bare ``JSONDecodeError: Expecting value: line 1 column 11`` naming
+    neither the file nor the cache it belongs to.
+
+    Deliberately still RAISES rather than degrading to ``default``.  A
+    silently-empty price-coverage sidecar would claim nothing is cached
+    and trigger a full refetch; a silently-empty rename map would mis-key
+    every renamed symbol.  Loud is the right failure here — anonymous is
+    not.  (Individual price SHARDS take the opposite trade and skip with
+    a named note, because one unreadable symbol should not stop a run.)
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    p = _Path(path)
+    if not p.exists():
+        return default
+    try:
+        with open(p, "r", encoding="utf-8") as fh:
+            return _json.load(fh)
+    except _json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{p} is not valid JSON ({exc}).  This cache is hand-editable "
+            f"and safe to delete — remove it and the next run rebuilds it."
+        ) from exc
+
+
 DATA_DIR   = _resolve("FIN_DATA_DIR",   PROJECT_ROOT / "data")
 CACHE_DIR  = _resolve("FIN_CACHE_DIR",  PROJECT_ROOT / "cache")
 EXPORT_DIR = _resolve("FIN_EXPORT_DIR", PROJECT_ROOT / "exports")

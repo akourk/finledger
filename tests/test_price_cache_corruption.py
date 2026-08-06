@@ -122,3 +122,90 @@ class TestUnreadableShards:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(body, encoding="utf-8")
         assert P.get_price("AAA", BAD_DAY) is None
+
+
+class TestCorruptSidecarCachesNameTheFile:
+    """F-027. The four sidecar caches are documented as hand-editable
+    and safe to delete, and corrupt JSON in any of them used to die with
+    a bare `JSONDecodeError: Expecting value: line 1 column 11` naming
+    neither the file nor the cache.
+
+    They still RAISE, deliberately. Degrading to an empty dict would be
+    worse: a silently-empty price-coverage sidecar claims nothing is
+    cached and triggers a full refetch, and a silently-empty rename map
+    mis-keys every renamed symbol. Loud is right — anonymous was not.
+
+    (Individual price SHARDS take the opposite trade and skip with a
+    named note, because one unreadable symbol should not stop a run.)
+    """
+
+    CASES = [
+        ("price_cache_meta.json", '{"symbols": {'),
+        ("splits_cache.json", '{"AAA": [['),
+        ("sector_cache.json", '{"AAA": "Tec'),
+        ("ticker_renames.json", '{"OLD": '),
+    ]
+
+    @pytest.mark.parametrize("filename,body", CASES,
+                             ids=[c[0] for c in CASES])
+    def test_error_names_the_file(self, isolated_workdir, filename, body):
+        from src import prices as P
+        from src import sectors as S
+        from src.parsers import _helpers as H
+
+        P.reset_caches()
+        S.reset_cache()
+        H.reset_ticker_renames_cache()
+        (isolated_workdir / "cache" / filename).write_text(body, encoding="utf-8")
+
+        loader = {
+            "price_cache_meta.json": P._load_meta,
+            "splits_cache.json": P._load_splits,
+            "sector_cache.json": S._load_cache,
+            "ticker_renames.json": H._load_ticker_renames,
+        }[filename]
+
+        with pytest.raises(ValueError) as exc:
+            loader()
+        msg = str(exc.value)
+        assert filename in msg, (
+            f"the error does not name the offending file: {msg!r}"
+        )
+        assert "delete" in msg.lower(), (
+            "the message should say how to recover — these caches rebuild"
+        )
+
+    @pytest.mark.parametrize("filename,body", CASES,
+                             ids=[c[0] for c in CASES])
+    def test_a_valid_file_still_loads(self, isolated_workdir, filename, body):
+        """Near-miss: the guard must not reject well-formed caches."""
+        import json
+
+        from src import prices as P
+        from src import sectors as S
+        from src.parsers import _helpers as H
+
+        P.reset_caches()
+        S.reset_cache()
+        H.reset_ticker_renames_cache()
+        good = {"price_cache_meta.json": {"symbols": {"AAA": {}}},
+                "splits_cache.json": {"AAA": []},
+                "sector_cache.json": {"AAA": "Technology"},
+                "ticker_renames.json": {"Broker": []}}[filename]
+        (isolated_workdir / "cache" / filename).write_text(
+            json.dumps(good), encoding="utf-8")
+
+        loader = {
+            "price_cache_meta.json": P._load_meta,
+            "splits_cache.json": P._load_splits,
+            "sector_cache.json": S._load_cache,
+            "ticker_renames.json": H._load_ticker_renames,
+        }[filename]
+        assert loader() is not None
+
+    def test_a_missing_file_is_not_an_error(self, isolated_workdir):
+        """Absent is normal — a first run has none of these."""
+        from src import sectors as S
+
+        S.reset_cache()
+        assert S._load_cache() == {}
