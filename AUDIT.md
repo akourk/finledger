@@ -750,7 +750,7 @@ expectation. This is the technique with the highest consequence per
 finding in the whole plan, and it found nothing wrong.
 
 **It very nearly found something wrong that wasn't there — F-021.** The
-first run reported three Schwab balance rows breaking by thousands,
+first run reported three Schwab balance rows breaking badly,
 including a retirement account off by a large amount. That was entirely an
 artifact of the audit's own offline harness: `golden.py` stubbed
 `_fetch_splits` to `[]`, which makes
@@ -920,7 +920,8 @@ there today. This is a **latent** fix, not a correction to a displayed
 number.
 
 **An attribution I nearly got wrong.** The Robinhood balance row
-improved from a large negative break to a small positive one during this session, and it was
+swung from a large negative break to a small positive one during
+this session, and it was
 tempting to credit this fix, which landed near it. Reverting the fix and
 re-running showed the figures byte-identical: the improvement was
 entirely the **F-021 harness fix**. Two changes landing close together
