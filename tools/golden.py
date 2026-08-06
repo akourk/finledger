@@ -68,9 +68,23 @@ def _exec_pipeline() -> int:
     from src import sectors as S
 
     P._fetch_range = lambda symbol, start, end: {}
-    P._fetch_splits = lambda symbol: []
     P._fetch_dividends = lambda symbol: []
     P._batch_fetch_ranges = lambda symbols, start, end: {}
+
+    # Splits must echo what's already CACHED, not [].
+    #
+    # Returning [] makes `_invalidate_prices_for_split_change` see the
+    # symbol's real split history disappear, which is a legitimate
+    # invalidation signal — it drops that symbol's cached prices and
+    # coverage.  Offline, nothing can refetch them, so every symbol with
+    # split history silently falls back to its last transaction price and
+    # freezes there.
+    #
+    # Found the hard way: an audit run reported three Schwab balance rows
+    # breaking by thousands, which was entirely this stub.  A/B diffs
+    # survived it (both sides degrade identically) but any ABSOLUTE
+    # figure taken from an offline run was wrong.
+    P._fetch_splits = lambda symbol: list(P._load_splits().get(symbol, []))
 
     def _offline_sector(symbol: str) -> str:
         quick = S._classify_no_fetch(symbol)
