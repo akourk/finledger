@@ -182,6 +182,20 @@ def parse_metadata(data_dir: Path) -> dict:
 
     out = _empty()
 
+    # Values this file REJECTS rather than uses.  metadata.csv is
+    # hand-maintained and every field here feeds a displayed planning or
+    # tax figure, so a rejection has to be visible: a mistyped value is
+    # otherwise indistinguishable from an absent one, and the fallback
+    # is a plausible-looking number.  The sharpest case is a non-numeric
+    # `Annual Expenses`, which becomes 0 and is then multiplied by 25
+    # for the FI target on the Planning tab.
+    #
+    # Note these guards REJECT to the default rather than clamping to
+    # the bound (`Retirement Age = 20` gives 67, not 30).  That is
+    # deliberate — a wildly out-of-range value is more likely a typo
+    # than an intent — and is why saying so out loud matters.
+    rejected: list[str] = []
+
     with open(path, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             typ    = (row.get("Type")   or "").strip()
@@ -191,6 +205,12 @@ def parse_metadata(data_dir: Path) -> dict:
             try:
                 amt = float((row.get("Amount") or "0").replace(",", ""))
             except ValueError:
+                # A BLANK Amount never lands here (`or "0"` parses), so
+                # this only fires on a genuinely malformed value.
+                rejected.append(
+                    f"{typ or '(no Type)'}: Amount "
+                    f"{(row.get('Amount') or '').strip()!r} is not a number "
+                    f"— treated as 0")
                 amt = 0.0
 
             if typ == "Personal Info" and note.lower() == "birthday":
@@ -251,12 +271,20 @@ def parse_metadata(data_dir: Path) -> dict:
                     amt = amt / 100.0
                 if 0.0 <= amt <= 0.20:
                     out["state_tax_rate"] = amt
+                else:
+                    rejected.append(
+                        f"State Tax Rate: {amt:.4g} is outside [0, 0.20] "
+                        f"— using {out['state_tax_rate']:.4g} (no state tax)")
             elif typ == "Retirement Age":
                 # Amount carries the integer age.  Sanity-clamp to
                 # 30..100 so a typo doesn't break the projections.
                 age = int(round(amt))
                 if 30 <= age <= 100:
                     out["retirement_age"] = age
+                else:
+                    rejected.append(
+                        f"Retirement Age: {age} is outside 30..100 "
+                        f"— using {out['retirement_age']}")
             elif typ == "Cost Basis":
                 # User-supplied true cost basis for an off-platform crypto
                 # receive fin can't see (e.g. Coinbase "customer provided"
@@ -369,6 +397,10 @@ def parse_metadata(data_dir: Path) -> dict:
                 n = int(round(amt))
                 if n in (12, 24, 26, 52):
                     out["pay_frequency"] = n
+                else:
+                    rejected.append(
+                        f"Pay Frequency: {n} is not one of 12/24/26/52 "
+                        f"— using {out['pay_frequency']}")
             elif typ == "Balance Anchor":
                 # True statement balance for a hand-maintained CASH
                 # account.  Symbol = account_group, Date = as-of,
@@ -422,6 +454,13 @@ def parse_metadata(data_dir: Path) -> dict:
     # a date.
     out["balance_anchors"].sort(key=lambda x: x["date"])
     out["savings_apr"].sort(key=lambda x: x["date"])
+    if rejected:
+        print(f"  !! WARNING: {len(rejected)} value(s) in {path.name} were "
+              f"rejected or coerced — the figures they drive are using "
+              f"defaults, not what you wrote:")
+        for msg in rejected:
+            print(f"       {msg}")
+
     return out
 
 

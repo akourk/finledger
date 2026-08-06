@@ -106,6 +106,83 @@ class TestMalformedRowsDoNotCrash:
         assert m["account_groups"] == {}
 
 
+class TestRejectionsAreReported:
+    """F-018's fix. The rejections above are the right behaviour; being
+    QUIET about them was not.
+
+    A mistyped value is otherwise indistinguishable from an absent one,
+    and the fallback is always a plausible-looking number — so nothing
+    on the dashboard looks wrong. The warning is stdout only and changes
+    no figure.
+    """
+
+    def test_non_numeric_amount_is_reported(self, isolated_workdir, capsys):
+        _meta(isolated_workdir, "Annual Expenses,2024-01-01,50k,,")
+        out = capsys.readouterr().out
+        assert "WARNING" in out
+        assert "Annual Expenses" in out and "50k" in out, (
+            "the message must name the row, or the user cannot find it in a "
+            "60-row file"
+        )
+
+    @pytest.mark.parametrize("row,needle", [
+        ("Retirement Age,,20,,", "Retirement Age"),
+        ("Retirement Age,,200,,", "Retirement Age"),
+        ("Pay Frequency,,13,,", "Pay Frequency"),
+        ("State Tax Rate,,25,,", "State Tax Rate"),
+    ])
+    def test_out_of_range_values_are_reported(self, isolated_workdir, capsys,
+                                              row, needle):
+        _meta(isolated_workdir, row)
+        out = capsys.readouterr().out
+        assert "WARNING" in out and needle in out
+
+    def test_the_message_states_what_was_used_instead(self, isolated_workdir,
+                                                      capsys):
+        """Naming the fallback is the difference between a warning and a
+        scold — the user needs to know which number the dashboard is
+        actually showing."""
+        _meta(isolated_workdir, "Retirement Age,,20,,")
+        assert "67" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("row", [
+        "Retirement Age,,62,,",
+        "Retirement Age,,30,,",          # lower bound is VALID
+        "Retirement Age,,100,,",         # upper bound is VALID
+        "Pay Frequency,,26,,",
+        "Pay Frequency,,52,,",
+        "State Tax Rate,,0.093,,",
+        "State Tax Rate,,9.3,,",         # percent form is VALID
+        "State Tax Rate,,0,,",
+        "Annual Expenses,2024-01-01,50000,,",
+        "Account Group,,,Schwab Roth IRA,Roth IRA",   # blank Amount
+        "Salary History,2024-01-01,120000,,",
+    ])
+    def test_valid_rows_are_silent(self, isolated_workdir, capsys, row):
+        """The half that matters most. Blank Amounts are extremely common
+        (every Account Group / Account Type row has one) and must never
+        warn — a warning on every run is one the user stops reading."""
+        _meta(isolated_workdir, row)
+        assert "WARNING" not in capsys.readouterr().out
+
+    def test_a_wholly_valid_file_is_silent(self, isolated_workdir, capsys):
+        _meta(isolated_workdir,
+              "Personal Info,,,,Birthday=1990-06-15",
+              "Account Group,,,Schwab Roth IRA,Roth IRA",
+              "Account Type,,,Roth IRA,Retirement",
+              "Retirement Age,,62,,",
+              "Pay Frequency,,26,,",
+              "State Tax Rate,,0.093,,",
+              "Annual Expenses,2024-01-01,50000,,")
+        assert "WARNING" not in capsys.readouterr().out
+
+    def test_missing_file_is_silent(self, isolated_workdir, capsys):
+        from src.metadata import parse_metadata
+
+        parse_metadata(isolated_workdir / "data")
+        assert "WARNING" not in capsys.readouterr().out
+
+
 class TestSilentCoercion:
     """F-018. These pin behaviour that is arguably WRONG, so that a
     future fix has to change a test deliberately rather than by
