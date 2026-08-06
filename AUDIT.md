@@ -10,7 +10,7 @@ files, bug class, and severity only. The working ledger is
 | **Started** | 2026-08-05 |
 | **Segments complete** | 1, 2, 4, Segment 5 item 1 (pulled forward); Segment 3 substantially |
 | **Findings** | 7 open / 11 fixed |
-| **Suite** | 478 → 636 tests, green · `src/` coverage 84.9% → 88.0% |
+| **Suite** | 478 → 636 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
