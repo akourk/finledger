@@ -8,9 +8,9 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1 of 9, Segment 5 item 1 (pulled forward), Segment 2 |
-| **Findings** | 6 open / 8 fixed |
-| **Suite** | 478 → 570 tests, green · `src/` coverage 84.9% → 88.0% |
+| **Segments complete** | 1, 2, Segment 5 item 1 (pulled forward); Segment 3 substantially |
+| **Findings** | 6 open / 10 fixed |
+| **Suite** | 478 → 585 tests, green · `src/` coverage 84.9% → 88.0% |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -22,6 +22,8 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-016 | medium | *(fixed)* Two documented `prices.py` behaviours had no test — the failure-backoff cap and `covered_end` monotonicity |
+| F-015 | medium | *(fixed)* The Split basis rule is implemented twice, verbatim, and neither copy was executed by any test |
 | F-014 | low-med | *(fixed)* `build_holdings`' cost-basis source gate was unprotected while the same rule at two sibling sites was |
 | F-012 | medium | *(fixed)* `txn_external_cash_flow`'s carve-outs are pinned only in the firing direction, contrary to the documented claim — all three `and` guards could be deleted with the suite green |
 | F-013 | medium | *(fixed)* `_consume_lots_capped`'s descending-index lot removal was unprotected while its identical sibling in `_consume_lots` was |
@@ -310,6 +312,82 @@ a pipeline state that does not exist. It now runs on the export, where
 `account_group` is populated. This is the plan's third vacuous-safety-net
 shape inverted — a fixture that *withholds* the intermediate the code
 needs, manufacturing failures instead of hiding them.
+
+### Segment 3 — Prices, history, and walker parity (2026-08-05, in progress)
+
+**Walker parity, done properly.** Segment 1 established that the two lot
+walkers dispatch the same eight effects in the same order. That is a
+branch-structure check and it is not enough — the plan asks for a
+rule-by-rule comparison. Method: extract, per effect branch, the set of
+helper functions each walker calls (walking only the branch *body*, not
+the trailing `elif` chain — the first attempt walked the whole `If` node
+and every branch showed the union, which reads as universal disagreement
+and means nothing).
+
+Seven of eight effects reduce to the same helper set once two naming
+differences are normalised: `_push_txn_lots` vs `_push_txn` for the push
+helper, and basis's `_consume_from_key` / `_method_for` wrappers vs
+history's `_consume` closure over the same consume functions. The
+`basis_override` handling also differs only in placement — basis applies
+`_ov(...)` per branch, history applies it inside its push helper.
+
+**One effect did not reduce: `split`.** See F-015. basis calls the shared
+`_apply_split_to_lots`; history re-implements the same arithmetic inline.
+Comparing them line by line, they **agree** — same ratio, same scaling,
+same guard inverted — so this is not a live defect. But it is the one
+rule with two copies, and *neither copy was executed by any test*:
+`_apply_split_to_lots` was on the never-executed list, and
+`audit/sample-coverage.md` records that no sample symbol splits after
+the sample's start date. `history_holdings_basis_parity` pins the two
+walkers together only over ledgers the tests actually run, and none
+contained a `Split`.
+
+`tests/test_split_walker_parity.py` closes it: unit tests for the shared
+helper (basis preserved, acquired dates untouched, degenerate inputs a
+no-op) plus one ledger with a Split run through **both** walkers,
+asserting they agree on quantity and basis.
+
+The improvement — have history call the shared helper instead of
+duplicating it — is logged for Segment 9 rather than taken, per the
+scope rule.
+
+**Mutation run: 152 curated mutations across `prices.py`, `history.py`,
+`cash_bridge.py` and `broker_lots.py` — 53 caught, 99 survived.** The
+survivor rate is much higher than Segment 2's and the reason is
+structural rather than alarming: a large share of these modules is the
+network fetch path, which the test suite stubs dead by design, so those
+mutants survive for lack of *input*. `audit/sample-coverage.md` warned
+this would happen and it is the distinction that keeps the count
+honest — they are not logged as missing assertions.
+
+Of the genuinely reachable survivors, the two worth acting on became
+**F-016**: the failure-backoff cap and `covered_end` monotonicity, both
+behaviours CLAUDE.md documents in detail and neither with a test. The
+backoff one has real teeth — inverting the 30-day cap into a floor means
+a symbol's first transient failure waits a month, during which the
+dashboard prices it from stale marks and only an `info`-level alert
+mentions it.
+
+**A pattern that recurred three times and is worth naming.** Twice in
+this segment (and once in Segment 1's tooling) a test I wrote
+*re-implemented* the logic it was meant to protect, and passed for that
+reason:
+
+- `tools/mutate.py`'s restore check compared strings that had
+  round-tripped through the same lossy translation it was detecting
+  (F-006).
+- The split-parity test's first draft asserted `quantity == 20` and
+  `basis == 1000` — both invariant under a split by construction, since
+  total basis is preserved and quantity comes from the *balance* walker.
+  Neutering history's split branch survived it. Only adding a later
+  SELL, where relieved basis depends on the rescaled per-share figure,
+  made it discriminate.
+- The `covered_end` test's first draft computed `max(ce, end_s)` itself
+  instead of calling `_record_success`.
+
+All three were caught only by running the mutation, never by reading the
+test. That is the concrete argument for the prime directive: **a test
+that has not been seen to fail is not yet evidence of anything.**
 
 ### Verified clean (no finding)
 
