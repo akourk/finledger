@@ -25,8 +25,9 @@ from .basis import (
 from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
                           reserved_future_demand, take_wrap_demand,
                           wrap_next_dates, wrap_symbol_families)
-from .config import ACCOUNT_TYPES, CASH_SYMBOLS, contract_multiplier
-from .prices import get_price, option_intrinsic, split_factor_since
+from .config import ACCOUNT_TYPES, CASH_SYMBOLS
+from .prices import get_price
+from .valuation import QTY_EPSILON, mark, mark_is_dust
 
 # Sourced from src/actions.py — single source of truth for the action
 # vocabulary, so any new canonical action lands here automatically.
@@ -556,40 +557,24 @@ def compute_history(txns: list[dict],
         total_basis = 0.0
         priced = 0.0
         attempted = 0.0
+        px_on_date: dict[str, float | None] = {}
         for (acct, sym), qty in balances.items():
-            # Resolve price + today-basis qty for valuation
-            if sym in CASH_SYMBOLS:
-                price = 1.0
-                adj_qty = qty
-            else:
-                cache_px = get_price(sym, sample_date)
-                if cache_px is not None:
-                    # yfinance's price is in today's share basis (split-adjusted).
-                    # Scale the as-of-date balance to match.  For assets with no
-                    # splits after sample_date the factor is 1.0 (the common case).
-                    price = cache_px
-                    adj_qty = qty * split_factor_since(sym, sample_date)
-                else:
-                    # No cache price — fall back to the most recent txn price
-                    # at or before sample_date.  Txn prices are as-of-trade,
-                    # so no split adjustment is needed on the balance side.
-                    price = last_txn_price.get(sym)
-                    adj_qty = qty
-                    # Open option contracts: the last-traded premium goes
-                    # stale between trades — floor at intrinsic value from
-                    # the underlying's cached price on this date.
-                    iv = option_intrinsic(sym, sample_date)
-                    if iv is not None and iv > (price or 0):
-                        price = iv
+            # Price + today-basis quantity, resolved by the shared
+            # kernel (see src/valuation.py for the ladder).
+            m = mark(sym, qty, sample_date, last_txn_price,
+                     price_cache=px_on_date)
+            price, adj_qty = m.price, m.qty
 
-            # Dust filter — mirrors main.py _is_dust so history positions
-            # exactly match the holdings table (no phantom sub-penny rows).
-            if price and price > 0:
-                if abs(qty * price) < 0.01:
-                    continue
-            else:
-                if qty < 0 or abs(qty) < 1e-6:
-                    continue
+            # Dust filter.  This used to be an inline copy whose comment
+            # claimed it mirrored main.py's `_is_dust` "so history
+            # positions exactly match the holdings table" -- and it did
+            # not: `is_dust` also drops small NEGATIVE fractional priced
+            # positions (unpaired corporate-action surrenders) and the
+            # copy kept them, so those showed in the as-of-date holdings
+            # view and not in the current one.  Now literally the same
+            # function.
+            if mark_is_dust(m, qty):
+                continue
 
             # Cost basis for this position at this date
             if sym in CASH_SYMBOLS:
@@ -598,10 +583,10 @@ def compute_history(txns: list[dict],
                 pos_basis = sum(lot["qty"] * lot["basis_per_share"]
                                 for lot in lots.get((acct, sym), []))
 
-            # Option contracts value at premium × 100 (quantity is in
-            # contracts, price per-share — see config.contract_multiplier).
-            val = (adj_qty * price * contract_multiplier(sym)
-                   if (price is not None and price > 0) else None)
+            # Already scaled by the option contract multiplier — quantity
+            # is in contracts and price is the per-share premium (see
+            # config.contract_multiplier).
+            val = m.value
 
             attempted += abs(qty)
             if val is not None:
@@ -767,35 +752,19 @@ def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
                 bridge_idx[_bgroup] += 1
 
         total = 0.0
+        # Scoped to THIS date: one symbol is typically held in several
+        # account groups, and the memo collapses those to one lookup.
+        # It must not outlive the day or a stale price leaks forward.
         px_today: dict[str, float | None] = {}
         for (acct, sym), qty in balances.items():
-            if abs(qty) < 1e-12:
+            if abs(qty) < QTY_EPSILON:
                 continue
-            if sym in CASH_SYMBOLS:
-                price = 1.0
-                adj_qty = qty
-            else:
-                if sym in px_today:
-                    cache_px = px_today[sym]
-                else:
-                    cache_px = get_price(sym, d_iso)
-                    px_today[sym] = cache_px
-                if cache_px is not None:
-                    price = cache_px
-                    adj_qty = qty * split_factor_since(sym, d_iso)
-                else:
-                    price = last_txn_price.get(sym)
-                    adj_qty = qty
-                    # Same intrinsic floor as the snapshot walker.
-                    iv = option_intrinsic(sym, d_iso)
-                    if iv is not None and iv > (price or 0):
-                        price = iv
-            if price and price > 0:
-                if abs(qty * price) < 0.01:
-                    continue
-                total += adj_qty * price * contract_multiplier(sym)
+            m = mark(sym, qty, d_iso, last_txn_price, price_cache=px_today)
             # Unpriceable positions contribute nothing — same as the
             # snapshot walker's priced_pct gap.
+            if m.value is None or mark_is_dust(m, qty):
+                continue
+            total += m.value
 
         for _bbal in bridge_bal.values():
             # Same clamp as cash_bridge.balance_at — negatives are

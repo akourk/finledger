@@ -140,6 +140,14 @@ bridges, cash_series)`; it applies history's valuation rules (USD-skipping,
 split adjustment, option-intrinsic floor, reconstructed broker cash) and
 agrees with `history`'s `by_account_group` within float noise.
 
+That agreement is now structural: `_value_at_date` and both history
+walkers price through **`src/valuation.py::mark`**, which owns the
+cash → cache → txn-price-floored-at-intrinsic ladder plus `is_dust`.
+If you need a position's value anywhere else, call `mark` — the rule
+existing in one place is what makes "agrees with history" a fact rather
+than a hope. Pass `restate_qty=False` only when your quantity already
+came from TODAY's positions.
+
 **Do not pick the nearest snapshot.** History is sampled semimonthly (15th /
 EOM / today), so a snapshot on an arbitrary D usually does not exist — and
 nearest-by-*absolute*-distance can resolve **forward in time**, letting

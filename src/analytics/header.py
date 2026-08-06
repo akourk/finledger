@@ -21,10 +21,8 @@ from ._shared import (
 from ..actions import BASIS_EFFECTS  # noqa: F401
 from ..basis import _basis_dollars  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
-from ..prices import (
-    any_provisional, get_price, oldest_last_fetch, option_intrinsic,
-    split_factor_since,
-)
+from ..prices import any_provisional, oldest_last_fetch
+from ..valuation import mark
 
 
 def compute_header_summary(txns: list[dict], history: list[dict],
@@ -72,43 +70,25 @@ def compute_header_summary(txns: list[dict], history: list[dict],
 
     yest_total = 0.0
     unpriced = 0.0
+    px_yest: dict[str, float | None] = {}
     for pos in today_positions:
         sym = pos.get("symbol", "")
         qty = float(pos.get("quantity", 0) or 0)
-        if sym in CASH_SYMBOLS:
-            yest_total += qty
-            continue
-        px = get_price(sym, yest)
-        if px is not None:
-            # No split_factor_since here: `qty` comes from TODAY's
-            # snapshot positions (already today-basis) and cached prices
-            # are today-basis too, so qty × px is already correct.
-            # Applying the factor (as history.py does for *as-of-date*
-            # balances) would double-adjust across a fresh split.
-            yest_total += qty * px
+        # restate_qty=False: `qty` comes from TODAY's snapshot positions
+        # (already today-basis) and cached prices are today-basis too, so
+        # the product is already correct.  Restating (as history.py does
+        # for *as-of-date* balances) would double-adjust across a fresh
+        # split.
+        m = mark(sym, qty, yest, last_txn_price, restate_qty=False,
+                 price_cache=px_yest)
+        if m.value is not None:
+            yest_total += m.value
         else:
-            fb = last_txn_price.get(sym)
-            # Apply the same option intrinsic floor history.py uses for
-            # TODAY's value.  Without it the two sides of the 1-day
-            # delta are priced by different rules: today's snapshot
-            # marks a deep-ITM contract at intrinsic while this branch
-            # pins yesterday at the purchase premium, so the whole
-            # intrinsic-over-cost gain reprints as a phantom "today's
-            # move" every single day the contract is open.
-            iv = option_intrinsic(sym, yest)
-            if iv is not None and iv > (fb or 0):
-                fb = iv
-            if fb is not None:
-                # Contracts × per-share premium need the ×100 multiplier
-                # (matches the snapshot valuation in history.py).
-                from ..config import contract_multiplier
-                yest_total += qty * fb * contract_multiplier(sym)
-            else:
-                # Couldn't price yesterday — fall back to today's value
-                # so this position contributes 0 to the 1d delta rather
-                # than distorting the denominator.
-                unpriced += float(pos.get("value", 0) or 0)
-                yest_total += float(pos.get("value", 0) or 0)
+            # Couldn't price yesterday — fall back to today's value so
+            # this position contributes 0 to the 1d delta rather than
+            # distorting the denominator.
+            unpriced += float(pos.get("value", 0) or 0)
+            yest_total += float(pos.get("value", 0) or 0)
 
     change_1d = today_total - yest_total
     pct_1d = (change_1d / yest_total) if yest_total > 0 else None

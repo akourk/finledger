@@ -25,7 +25,8 @@ def compute_daily_pnl(history: list[dict],
         return []
 
     from ..config import CASH_SYMBOLS
-    from ..prices import get_price, get_series, option_intrinsic
+    from ..prices import get_series
+    from ..valuation import QTY_EPSILON, mark
 
     # Use today's positions as the constant share count, reprice at
     # recent dates.  Same trick as compute_header_summary; means we
@@ -75,37 +76,25 @@ def compute_daily_pnl(history: list[dict],
             continue   # no symbol actually closed on this date
         total = 0.0
         had_any_price = False
+        # Scoped to this date -- `today_positions` carries one row per
+        # (account_group, symbol), so a symbol held in several accounts
+        # would otherwise be looked up once per account, every day.
+        px_on_date: dict[str, float | None] = {}
         for pos in today_positions:
             sym = pos.get("symbol", "")
             qty = float(pos.get("quantity", 0) or 0)
-            if abs(qty) < 1e-9:
+            if abs(qty) < QTY_EPSILON:
                 continue
-            if sym in CASH_SYMBOLS:
-                total += qty
-                had_any_price = True
+            # restate_qty=False: `qty` is TODAY's position (already
+            # today-basis) and cached prices are today-basis, so the
+            # product is correct as-is.  Restating is only for as-of-date
+            # balances (see history.py) — here it would double-adjust
+            # every date before a recent split.
+            m = mark(sym, qty, d_iso, last_txn_price, restate_qty=False,
+                     price_cache=px_on_date)
+            if m.value is None:
                 continue
-            px = get_price(sym, d_iso)
-            if px is None:
-                fb = last_txn_price.get(sym)
-                # Same option intrinsic floor as the history walkers —
-                # otherwise an open contract sits flat at its purchase
-                # premium across the whole window while the snapshot
-                # series marks it at intrinsic, and the difference
-                # surfaces as a phantom one-day jump.
-                iv = option_intrinsic(sym, d_iso)
-                if iv is not None and iv > (fb or 0):
-                    fb = iv
-                if fb is None:
-                    continue
-                from ..config import contract_multiplier
-                total += qty * fb * contract_multiplier(sym)
-            else:
-                # No split_factor_since: `qty` is TODAY's position (already
-                # today-basis) and cached prices are today-basis, so qty × px
-                # is correct as-is.  The factor is only for as-of-date
-                # balances (see history.py) — applying it here would
-                # double-adjust every date before a recent split.
-                total += qty * px
+            total += m.value
             had_any_price = True
         if not had_any_price:
             continue

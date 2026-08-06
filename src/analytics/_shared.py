@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 
 from ..basis import _basis_dollars, BASIS_EFFECTS  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
-from ..prices import get_price, option_intrinsic, split_factor_since
+from ..valuation import QTY_EPSILON, mark, mark_is_dust
 from ..cash_bridge import (
     all_series as cash_bridge_series,
     balance_at as cash_balance_at,
@@ -763,11 +763,16 @@ def _value_at_date(txns_sorted: list[dict], target: str,
     """Portfolio value at close-of-day `target` for the given filter.
 
     Walks a pre-sorted txn list to build running balances per
-    ``(account_group, symbol)``, prices each non-zero position from the
-    daily price cache (with fallback to the most recent txn price for
-    symbols the cache can't resolve â€” multi-word fund names, delisted
-    tickers), and sums.  Applies the same USD-skipping and split
-    adjustment policies as ``history.compute_history``.
+    ``(account_group, symbol)``, then values each position through
+    ``valuation.mark`` and sums.
+
+    "Applies the same valuation rules as ``history.compute_history``" is
+    now a fact rather than a claim: both call the same kernel.  It used
+    to be neither -- this function dropped the option contract
+    multiplier on the cache-priced branch and had no dust filter at all,
+    so a position history discards could still move a TWR period
+    boundary.  The USD-skipping rule is still applied here, during the
+    walk, because it depends on the account rather than the symbol.
     """
     balances: dict[tuple[str, str], float] = defaultdict(float)
     last_txn_price: dict[str, float] = {}
@@ -806,30 +811,20 @@ def _value_at_date(txns_sorted: list[dict], target: str,
             balances[(acct, sym)] += qty
 
     total = 0.0
+    # Valuation goes through the shared kernel (src/valuation.py), which
+    # is what this function's docstring has always claimed: the same
+    # rules as `history.compute_history`.  Two of them were not actually
+    # the same before — the option contract multiplier was dropped on
+    # the cache-priced branch, and there was no dust filter at all, so a
+    # position history discards still moved a TWR period boundary.
+    px_on_date: dict[str, float | None] = {}
     for (acct, sym), qty in balances.items():
-        if abs(qty) < 1e-9:
+        if abs(qty) < QTY_EPSILON:
             continue
-        if sym in CASH_SYMBOLS:
-            total += qty
+        m = mark(sym, qty, target, last_txn_price, price_cache=px_on_date)
+        if m.value is None or mark_is_dust(m, qty):
             continue
-        px = get_price(sym, target)
-        if px is not None:
-            total += qty * split_factor_since(sym, target) * px
-        else:
-            fb = last_txn_price.get(sym)
-            # Same intrinsic floor as the history walkers: yfinance
-            # can't quote option contracts, so the fallback is the last
-            # traded premium.  Without the floor a deep-ITM contract
-            # stays pinned at its purchase price here while the
-            # snapshot walker marks it at intrinsic — the mismatch
-            # shows up as phantom return in whichever direction the
-            # two paths are compared.
-            iv = option_intrinsic(sym, target)
-            if iv is not None and iv > (fb or 0):
-                fb = iv
-            if fb is not None:
-                from ..config import contract_multiplier
-                total += qty * fb * contract_multiplier(sym)
+        total += m.value
     total += bridge_adjustment(target, filter_groups, bridges)
     # Reconstructed broker cash (see cash_bridge.py).  Distinct from
     # `bridges` above, which is the rollover-bridge adjustment.

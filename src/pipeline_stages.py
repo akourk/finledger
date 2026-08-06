@@ -30,6 +30,7 @@ from typing import Iterable
 
 from .actions import NEUTRAL_ACTIONS, SUBTRACT_ACTIONS
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS, contract_multiplier
+from .valuation import is_dust as _is_dust
 
 
 # ---------------------------------------------------------------------------
@@ -88,34 +89,17 @@ def restore_ingest_order(txns: list[dict]) -> list[dict]:
 # Stage 1: dust filter
 # ---------------------------------------------------------------------------
 
-def is_dust(qty: float, price: float) -> bool:
-    """Whether a (qty, price) pair represents a position too small to display.
-
-    Two regimes:
-
-    1. **With a price**: dust if the dollar value rounds below a penny,
-       OR (defensively) if it's a small NEGATIVE fractional position
-       under $200 — those are corporate-action artifacts (SPR surrender
-       without a paired receive, CIL on a ticker we don't have full
-       history for).  A real held position is always positive and
-       ≥1 share for stocks the cache can price.
-
-    2. **Without a price**: dust if quantity is below 1e-6, OR if it's
-       negative — broker CSVs leave residuals like 7.7e-9 from
-       precision mismatches between paired Wrap/Sell rows, and orphan
-       option-exercise rows can push contract counts negative
-       indefinitely.
-
-    Pulled out of ``main()`` so the full pipeline and ``--refresh-prices``
-    apply the same filter.
-    """
-    if price > 0:
-        if qty < 0 and abs(qty) < 1.0 and abs(qty * price) < 200:
-            return True
-        return abs(qty * price) < 0.01
-    if qty < 0:
-        return True
-    return abs(qty) < 1e-6
+# Re-exported from ``valuation``, which is where it lives now.
+#
+# It was pulled out of ``main()`` to this module so the full pipeline and
+# ``--refresh-prices`` applied the same filter.  That was the right move
+# and too narrow: the history walkers need the same rule, and their
+# inline copy had already drifted from this one (it kept the small
+# negative fractional positions this drops, while its comment claimed
+# the two matched exactly).  ``valuation`` is the module both sides can
+# reach.  The name stays here because ``main.py`` imports it from this
+# module.
+is_dust = _is_dust
 
 
 # ---------------------------------------------------------------------------

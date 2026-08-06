@@ -1268,6 +1268,92 @@ Never-executed functions 12 → 11; the remainder are network I/O
 (`_fetch_splits`, `_fetch_dividends`, `_batch_fetch_ranges`,
 `_fetch_from_yfinance`) plus two trivial accessors.
 
+### Improvement #1 done: the shared valuation kernel (2026-08-06)
+
+The structural fix this audit kept pointing at. Five sites answered
+"what is this position worth on this date" independently —
+`history`'s snapshot walker, `history.compute_daily_totals`,
+`_shared._value_at_date`, `analytics/daily_pnl`, `analytics/header` —
+and the response to that had been an invariant in CLAUDE.md plus a
+`fin-lot-walker-sync` skill to enforce it by hand. A process fix for a
+structural problem. `src/valuation.py` now owns the ladder: **cash →
+cache price → transaction price floored at option intrinsic →
+unpriceable**, plus `is_dust` (moved from `pipeline_stages`) and the
+near-zero cutoff.
+
+**Reading them side by side is what found the drift.** None of it was
+visible from any single file:
+
+| divergence | status |
+|---|---|
+| three sites dropped the ×100 option multiplier on the cache-priced branch while applying it on the transaction branch | **latent** — `_classify_no_fetch` skips multi-word symbols, so the cache branch cannot currently fire for a contract |
+| `history`'s inline dust rule documented as mirroring `is_dust`; it kept the small negative fractional positions `is_dust` drops | **latent** — measured 0 affected rows across 8,635 position rows in the current real export |
+| `_value_at_date` had no dust filter at all, so a position history discards still moved a TWR period boundary | latent, same measurement |
+| near-zero cutoff was `1e-12` / `1e-9` / absent depending on the site | immaterial |
+
+**Every one is latent, and that is the finding.** Not one of these was
+producing a wrong number today. Three of them were one plausible change
+away from producing a badly wrong one — the multiplier gap is a 100×
+error the moment an option symbol acquires a cache price, and nothing in
+`valuation`'s callers guarantees `_classify_no_fetch` stays shut. The
+value of the consolidation is not the bugs it fixed but the bugs it
+makes unreachable.
+
+The refactor is behaviour-preserving by measurement, not by assertion:
+golden identical at every one of the five rewiring steps, 909 tests
+green, and the dust change checked against the real export rather than
+only the sample (which structurally lacks the shape). Net −61 lines
+across the five sites.
+
+**The consolidation exposed a gap it did not create.** Mutating the
+kernel is caught 9/9. Mutating the `restate_qty` flag at three separate
+call sites **survived all 909 tests** — flipping a site between
+as-of-date and today-basis quantities changed nothing any test noticed,
+and that flag is the difference between a correct historical value and
+one off by the entire split ratio.
+
+The reason is the one this audit had just finished writing down: split
+history comes from yfinance's cache, never from transaction data, so no
+CSV fixture and no snapshot bundle can carry one. Every test ran with
+`split_factor_since` returning 1.0 for every symbol, which makes both
+bases produce identical numbers. The sample even has a `Stock Split`
+transaction row — it reaches the *lot* rescale and says nothing about
+this.
+
+That is the fourth instance of one shape, and the table from the
+corporate-actions entry extends cleanly:
+
+| trap | needs |
+|---|---|
+| a rule that redistributes without changing a total | a later **sale** |
+| a config row with only one candidate | two **lots** |
+| a flag with only one input value | two **rows** |
+| a quantity-basis flag with no splits in the fixture | a **split** |
+
+`tests/test_restate_qty_wiring.py` seeds the splits cache directly and
+drives all five sites; 5/5 mutations now caught. Worth noting the
+refactor did not *cause* this — the flag's predecessors (inline
+`split_factor_since` calls at three sites, absent at two) were equally
+unpinned. Consolidating just made it a single named parameter that a
+mutation could aim at.
+
+**What replaced the static guard.**
+`test_option_floor_parity.py` asserted that any module mentioning
+`last_txn_price` also mentions `option_intrinsic` — a source-text check,
+which is what you reach for when a rule *cannot* live in one place. It
+can now, so the guard accepts routing through `valuation` as the
+discharge. That delegation needed its own guard: if the floor were ever
+removed from the kernel, the static check would go quiet for every site
+at once, which is the exact inverse of its purpose. So there is now a
+companion test that the kernel really does floor. **A test that can be
+satisfied by delegation needs a test that the delegate still does the
+work.**
+
+Remaining under this heading: `basis._walk` and history's inline *lot*
+walker are still two implementations. That is a different problem — lot
+state, not valuation — and the `history_holdings_basis_parity` check
+plus the `fin-lot-walker-sync` skill still carry it.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
@@ -1290,6 +1376,14 @@ txn-price fallback and option-intrinsic floor — so the rule exists once.
 `history.py` already imports `_consume_lots` / `_pair_wraps` /
 `_rescale_lots` from `basis.py`, so the precedent and the appetite both
 exist.
+
+**DONE 2026-08-06** for the *valuation* half — `src/valuation.py` now
+owns the price ladder, the dust filter and the near-zero cutoff, and all
+five sites (the three named above plus `analytics/daily_pnl` and
+`analytics/header`, which this entry missed) call it. Write-up below.
+The *lot-walker* half — `basis._walk` versus history's inline copy —
+is still two implementations and still carried by the
+`history_holdings_basis_parity` check.
 
 **2. The sample portfolio and the e2e fixture are two parallel synthetic
 portfolios.** Collapsing them would remove a duplicate fixture and was

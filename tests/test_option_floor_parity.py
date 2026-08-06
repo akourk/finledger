@@ -25,11 +25,19 @@ import pytest
 
 def test_every_txn_price_fallback_applies_the_floor():
     """Static guard: any site that falls back to a last-traded premium
-    must also consult ``option_intrinsic``.
+    must apply the floor — either by calling ``option_intrinsic`` itself
+    or by pricing through ``src.valuation``, which does it for them.
 
     Cheap to keep honest and it catches the failure mode that actually
-    happened — a NEW valuation path copied from an existing one that
+    happened: a NEW valuation path copied from an existing one that
     predates the floor.
+
+    The ``valuation`` discharge is the preferred one now. This guard was
+    written when the floor was replicated at five sites, and a static
+    check over source text is what you reach for when a rule *cannot* be
+    expressed in one place. It can be, and now is — so the check has
+    become a backstop against a sixth site being written from scratch,
+    rather than the primary defence.
     """
     import src.history
     import src.analytics.header
@@ -41,10 +49,29 @@ def test_every_txn_price_fallback_applies_the_floor():
         src_text = inspect.getsource(mod)
         if "last_txn_price" not in src_text:
             continue
-        assert "option_intrinsic" in src_text, (
+        assert ("option_intrinsic" in src_text
+                or "valuation" in src_text), (
             f"{mod.__name__} falls back to last_txn_price without applying "
-            "the option intrinsic floor — see tests/test_option_floor_parity.py"
+            "the option intrinsic floor — price through src.valuation, or "
+            "see tests/test_option_floor_parity.py"
         )
+
+
+def test_the_kernel_is_what_applies_the_floor():
+    """Not-vacuous guard for the check above.
+
+    ``src.valuation`` discharges the assertion for any module that
+    imports it, so that discharge is only sound while the kernel really
+    does floor. If the floor were ever removed from the kernel, the
+    static check would go quiet for every site at once — the exact
+    opposite of what it is for.
+    """
+    import src.valuation
+
+    assert "option_intrinsic" in inspect.getsource(src.valuation), (
+        "the valuation kernel no longer applies the intrinsic floor, so "
+        "every module that delegates to it is now unguarded"
+    )
 
 
 def test_intrinsic_floor_only_raises(stub_prices):

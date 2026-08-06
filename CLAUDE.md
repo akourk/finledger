@@ -404,8 +404,11 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     that snapshot date).  The per-snapshot `positions` list captures
     FIFO state at every sample date and is what lets the dashboard
     show arbitrary-date holdings / unrealized P&L without a JS replay
-    of the basis walker.  Dust filter on `positions` mirrors main.py's
-    `_is_dust` so counts match the current holdings table exactly.
+    of the basis walker.  Dust filter on `positions` is literally
+    `valuation.is_dust` — the same function the holdings table uses, so
+    counts match exactly.  It used to be an inline copy that CLAIMED to
+    mirror it and did not (the copy kept small negative fractional
+    priced positions).
 
     **INVARIANT — the snapshot lot walker mirrors `basis._walk`.**
     history.py keeps its own inline lot walker (it needs lot state at
@@ -625,17 +628,23 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   trades.  Time value is still not modeled; the floor only ever raises
   the price.
 
-  **EVERY txn-price fallback must apply the floor**: both pipeline
-  paths' `last_prices`, both history walkers, `analytics/header.py`
-  (1-day change), `analytics/daily_pnl.py`, and
-  `analytics/_shared.py::_value_at_date` (TWR boundaries).  The last
-  three were missing it, so the snapshot walker marked a deep-ITM
-  contract at intrinsic while they pinned it at the purchase premium —
-  and the ENTIRE intrinsic-over-cost gap reprinted as a phantom
-  "today's move" every single day the contract stayed open, vanishing
-  the day it closed.  Pinned by `tests/test_option_floor_parity.py`,
-  which includes a static guard: any module mentioning
-  `last_txn_price` must also mention `option_intrinsic`.  Underlying tickers
+  **EVERY txn-price fallback must apply the floor** — which is now
+  structural rather than a rule to remember: the five valuation sites
+  (both history walkers, `analytics/header.py`, `analytics/daily_pnl.py`,
+  `analytics/_shared.py::_value_at_date`) all price through
+  **`src/valuation.py`**, which owns the floor.  Three of them were
+  missing it before, so the snapshot walker marked a deep-ITM contract
+  at intrinsic while they pinned it at the purchase premium — and the
+  ENTIRE intrinsic-over-cost gap reprinted as a phantom "today's move"
+  every single day the contract stayed open, vanishing the day it
+  closed.  (The pipeline paths' `last_prices` still apply it directly
+  via `prices.apply_option_intrinsic_floor` — they build a
+  symbol→price map rather than valuing positions.)  Pinned by
+  `tests/test_option_floor_parity.py`, whose static guard requires any
+  module mentioning `last_txn_price` to mention `option_intrinsic` OR
+  route through `valuation` — with a companion test that the kernel
+  really does floor, so the delegation can't quietly discharge the
+  guard for everyone at once.  Underlying tickers
   of option symbols join the price-fetch set
   (`prices.option_underlyings`) so the floor works even for
   underlyings never held directly.
@@ -967,7 +976,7 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   on both sides → intra-`Coinbase` group → no-op.  Unpaired legs
   (e.g. legitimate bank-to-Pro deposits) are left as `Deposit`.
 - **Orphan OEXP/OEXCS** (the BTO happened before the CSV window began)
-  can push a contract balance negative. `_is_dust` in main.py treats
+  can push a contract balance negative. `valuation.is_dust` treats
   `qty < 0 with no price` as dust so those phantom shorts don't appear
   in the holdings table. The ledger still records the subtract; we
   just don't display it.
@@ -1013,15 +1022,47 @@ threads through every consumer.
 
 ## Architecture (post-refactor)
 
+- **`src/valuation.py`** — **the single answer to "what is this
+  position worth on this date".**  Five sites used to answer it
+  independently (both history walkers, `analytics/header.py`,
+  `analytics/daily_pnl.py`, `analytics/_shared.py::_value_at_date`);
+  they agreed on the shape and drifted on details.  `mark(symbol, qty,
+  on_date, last_txn_price, *, restate_qty, price_cache)` returns a
+  `Mark(price, qty, value, source)` after walking the ladder: **cash →
+  cache price → transaction price floored at option intrinsic →
+  unpriceable**.  Also owns `is_dust` (moved from `pipeline_stages`,
+  which re-exports it) and `QTY_EPSILON`.
+
+  - `restate_qty=True` for a balance walked to a PAST date — yfinance's
+    `Close` is always split-adjusted, so the as-of-date share count is
+    scaled forward by `split_factor_since` to match.  `False` when the
+    quantity already came from today's positions (`daily_pnl`,
+    `header`), where restating would double-adjust across a fresh split.
+  - `price_cache` is an optional memo **scoped to one date** — a symbol
+    held in several account groups is otherwise looked up once per
+    group.  Never let it outlive the date.
+  - `value is None` means *unpriceable*, not *worthless*.  Callers
+    report it through `priced_pct` rather than substituting a number.
+
+  Drift it removed: three sites dropped the ×100 option multiplier on
+  the cache-priced branch (latent — `_classify_no_fetch` means the
+  branch can't currently fire for a contract); history's inline dust
+  rule was documented as mirroring `is_dust` and did not (it kept the
+  small negative fractional positions `is_dust` drops); the near-zero
+  cutoff was `1e-12` / `1e-9` / absent depending on the site.
+  **If you need a position's value anywhere, call `mark` — do not write
+  a sixth ladder.**
+
 - **`src/pipeline_stages.py`** — composable pure-function stages
   shared by `main.main()` and `main._refresh_prices_only()`.  Each
   stage takes explicit inputs and returns explicit outputs.  Was
   pulled out after duplication-induced bugs (USD-non-Savings skip,
   cash-fold step) shipped because the refresh path manually
   re-implemented main()'s inline logic and silently disagreed.
-  Stages: `is_dust`, `walk_balances`, `compute_position_endings`,
+  Stages: `walk_balances`, `compute_position_endings`,
   `compute_cash_principal`, `build_holdings`,
-  `fold_cash_into_basis_methods`, `build_basis_methods_totals`.
+  `fold_cash_into_basis_methods`, `build_basis_methods_totals`, plus
+  `is_dust` re-exported from `valuation`.
 
 - **Invariant assertions** — `analytics.data_health.check_invariants`
   promotes high-severity data-health checks (snapshot rollup, lot-
