@@ -1077,6 +1077,37 @@ rule: **a fixture can carry the CONFIG for a behaviour and still not
 exercise it.** `Lot Method` needs two candidate lots the way a split
 needs a later sale — necessary, not sufficient.
 
+### Follow-up sweep: is the rest of the parity harness vacuous too? (2026-08-06)
+
+`PLAN-audit.md` warned that if one test in
+`test_pipeline_path_parity.py` was vacuous, others might be. F-028
+proved one was, so the prediction was worth testing rather than
+repeating.
+
+Method: mutate each behaviour the refresh path mirrors from `main()` and
+see which divergences the parity harness actually catches.
+
+| refresh-path behaviour | verdict |
+|---|---|
+| per-account `Lot Method` | **was the gap** — now caught (F-028) |
+| `ACCOUNT_TYPES` override | caught, and the test carries its own not-vacuous guard |
+| cash principal | caught |
+| `ACCOUNT_GROUPS` override | survives — but **equivalent**, see below |
+
+**No further vacuity found.** The one survivor has a principled
+explanation rather than being a hole: `_refresh_prices_only` loads the
+previously-exported `transactions.json`, so every transaction already
+carries its `account_group` from `main()`'s run and re-applying the
+mapping cannot change the grouping. `ACCOUNT_TYPES` differs because
+`account_type` is *recomputed* at holdings-build time
+(`ACCOUNT_TYPES.get(acct, "Taxable")`) rather than read off the
+transaction — which is exactly why the documented "refresh labels every
+account Taxable" bug was possible and this one isn't.
+
+So the harness is in better shape than F-028 alone suggested. It had one
+inert fixture row, now load-bearing; the rest of what it claims to pin,
+it pins.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
