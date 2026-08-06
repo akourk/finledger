@@ -497,3 +497,168 @@ class TestAnnotationReconstructionIsApproximate:
         rebuilt = derive_basis_by_key_from_txns(txns)
         key = ("Broker", "DUST")
         assert abs(walked[key] - rebuilt[key]) <= 0.05
+
+
+class TestAverageCostFullLiquidation:
+    """The Average column of the Lot Method Comparison table, and the
+    dead code that used to guard it.
+
+    `basis._remove_from_avg` existed from the repo's first import and was
+    **never called** — the live average-cost path is inlined in
+    `_consume_from_key`. That is bug-class #1 (duplicated logic that
+    drifts) in its most durable form: a second implementation nobody runs,
+    sitting next to the one everybody does, waiting to be "fixed" instead
+    of the real one.
+
+    The dead copy carried one thing the live copy lacked: a
+    full-liquidation snap. Subtracting `take * (total_basis / total_qty)`
+    from `total_basis` is not bit-identical to zero, so exiting a position
+    completely left basis behind on a position with no shares — about 10%
+    of full exits, up to ~1e-10. Far too small to move a displayed figure,
+    but it is a standing "basis without shares" state, and a later
+    re-entry averages against it.
+
+    Deleted the dead copy; moved the snap into the live one. These tests
+    pin the invariant so the snap cannot quietly come back out.
+    """
+
+    def _txn(self, action, qty, amount, date, symbol="AVG"):
+        return {"date": date, "account": "Broker", "account_group": "Broker",
+                "account_type": "Taxable", "symbol": symbol, "action": action,
+                "quantity": qty, "price": (amount / qty) if qty else 0.0,
+                "fees": 0.0, "amount": amount, "description": "",
+                "source": "t.csv"}
+
+    # Quantities and prices chosen to make basis/qty inexact in binary.
+    FILLS = [("Buy", 3.0, 100.0, "2024-01-05"),
+             ("Buy", 7.0, 233.33, "2024-02-05"),
+             ("Buy", 1.7, 51.11, "2024-03-05")]
+
+    def _walk(self, isolated_workdir, sell_qty):
+        from src.basis import compute_basis_all_methods
+
+        txns = [self._txn(*f) for f in self.FILLS]
+        txns.append(self._txn("Sell", sell_qty, sell_qty * 40.0, "2024-06-05"))
+        return compute_basis_all_methods(txns)
+
+    def test_a_full_exit_under_avg_relieves_the_entire_basis(self,
+                                                             isolated_workdir):
+        """Selling everything must realize against the whole pool — no
+        fraction of a cent may survive the exit."""
+        total_qty = sum(f[1] for f in self.FILLS)
+        total_cost = sum(f[2] for f in self.FILLS)
+        res = self._walk(isolated_workdir, total_qty)
+
+        avg = res["avg"]
+        proceeds = total_qty * 40.0
+        assert avg["realized_total"] == pytest.approx(proceeds - total_cost,
+                                                      abs=1e-9), (
+            "the average-cost exit did not relieve the full pool basis"
+        )
+
+    def test_a_full_exit_leaves_no_basis_behind(self, isolated_workdir):
+        """The invariant the snap exists for: zero shares, zero basis.
+
+        Asserted EXACTLY rather than approximately — the whole point is
+        that the residual is gone, and `approx` would accept the bug this
+        replaced.
+        """
+        from src.basis import compute_basis_all_methods, state_to_holdings
+
+        total_qty = sum(f[1] for f in self.FILLS)
+        txns = [self._txn(*f) for f in self.FILLS]
+        txns.append(self._txn("Sell", total_qty, total_qty * 40.0, "2024-06-05"))
+        compute_basis_all_methods(txns)
+
+        from src.basis import _walk
+        state = _walk(txns, "avg", annotate=False)
+        leftover = state["lots"].get(("Broker", "AVG"))
+        assert leftover is not None
+        qty_left, basis_left = leftover
+        assert qty_left == 0.0, f"shares left after a full exit: {qty_left!r}"
+        assert basis_left == 0.0, (
+            f"basis left on a position with no shares: {basis_left!r} — the "
+            "full-liquidation snap is gone and the subtraction is back"
+        )
+
+    def test_the_fixture_really_does_produce_an_inexact_quotient(self):
+        """Not-vacuous guard.
+
+        With a pool whose basis divides evenly by its quantity, the
+        subtraction lands on exactly zero on its own and the snap proves
+        nothing. Confirm these fills do not.
+        """
+        total_qty = sum(f[1] for f in self.FILLS)
+        total_cost = sum(f[2] for f in self.FILLS)
+        naive_residual = total_cost - total_qty * (total_cost / total_qty)
+        assert naive_residual != 0.0, (
+            "this fixture divides evenly, so the snap is indistinguishable "
+            "from plain subtraction — pick quantities that do not"
+        )
+
+    def test_a_partial_exit_still_subtracts(self, isolated_workdir):
+        """Near-miss: the snap must fire only on a FULL exit. Applied to
+        a partial sale it would wipe the remaining position's basis."""
+        from src.basis import _walk
+
+        total_qty = sum(f[1] for f in self.FILLS)
+        total_cost = sum(f[2] for f in self.FILLS)
+        txns = [self._txn(*f) for f in self.FILLS]
+        txns.append(self._txn("Sell", 2.0, 80.0, "2024-06-05"))
+        state = _walk(txns, "avg", annotate=False)
+
+        qty_left, basis_left = state["lots"][("Broker", "AVG")]
+        assert qty_left == pytest.approx(total_qty - 2.0)
+        assert basis_left == pytest.approx(
+            total_cost * (total_qty - 2.0) / total_qty, abs=1e-9), (
+            "a partial sale did not leave proportional basis behind"
+        )
+
+    def test_an_exit_within_tolerance_also_zeroes_the_quantity(self,
+                                                               isolated_workdir):
+        """The reason the snap sets quantity explicitly instead of
+        subtracting.
+
+        The branch fires when the sale is within 1e-12 of the pool, not
+        only when it equals it — which is the realistic shape, since a
+        pool assembled from many fills rarely sums to a round number.
+        Inside that window `total_qty - take` is a small positive number,
+        so subtracting would leave a fractional share behind on a
+        position the user has fully exited, and dust-filtering it is a
+        display fix for a state that should not exist.
+        """
+        from src.basis import _walk
+
+        txns = [self._txn("Buy", 10.0, 400.0, "2024-01-05")]
+        # Inside the tolerance, but NOT equal — subtraction gives ~5e-13.
+        txns.append(self._txn("Sell", 10.0 - 5e-13, 500.0, "2024-06-05"))
+        state = _walk(txns, "avg", annotate=False)
+
+        qty_left, basis_left = state["lots"][("Broker", "AVG")]
+        assert qty_left == 0.0, (
+            f"a within-tolerance full exit left {qty_left!r} shares — the "
+            "snap subtracted instead of zeroing"
+        )
+        assert basis_left == 0.0
+
+    def test_re_entry_after_a_full_exit_starts_clean(self, isolated_workdir):
+        """Why the residual was worth removing rather than tolerating.
+
+        Buy, sell out completely, buy again. The new position's basis
+        must be the new purchase alone — any carried residual averages
+        into it.
+        """
+        from src.basis import _walk
+
+        total_qty = sum(f[1] for f in self.FILLS)
+        txns = [self._txn(*f) for f in self.FILLS]
+        txns.append(self._txn("Sell", total_qty, total_qty * 40.0, "2024-06-05"))
+        txns.append(self._txn("Buy", 4.0, 200.0, "2024-09-05"))
+        state = _walk(txns, "avg", annotate=False)
+
+        qty_left, basis_left = state["lots"][("Broker", "AVG")]
+        assert qty_left == pytest.approx(4.0)
+        assert basis_left == 200.0, (
+            f"re-entry basis is {basis_left!r}, not the 200.0 just paid — "
+            "the previous exit left basis in the pool"
+        )

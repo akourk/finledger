@@ -561,24 +561,6 @@ def _add_to_avg(state, key, qty, basis_dollars):
     t[1] += basis_dollars
 
 
-def _remove_from_avg(state, key, qty_to_remove):
-    t = state["lots"][key]
-    total_qty, total_basis = t
-    if total_qty <= 0 or qty_to_remove <= 0:
-        return 0.0
-    take = min(total_qty, qty_to_remove)
-    if take >= total_qty - 1e-12:
-        basis_removed = total_basis
-        t[0] = 0.0
-        t[1] = 0.0
-    else:
-        per_share = total_basis / total_qty
-        basis_removed = take * per_share
-        t[0] = total_qty - take
-        t[1] = total_basis - basis_removed
-    return basis_removed
-
-
 def _apply_split_to_lots(lots: list[dict], old_total_qty: float, added_qty: float):
     """Scale lot quantities by the split ratio; preserve total basis."""
     if old_total_qty <= 0 or added_qty <= 0:
@@ -609,9 +591,21 @@ def _consume_from_key(state: dict, method: str, key: tuple, qty: float,
         if take <= 0 or total_qty <= 0:
             return 0.0, []
         per_share = total_basis / total_qty
-        basis_removed = take * per_share
-        t_state[0] = total_qty - take
-        t_state[1] = total_basis - basis_removed
+        if take >= total_qty - 1e-12:
+            # Full liquidation: snap to exactly zero rather than
+            # subtracting.  `take * (total_basis / total_qty)` is not
+            # bit-identical to `total_basis`, so the arithmetic below
+            # leaves a residual basis on a position with zero quantity
+            # (~10% of full exits, up to ~1e-10).  Sub-nanocent in any
+            # single figure, but it is a standing "basis without shares"
+            # state that a later re-entry averages against.
+            basis_removed = total_basis
+            t_state[0] = 0.0
+            t_state[1] = 0.0
+        else:
+            basis_removed = take * per_share
+            t_state[0] = total_qty - take
+            t_state[1] = total_basis - basis_removed
         return basis_removed, [{"date": "", "qty": take, "basis_per_share": per_share}]
     return _consume_lots_reserving(state["lots"][key], qty, method, reserved)
 

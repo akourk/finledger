@@ -1225,6 +1225,49 @@ framing was steering toward a fixture that would have exercised an
 already-covered branch while leaving the real gap open. Worth asking of
 the remaining backlog: is this a missing input, or a missing test?
 
+### F-002's remainder: the dead average-cost helper (2026-08-06)
+
+`basis._remove_from_avg` was the last non-network entry on the
+never-executed list. It is not merely uncovered — it is **never called**,
+and `git log -S` shows it was born that way in the repo's initial
+import. The live average-cost path is inlined in `_consume_from_key`.
+
+That is bug-class #1 in its most durable form: a second implementation
+nobody runs, sitting beside the one everybody does. Nothing was wrong
+*today*; the hazard is that the next person to fix average-cost relief
+has a 50/50 chance of fixing the copy that does not execute, and the
+tests would agree with them.
+
+**The dead copy was also the better one.** It carried a full-liquidation
+snap the live path lacks. Subtracting `take * (total_basis / total_qty)`
+from `total_basis` is not bit-identical to zero, so exiting a position
+completely leaves basis behind on a position with no shares — measured
+at **~10% of full exits, worst case ~6e-11** over 200k randomized fills.
+
+Nowhere near a displayed figure, so this is a hygiene fix rather than a
+defect. It is worth doing anyway because it is a *standing* wrong state
+rather than a transient rounding artifact: a re-entry into the same
+position averages the residual into the new basis, and "zero shares,
+zero basis" is a cleaner invariant than "zero shares, approximately
+zero basis" — the latter cannot be asserted exactly, so nothing can pin
+it.
+
+Dead copy deleted, snap moved into the live path, invariant now tested
+exactly rather than approximately. 4/4 mutations caught.
+
+**One survivor was worth chasing rather than waving off as equivalent.**
+Replacing `t_state[0] = 0.0` with `t_state[0] = total_qty - take` looks
+equivalent, because on a full exit `take == total_qty`. But the branch
+fires on `take >= total_qty - 1e-12`, so `take` can be *within*
+tolerance without equalling — which is the realistic case, since a pool
+assembled from many fills rarely sums to a round number. Inside that
+window the subtraction leaves a fractional share on a fully-exited
+position. Reachable, so it got a test rather than a shrug.
+
+Never-executed functions 12 → 11; the remainder are network I/O
+(`_fetch_splits`, `_fetch_dividends`, `_batch_fetch_ranges`,
+`_fetch_from_yfinance`) plus two trivial accessors.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
