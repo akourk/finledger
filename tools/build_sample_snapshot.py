@@ -661,6 +661,32 @@ def _build(tmp: Path) -> None:
         # here, in the user's own metadata.csv, so they stay
         # personal/local.
         ["Account Group", "", "", "Robinhood",                   "Robinhood"],
+        # --- Balance anchor for a hand-maintained CASH account ----------
+        # Apple Card Daily Cash lands in Apple Savings in small irregular
+        # amounts that never reach the hand-kept CSV, so fin's balance
+        # drifts LOW forever.  The anchor states the real statement
+        # balance; balance_anchor.py walks fin's own USD balance to that
+        # date and synthesizes ONE `Cash Back` row for the difference.
+        #
+        # Deliberately restricted to Savings accounts: for cash a delta
+        # is exact arithmetic and unambiguously means missing
+        # transactions, whereas on a securities account it could equally
+        # be a pricing error, a missing split or a basis bug — and
+        # plugging that would paper over exactly what this codebase
+        # exists to surface.  A NEGATIVE delta is refused for the same
+        # reason: fin holding MORE than the statement is a bug to
+        # investigate, not a gap to fill.
+        #
+        # fin's own walk reaches ~7,056.67 by this date; the statement
+        # says 7,150.00, so ~93 of Daily Cash is booked.
+        ["Balance Anchor", _iso(_recent(10)), "7150.00", "Apple Savings",
+         "Apple Card Daily Cash"],
+        # CLAUDE.md: pair an anchor with a Reconcile Balance at the SAME
+        # date so the panel stays honest — the anchor makes fin agree, and
+        # the reconcile row is what proves it still does.
+        ["Reconcile Balance", _iso(_recent(10)), "7150.00", "Apple Savings",
+         "Apple Savings app total"],
+
         # Lot-relief method for one account.  Coinbase really does
         # default to HIFO, and this overrides fin's FIFO default for
         # Coinbase ONLY — the other accounts stay FIFO, which is what
