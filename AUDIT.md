@@ -8,9 +8,9 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1, 2, 4, 6, Segment 5 item 1 (pulled forward); Segment 3 substantially |
-| **Findings** | 7 open / 12 fixed |
-| **Suite** | 478 → 655 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
+| **Segments complete** | 1, 2, 4, 6, Segment 5 item 1; Segment 3 substantially; Segment 7 begun |
+| **Findings** | 7 open / 13 fixed |
+| **Suite** | 478 → 686 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -22,6 +22,7 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-020 | medium | *(fixed)* The JS tax-table fallback carried superseded 2025 standard deductions — OBBBA updated `tax.py` but not the JS literal |
 | F-019 | low | The Performance tab's anchor cards invite an inference that doesn't hold — Total Return is not Realized + Unrealized |
 | F-018 | medium | *(silence fixed)* `metadata.csv` silently degraded invalid input; three documented clamps reject-to-default instead of clamping |
 | F-017 | **high** | *(tier 1 fixed)* A date-format change silently drops every row in every parser, with no output — 7 of 8 sample broker files went to zero rows in silence |
@@ -588,6 +589,53 @@ JS layer for the cost of one script, with no new dependency and nothing
 added to the repo. The two degenerate-input builders live in the
 session scratchpad; promoting them to `tools/` would make this
 repeatable.
+
+### Segment 7 — Tax and reconciliation (2026-08-06, begun)
+
+**Item 4 — ST/LT classification: correct, now pinned.** `_is_long_term`
+decides whether a realized gain is taxed at ordinary income rates or
+long-term capital gains rates, and it had **no test** — `test_lots.py`
+pinned the `_lt_eligible_date` helper for the leap day, but nothing
+exercised the function consuming it, and nothing exercised its
+day-count fallback at all.
+
+The rule matches IRS Topic 409: counting begins the day *after*
+acquisition, so one year completes on the anniversary and "more than one
+year" starts the day after. A sale exactly on the anniversary is
+short-term.
+
+The test's centrepiece is the disagreement the calendar path exists to
+fix: acquired 2024-02-28, sold 2025-02-28 spans **366** days because
+2024 is a leap year, so a naive `days > 365` test calls it long-term —
+but it lands exactly on the anniversary and is short-term. Getting that
+backwards taxes a gain at LTCG rates when the IRS says ordinary. All
+three claims (the 366-day span, what the naive test would say, what fin
+says) are asserted so they cannot drift apart. Bypassing the calendar
+path entirely is caught, which proves the case discriminates rather than
+agreeing with both methods.
+
+**Item 2 — tax tables: F-020, a real drift.** The Python tables are
+complete and internally consistent (2024–2026, all four filing statuses,
+no gaps). But comparing them against the *JS fallback literals* found
+the 2025 standard deduction wrong for all four statuses: OBBBA (July
+2025) retroactively raised it, `tax.py` was updated with a source
+comment, and the JS literal was not.
+
+The fallback only runs when `DATA.tax_tables` is missing — which is
+exactly when you are relying on it. An emergency backup silently holding
+superseded law is not a backup. Federal brackets, LTCG brackets and the
+§1256 underlyings were compared too and all agreed.
+
+Fixed, and `tests/test_tax_table_js_parity.py` now compares the two for
+every year they both define. The JS is still allowed to lag by whole
+years on purpose — a new tax year is a one-file change in `tax.py` per
+the `fin-tax-year-update` skill — so only disagreement about a *shared*
+year fails. The test carries a not-vacuous guard: if the parsing regexes
+stop matching, or no year is shared, the comparison would pass by
+comparing nothing, and both are asserted.
+
+Verifying tables against the IRS source documents themselves (the rest
+of item 2) still wants doing, as do items 1, 3 and 5.
 
 ### Verified clean (no finding)
 
