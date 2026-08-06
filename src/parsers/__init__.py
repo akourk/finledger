@@ -19,6 +19,7 @@ from ._helpers import (
     apply_ticker_rename,
     _load_ticker_renames,
     _num, _date_mdy, _date_ymd, _date_dmy, _date_iso, _txn,
+    take_date_failures,
 )
 from .apple_savings import parse_apple_savings
 from .coinbase import parse_coinbase, parse_coinbase_pro
@@ -106,8 +107,16 @@ def parse_all_files(data_dir: Path) -> list[Transaction]:
         parser_fn = _PARSERS.get(broker)
         if parser_fn is None:
             continue
+        take_date_failures()          # discard any tally from earlier work
         txns = parser_fn(csv_file)
+        dropped = take_date_failures()
         print(f"  {csv_file.name}: {len(txns)} transactions ({broker})")
+        if dropped:
+            print(f"  !! WARNING: {csv_file.name} — {dropped} row(s) were "
+                  f"DROPPED because their date could not be parsed. Those "
+                  f"transactions are missing from the portfolio. If the "
+                  f"count is large, the '{broker}' export format has "
+                  f"probably changed.")
         if not txns and _has_unread_data(csv_file):
             print(f"  !! WARNING: {csv_file.name} was detected as "
                   f"'{broker}' and has data rows, but parsed to ZERO "

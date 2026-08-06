@@ -108,30 +108,88 @@ def _num(val: str) -> float:
         return 0.0
 
 
+# ---------------------------------------------------------------------------
+# Dropped-row accounting
+# ---------------------------------------------------------------------------
+# Every parser drops a row whose date won't parse, with a bare
+# ``continue``.  That is right for one odd row but silent for all of
+# them, so a broker changing its date format empties a file without a
+# word (see F-017 / AUDIT.md).
+#
+# Each parser calls exactly ONE ``_date_*`` helper, once per row, inside
+# that try/except, and none of them tries several formats speculatively.
+# So a raise from these helpers IS a dropped row, exactly — which makes
+# this the one place that can count drops without touching any parser's
+# logic.  The helpers re-raise unchanged; only the tally is new.
+_date_parse_failures = 0
+
+
+def _count_date_failure(val) -> None:
+    """Tally a row about to be dropped for an unparseable date.
+
+    A BLANK value is not counted.  Trailing blank lines and spacer rows
+    are structural, not a format problem, and counting them would put a
+    permanent false warning on files that legitimately contain them.
+    """
+    global _date_parse_failures
+    if (val or "").strip():
+        _date_parse_failures += 1
+
+
+def take_date_failures() -> int:
+    """Return the number of rows dropped since the last call, and reset.
+
+    Read once per file by ``parse_all_files``; the reset is what keeps
+    one file's drops from being attributed to the next.
+    """
+    global _date_parse_failures
+    n = _date_parse_failures
+    _date_parse_failures = 0
+    return n
+
+
 def _date_mdy(val: str) -> str:
     """Parse M/D/YYYY → YYYY-MM-DD, handling 'as of' suffix."""
+    raw = val
     val = val.strip().strip('"')
     if " as of " in val:
         val = val.split(" as of ")[0]
-    return datetime.strptime(val, "%m/%d/%Y").strftime("%Y-%m-%d")
+    try:
+        return datetime.strptime(val, "%m/%d/%Y").strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        _count_date_failure(raw)
+        raise
 
 
 def _date_ymd(val: str) -> str:
     """Parse YYYY-MM-DD → YYYY-MM-DD (validate)."""
-    return datetime.strptime(val.strip(), "%Y-%m-%d").strftime("%Y-%m-%d")
+    try:
+        return datetime.strptime(val.strip(), "%Y-%m-%d").strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        _count_date_failure(val)
+        raise
 
 
 def _date_dmy(val: str) -> str:
     """Parse D/M/YYYY → YYYY-MM-DD."""
-    return datetime.strptime(val.strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+    try:
+        return datetime.strptime(val.strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        _count_date_failure(val)
+        raise
 
 
 def _date_iso(val: str) -> str:
     """Parse ISO datetime like '2026-01-19 17:02:44 UTC' → YYYY-MM-DD."""
+    raw = val
     val = val.strip().replace(" UTC", "").replace("Z", "")
     if "T" in val:
         val = val.split(".")[0]
-    return datetime.fromisoformat(val).strftime("%Y-%m-%d")
+    try:
+        return datetime.fromisoformat(val).strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        _count_date_failure(raw)
+        raise
 
 
 def _txn(

@@ -108,6 +108,136 @@ class TestZeroRowWarning:
         assert "WARNING" not in capsys.readouterr().out
 
 
+def _with_bad_dates(n_bad: int) -> str:
+    """ROBINHOOD_CSV with the first `n_bad` rows' dates mangled."""
+    head, *rows = ROBINHOOD_CSV.splitlines()
+    for i in range(n_bad):
+        rows[i] = _DATE_TOKEN.sub("31.12.2099", rows[i])
+    return head + "\n" + "\n".join(rows) + "\n"
+
+
+class TestPartialDropWarning:
+    """Tier 2 of F-017 — the case tier 1 structurally cannot see.
+
+    A file that loses SOME rows still parses to a non-zero count, so the
+    zero-row warning stays quiet and nothing anywhere notices. Those
+    transactions are simply absent from the portfolio.
+
+    Counted at the one seam that makes it possible without touching any
+    parser: every parser calls exactly one `_date_*` helper per row
+    inside the try/except that drops it, and none tries several formats
+    speculatively — so a raise from those helpers is exactly a dropped
+    row.
+    """
+
+    def test_warns_with_the_exact_count(self, isolated_workdir, capsys):
+        _write(isolated_workdir, "robinhood-1.csv", _with_bad_dates(3))
+
+        txns = parse_all_files(isolated_workdir / "data")
+        out = capsys.readouterr().out
+
+        assert len(txns) == 9, "the good rows must still parse"
+        assert "3 row(s) were DROPPED" in out, (
+            "a partial drop went unreported — those transactions are "
+            "missing from the portfolio with no count anomaly to notice"
+        )
+
+    def test_silent_when_every_row_parses(self, isolated_workdir, capsys):
+        _write(isolated_workdir, "robinhood-1.csv", ROBINHOOD_CSV)
+        parse_all_files(isolated_workdir / "data")
+        assert "DROPPED" not in capsys.readouterr().out
+
+    def test_blank_dates_are_not_counted_as_drops(self, isolated_workdir,
+                                                  capsys):
+        """Near-miss. Trailing blank lines and spacer rows are structural,
+        not a format problem. Counting them would put a permanent false
+        warning on every file that contains one."""
+        head, *rows = ROBINHOOD_CSV.splitlines()
+        rows[0] = "," * 8            # a wholly blank data row
+        _write(isolated_workdir, "robinhood-1.csv",
+               head + "\n" + "\n".join(rows) + "\n")
+
+        parse_all_files(isolated_workdir / "data")
+        assert "DROPPED" not in capsys.readouterr().out
+
+    def test_the_tally_does_not_leak_between_files(self, isolated_workdir,
+                                                   capsys):
+        """The counter is module-global, so a missing reset would blame
+        the next file for the previous one's drops."""
+        _write(isolated_workdir, "robinhood-1.csv", _with_bad_dates(2))
+        _write(isolated_workdir, "robinhood-2.csv", ROBINHOOD_CSV)
+
+        parse_all_files(isolated_workdir / "data")
+        out = capsys.readouterr().out
+
+        assert out.count("DROPPED") == 1, (
+            "the clean file was blamed for the broken file's drops"
+        )
+        assert "robinhood-1.csv — 2 row(s)" in out
+        assert "robinhood-2.csv — " not in out
+
+    def test_a_stale_tally_is_not_blamed_on_the_first_file(
+        self, isolated_workdir, capsys
+    ):
+        """The counter is module-global and parsers are importable
+        individually (the package docstring advertises that for unit
+        testing). So a tally can already be standing when
+        `parse_all_files` starts, and without the pre-parse reset it
+        would be attributed to whichever file happens to sort first.
+        """
+        # Both imported HERE, in the test body, on purpose.
+        # `isolated_workdir` purges `src.*` from sys.modules, but this
+        # file's module-level `parse_all_files` was bound at collection
+        # time and still closes over the pre-purge `_helpers`. Mixing the
+        # two gives you two different module-global counters and the
+        # assertion below silently tests nothing.
+        from src.parsers import parse_all_files as _parse_all
+        from src.parsers._helpers import _date_ymd
+
+        for _ in range(4):                       # build a stale tally
+            with pytest.raises(ValueError):
+                _date_ymd("31.12.2099")
+
+        _write(isolated_workdir, "robinhood-1.csv", ROBINHOOD_CSV)
+        txns = _parse_all(isolated_workdir / "data")
+        out = capsys.readouterr().out
+
+        assert len(txns) == 12
+        assert "DROPPED" not in out, (
+            "a clean file was blamed for drops that happened before "
+            "parse_all_files was even called"
+        )
+
+    def test_take_date_failures_returns_and_resets(self, isolated_workdir):
+        from src.parsers._helpers import _date_ymd, take_date_failures
+
+        take_date_failures()
+        for _ in range(3):
+            with pytest.raises(ValueError):
+                _date_ymd("31.12.2099")
+
+        assert take_date_failures() == 3
+        assert take_date_failures() == 0, "the tally must reset when read"
+
+    def test_a_blank_value_raises_but_is_not_tallied(self, isolated_workdir):
+        from src.parsers._helpers import _date_ymd, take_date_failures
+
+        take_date_failures()
+        with pytest.raises(ValueError):
+            _date_ymd("   ")
+        assert take_date_failures() == 0
+
+    def test_helpers_still_raise_unchanged(self, isolated_workdir):
+        """The counting wrapper must not swallow or convert the error —
+        every parser's `except` depends on the original exception."""
+        from src.parsers._helpers import (_date_dmy, _date_iso, _date_mdy,
+                                          _date_ymd)
+
+        for fn in (_date_mdy, _date_ymd, _date_dmy, _date_iso):
+            with pytest.raises(ValueError):
+                fn("definitely-not-a-date")
+
+
 class TestHasUnreadData:
     """The heuristic on its own, including its deliberate blind spot."""
 
