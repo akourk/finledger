@@ -8,9 +8,9 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1, 2, 4, 6, 7, Segment 5 item 1; Segment 3 substantially |
-| **Findings** | 9 open / 15 fixed |
-| **Suite** | 478 → 767 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
+| **Segments complete** | 1, 2, 4, 5, 6, 7; Segment 3 substantially |
+| **Findings** | 9 open / 16 fixed |
+| **Suite** | 478 → 772 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -22,6 +22,7 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-025 | medium | *(fixed)* `_value_at_date`'s txn-price fallback was filter-scoped while `history`'s is global — a documented parity that was false |
 | F-024 | low | Drawdown values are fractions despite a `_pct` field name — a 100× trap for any future consumer |
 | F-023 | low | `_solve_xirr([])` returns −99.99% instead of None (unreachable from the real caller, which guards it) |
 | F-022 | low | Two documented limitations in wash-sale detection: same-day repurchases excluded, and no substantially-identical judgement |
@@ -786,6 +787,42 @@ before checking; investigating it turned a plausible-sounding false
 claim into an accurate note about which of three overlapping guards
 actually does the work. Same lesson as the F-021 near-miss: **a
 surviving mutant is a question, not a verdict.**
+
+### Segment 5 item 4 — `_shared.py` (2026-08-06)
+
+1,067 lines used by everything, so a defect here is portfolio-wide. 79
+curated mutations: 32 caught, 47 survived. Most survivors are
+zero-boundary flips (`> 0` → `>= 0`) that are near-equivalent, but three
+regions had real weight — the USD-skipping rule, the account-filter
+scoping, and the option-intrinsic floor comparison, all inside
+`_value_at_date`.
+
+**F-025 — a documented parity that was false.** CLAUDE.md says
+`_value_at_date` "applies the same valuation rules as
+`history.compute_history` … and was verified against every snapshot date
+to agree." Nothing tested that, and on one path it did not hold.
+
+Both walkers fall back to the most recent transaction price for symbols
+the cache cannot resolve. `history` builds that map **globally**;
+`_value_at_date` recorded it *after* the account filter, so under a
+filter it never saw other accounts' transactions and could use a staler
+price for the same symbol. A security's market price is a property of
+the symbol, not of whichever account holds it — so `history` was right.
+Fixed by recording the price before the filter.
+
+**Scope measured, not assumed.** The golden export is identical, and the
+user's real reconciliation is byte-identical with and without the fix
+(31 rows, 22 ok / 9 explained / 0 warn / 0 off) — every symbol in the
+reconciled accounts is cache-priced, so the fallback never engages
+there today. This is a **latent** fix, not a correction to a displayed
+number.
+
+**An attribution I nearly got wrong.** The Robinhood balance row
+improved from a large negative break to a small positive one during this session, and it was
+tempting to credit this fix, which landed near it. Reverting the fix and
+re-running showed the figures byte-identical: the improvement was
+entirely the **F-021 harness fix**. Two changes landing close together
+is exactly when a causal claim needs testing rather than asserting.
 
 ### Verified clean (no finding)
 
