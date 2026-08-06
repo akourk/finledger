@@ -8,13 +8,107 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1, 2, 4, 5, 6, 7; Segment 3 substantially |
+| **Segments complete** | 1–7 and 9; Segment 8 partly absorbed (see Improvements) |
 | **Findings** | 9 open / 16 fixed |
-| **Suite** | 478 → 772 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
+| **Suite** | 478 → 777 tests, green · `src/` coverage 84.9% → **88.6%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
 yet. **low** = latent, cosmetic, or a robustness gap.
+
+---
+
+## Executive summary
+
+**fin's logic is in good shape. Its risk was concentrated almost
+entirely in undefended correctness.**
+
+Across seven segments, 26 findings, and roughly 300 targeted mutations,
+exactly **two live defects** were found in the application:
+
+- **F-017** (high) — a broker changing its date format silently drops
+  every row of that file. 7 of 8 sample broker files went to zero rows
+  with no exception, no warning, no stderr. The account would simply
+  disappear from the portfolio.
+- **F-020** (medium) — the dashboard's emergency tax-table fallback
+  carried the **pre-OBBBA** 2025 standard deduction for all four filing
+  statuses. `tax.py` was updated when the law changed retroactively; the
+  JS literal was not.
+
+Everything else was code that was **already correct but could be broken
+silently**. That distinction is the audit's main result: of ~300
+mutations applied to basis, prices, history, tax, parsers and analytics,
+the survivors were overwhelmingly missing *tests*, not wrong *rules*.
+Every tax rule, every basis rule, every sign split, and every headline
+figure computed the right answer when checked against hand-derived
+values or broker ground truth.
+
+**Broker reconciliation passes outright**: 31 `Reconcile` rows across
+five account groups and nine tax years — balances, 1099-B realized,
+§1256, 1099-DIV/INT income, crypto 1099-MISC — all `ok` or `explained`,
+with zero unexplained breaks.
+
+| | before | after |
+|---|---|---|
+| Tests | 478 | **777** |
+| `src/` coverage | 84.9% | **88.6%** |
+| Never-executed functions | 23 | **13** |
+| Source changes | — | 5 in `src/`, 1 in `tools/` |
+
+Every source change was verified figure-neutral against a same-day
+golden, or had its scope measured explicitly.
+
+### The three patterns worth carrying forward
+
+**1. Guards pinned only in the firing direction.** The dominant shape by
+a wide margin. A test proves a rule *fires when it should* and never
+proves it *stays off when it shouldn't*, so the condition guarding the
+"off" case can be deleted with the suite green. F-007, F-008, F-009,
+F-012, F-013, F-014 and most of Segment 7 are all this. The sharpest
+instance is F-012: CLAUDE.md *names a test* that pins
+`txn_external_cash_flow`, and that claim is true and insufficient at the
+same time — the test covers marker + right account and non-marker +
+right account, and never marker + **wrong** account, which is exactly
+what the guard rejects.
+
+**Practical consequence:** read every "pinned by <test>" claim in
+CLAUDE.md as "pinned in the firing direction" until checked.
+
+**2. Sibling-site asymmetry.** The same rule implemented at several call
+sites, with only some protected. `_consume_lots` vs
+`_consume_lots_capped` (F-013); the Savings/cash gate at three sites in
+`pipeline_stages` (F-014); the Split rule in two walkers (F-015). When
+you find a rule at N sites, check all N.
+
+**3. Documented parity claims that nobody tested.** CLAUDE.md asserts
+several times that two implementations agree. Three were checked; **two
+were false on at least one path** — `_value_at_date` vs `history`
+(F-025) and the JS tax fallback vs `tax.py` (F-020). fin now has *three*
+valuation implementations (`basis._walk`, the snapshot walker,
+`compute_daily_totals`) plus `_value_at_date`, and parity between them
+is now tested rather than asserted.
+
+### The audit's own tooling reproduced the bug class three times
+
+Recorded deliberately, because it is the strongest available evidence
+for the plan's prime directive:
+
+- `tools/mutate.py`'s restore check compared strings round-tripped
+  through the same lossy newline translation it was meant to detect
+  (F-006).
+- `tools/golden.py`'s offline stub returned `[]` for splits, which reads
+  as "the split history changed", invalidating prices for every
+  split-carrying symbol. It produced a **large false reconciliation
+  break** in a retirement account before being caught (F-021).
+- The split-parity test's first draft asserted quantities and totals
+  that are *invariant under a split by construction*, so it passed
+  whether or not the rule ran.
+
+All three were caught only by *running* a mutation, never by reading the
+code. Three further first readings were also wrong — an artifact
+mistaken for a break, an equivalent mutant mistaken for a gap, and a
+coincidence mistaken for causation. **A surviving mutant is a question,
+not a verdict**, and so is a clean result.
 
 ---
 
@@ -220,7 +314,7 @@ across the three modules, all CAUGHT.
 
 **Still open:** the 13 `warn` / `info` `data_health` checks.
 
-### Segment 2 — Mutation: the invariant core (2026-08-05, in progress)
+### Segment 2 — Mutation: the invariant core (2026-08-05)
 
 **Method note, learned the expensive way.** `tools/gen_mutations.py`
 proposes mutations from the AST, filtered to lines the suite actually
@@ -322,7 +416,7 @@ a pipeline state that does not exist. It now runs on the export, where
 shape inverted — a fixture that *withholds* the intermediate the code
 needs, manufacturing failures instead of hiding them.
 
-### Segment 3 — Prices, history, and walker parity (2026-08-05, in progress)
+### Segment 3 — Prices, history, and walker parity (2026-08-05/06)
 
 **Walker parity, done properly.** Segment 1 established that the two lot
 walkers dispatch the same eight effects in the same order. That is a
@@ -398,7 +492,7 @@ All three were caught only by running the mutation, never by reading the
 test. That is the concrete argument for the prime directive: **a test
 that has not been seen to fail is not yet evidence of anything.**
 
-### Segment 4 — The ingest layer (2026-08-05, begun)
+### Segment 4 — The ingest layer (2026-08-05/06)
 
 **Item 1 — action coverage on real data: clean.** All 14,063 real
 transactions across 48 broker files, 92 distinct
@@ -595,7 +689,7 @@ added to the repo. The two degenerate-input builders live in the
 session scratchpad; promoting them to `tools/` would make this
 repeatable.
 
-### Segment 7 — Tax and reconciliation (2026-08-06, begun)
+### Segment 7 — Tax and reconciliation (2026-08-06)
 
 **Item 4 — ST/LT classification: correct, now pinned.** `_is_long_term`
 decides whether a realized gain is taxed at ordinary income rates or
@@ -859,9 +953,74 @@ finding it did.
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
-separate from defects. Populated in Segment 9.
+separate from defects. **None of these is a bug**; each is a place where
+the current shape makes a future bug more likely, ordered by leverage.
 
-- *(Segment 1)* The end-to-end test and the shipped sample portfolio
-  are two independent synthetic portfolios maintained in parallel.
-  Collapsing them would cover five parsers and remove a duplicate
-  fixture — see F-001.
+**1. Four valuation implementations, pairwise-asserted rather than
+shared.** `basis._walk`, `history`'s snapshot walker,
+`history.compute_daily_totals`, and `_shared._value_at_date` all decide
+what a position is worth. CLAUDE.md documents the invariant ("if you
+change a basis rule, change BOTH walkers") and a `fin-lot-walker-sync`
+skill exists to enforce it by hand. Two of the three parity claims
+checked turned out false (F-020, F-025), and the Split rule is
+duplicated verbatim (F-015).
+
+The parity is now *tested* rather than asserted, which is the cheap fix.
+The structural fix is to extract the shared valuation kernel — the
+balance walk, the USD-outside-Savings rule, the price lookup with
+txn-price fallback and option-intrinsic floor — so the rule exists once.
+`history.py` already imports `_consume_lots` / `_pair_wraps` /
+`_rescale_lots` from `basis.py`, so the precedent and the appetite both
+exist.
+
+**2. The sample portfolio and the e2e fixture are two parallel synthetic
+portfolios.** Collapsing them would remove a duplicate fixture and was
+what closed F-001. `audit/sample-coverage.md` lists what the sample
+still cannot reach — wrap/unwrap, option exercise, `Cost Basis` and
+`Lot Method` overrides, rollover bridges, corporate actions, splits
+spanning a snapshot. Every one of those is a rule a later segment had to
+test in isolation because no end-to-end path reached it.
+
+**3. `_pct` field names that hold fractions** (F-024). `max_drawdown`
+and `current_drawdown_pct` carry the same units under different naming
+conventions. Harmless today because both consumers agree; a 100× trap
+for the next one.
+
+**4. The JS emergency fallbacks are unmaintained by design.** F-020
+found superseded tax law in one. They now have a parity test, but the
+deeper question is whether fallbacks that only run when the export is
+malformed earn their keep at all — a missing `DATA.tax_tables` is
+arguably better surfaced as an error than silently papered over with
+year-old constants.
+
+**5. A schema version on the export.** The dashboard is generated with
+its data, so version skew is not possible today — but `tools/golden.py`,
+`audit/golden/export.json` and any future external consumer all parse
+the export, and none can tell which shape it is.
+
+**6. Metadata rejection semantics** (F-018). Three fields *reject* an
+out-of-range value to their default rather than clamping to the bound.
+That is defensible and now documented and announced — but it is a
+choice, and the alternative (clamp, or refuse to run) is worth a
+deliberate decision rather than inheritance.
+
+### Deferred audit work
+
+- **F-017 tier 3** — surface dropped rows as a `data_health` check so
+  they reach the dashboard rather than only the console. Tiers 1 and 2
+  ship the detection; this is about where it lands.
+- **Segment 8's remaining sweeps.** Several were absorbed by other
+  segments: the NaN/Infinity sweep (Segment 5 item 3), as-of alignment
+  (Segment 5 item 1 and the reconciliation audit), vacuous guards (the
+  entire audit), ordering (sign splits, consume order, `seq`). What is
+  genuinely untouched is the **error-path sweep** — what happens when
+  yfinance is down, the cache is corrupt JSON, or a price shard's
+  in-file symbol disagrees with its filename.
+- **Tax tables against the IRS source documents.** Internal consistency
+  and Python↔JS agreement are both verified; the figures themselves have
+  been checked against neither Rev. Proc. nor the retirement Notice.
+  That needs external sources, and the `fin-tax-year-update` skill
+  already lists them.
+- **The 13 `warn`/`info` `data_health` checks.** The ten high-severity
+  ones are pinned; these are not. Their trip conditions were extracted
+  during Segment 5 item 1.
