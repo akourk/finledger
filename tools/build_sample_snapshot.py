@@ -381,6 +381,29 @@ def _build(tmp: Path) -> None:
         # Without the override this lot would take FMV-at-transfer basis,
         # which is only an estimate; with it, the broker's
         # customer-provided figure wins.
+        # --- The regular-side counter-leg of the Pro deposit -----------
+        # Both wallets share account_group "Coinbase", so moving cash
+        # between them is a no-op — but the GDAX export does not tag it,
+        # and the Pro-side `deposit` row looks exactly like a real bank
+        # deposit.  `_reconcile_coinbase_intra_transfers` pairs them on
+        # (date, amount) and re-tags the Pro leg as a Transfer In.
+        #
+        # Without the pairing, every regular->Pro shuffle inflates
+        # "external money in" by the transferred amount, which corrupts
+        # net_contributed and therefore TWR, the SPY benchmark, the
+        # savings rate and FIRE.  The sample had the Pro leg but no
+        # counterpart, so the pairing never fired.
+        #
+        # "Pro Deposit" = deposited INTO Pro, i.e. it LEAVES the regular
+        # wallet -> Transfer Out.  Date and amount match the Pro-side
+        # deposit below exactly, which is what the matcher keys on.
+        {"ID": "tx-12", "Timestamp": "2023-01-15 11:00:00 UTC",
+         "Transaction Type": "Pro Deposit", "Asset": "USD",
+         "Quantity Transacted": "500", "Price Currency": "USD",
+         "Price at Transaction": "$1.00",
+         "Subtotal": "$500.00", "Total (inclusive of fees and/or spread)": "$500.00",
+         "Fees and/or Spread": "$0.00", "Notes": "Transferred to Coinbase Pro"},
+
         {"ID": "tx-11", "Timestamp": "2023-06-01 08:00:00 UTC",
          "Transaction Type": "Receive", "Asset": "MATIC",
          "Quantity Transacted": "2000", "Price Currency": "USD",
