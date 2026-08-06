@@ -9,7 +9,7 @@ files, bug class, and severity only. The working ledger is
 |---|---|
 | **Started** | 2026-08-05 |
 | **Segments complete** | **all nine** (8's sweeps partly absorbed elsewhere) |
-| **Findings** | 11 open / 17 fixed |
+| **Findings** | 10 open / 18 fixed |
 | **Suite** | 478 → 801 tests, green · `src/` coverage 84.9% → **88.8%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
@@ -121,7 +121,7 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
-| F-028 | medium | The refresh path's per-account lot-method plumbing is unprotected — and `test_pipeline_path_parity.py` does not catch it despite a fixture built to |
+| F-028 | medium | *(fixed)* The refresh path's per-account lot-method plumbing was unprotected — the parity fixture carried the `Lot Method` row but never gave it two candidate lots to choose between |
 | F-027 | low | Corrupt sidecar caches raise a bare `JSONDecodeError` that names neither the file nor the cache |
 | F-026 | medium | *(fixed)* A malformed price-cache entry (a quoted number, `Infinity`, a bool) was returned as a value instead of skipped |
 | F-025 | medium | *(fixed)* `_value_at_date`'s txn-price fallback was filter-scoped while `history`'s is global — a documented parity that was false |
@@ -1057,10 +1057,25 @@ this. `PLAN-audit.md` called the shot — *"its fixture had to be enlarged
 this session before one of its tests stopped being vacuous. Assume the
 others may be too."*
 
-Logged rather than fixed: the right fix depends on **why** the parity
-test misses it, and guessing at that would be the kind of
-plausible-but-unverified change this audit has spent forty commits
-arguing against.
+**Diagnosed and fixed.** The cause was measured rather than guessed:
+disabling `Lot Method` parsing altogether left every figure in the
+parity fixture byte-identical, so the row was **inert**. Every
+consumption there has exactly one candidate lot in the pool at the time
+— the unwrap sorts before the same-day pricey buy — and with one
+candidate FIFO and HIFO pick identically. The fixture tests *ordering*,
+not *method*, while its comment claimed the opposite. Adding two lots
+that are simultaneously in the pool, priced 5× apart, makes the row
+load-bearing and both refresh-path sites are now caught.
+
+One mutation still survives on purpose: disabling `Lot Method` globally
+leaves both paths FIFO, so they agree and parity rightly passes. **A
+parity test pins agreement, not correctness** — correctness is pinned by
+the sample test, which catches it. The two divide the work properly.
+
+The generalisable form is worth keeping next to the "consume the thing"
+rule: **a fixture can carry the CONFIG for a behaviour and still not
+exercise it.** `Lot Method` needs two candidate lots the way a split
+needs a later sale — necessary, not sufficient.
 
 ## Improvement opportunities
 
