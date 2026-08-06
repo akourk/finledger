@@ -9,8 +9,8 @@ files, bug class, and severity only. The working ledger is
 |---|---|
 | **Started** | 2026-08-05 |
 | **Segments complete** | 1, 2, 4, 6, Segment 5 item 1 (pulled forward); Segment 3 substantially |
-| **Findings** | 8 open / 11 fixed |
-| **Suite** | 478 → 636 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
+| **Findings** | 7 open / 12 fixed |
+| **Suite** | 478 → 655 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -23,7 +23,7 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 | ID | Sev | Claim |
 |---|---|---|
 | F-019 | low | The Performance tab's anchor cards invite an inference that doesn't hold — Total Return is not Realized + Unrealized |
-| F-018 | medium | `metadata.csv` silently degrades invalid input, and three documented clamps reject-to-default instead of clamping |
+| F-018 | medium | *(silence fixed)* `metadata.csv` silently degraded invalid input; three documented clamps reject-to-default instead of clamping |
 | F-017 | **high** | *(tier 1 fixed)* A date-format change silently drops every row in every parser, with no output — 7 of 8 sample broker files went to zero rows in silence |
 | F-016 | medium | *(fixed)* Two documented `prices.py` behaviours had no test — the failure-backoff cap and `covered_end` monotonicity |
 | F-015 | medium | *(fixed)* The Split basis rule is implemented twice, verbatim, and neither copy was executed by any test |
@@ -502,6 +502,26 @@ Item 2 (post-parse invariant property tests) is covered by
 `tests/test_sample_snapshot.py` and `tests/test_parser_sign_splits.py`,
 which assert non-negative quantity/price/fees/amount across all nine
 parsers. **Segment 4 is complete.**
+
+**F-018's silence fixed** (`791c0ca`). `parse_metadata` now reports every
+rejected or coerced value, naming the row *and* the value actually used
+— in a 60-row file, "something was rejected" is not actionable. The
+reject-vs-clamp semantics are left alone; only the silence changed.
+
+A note on how that was verified, because it nearly went wrong. A plain
+`golden --check` showed **3,414 differences** — alarming for a change
+that should have been stdout-only. They were entirely **date drift**:
+the golden had been recorded the previous day, the date rolled over, and
+`get_price(sym, today)` began returning a newer bar. The tell was
+`"Latest transaction is 46 days old" → "47 days old"`. Proving
+figure-neutrality meant re-recording the baseline at HEAD *today* and
+comparing on top of that — which came back IDENTICAL.
+
+This is exactly the drift `golden.py`'s docstring warns about, and the
+reason its perturbation mode does an in-invocation A/B rather than
+trusting a stored golden. **Treat a stored golden as valid only for the
+day it was recorded**; across a date boundary, re-record at HEAD before
+concluding anything.
 
 ### Segment 6 — The Python↔JS boundary (2026-08-05)
 
