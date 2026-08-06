@@ -777,14 +777,24 @@ def _value_at_date(txns_sorted: list[dict], target: str,
         if d > target:
             break
         acct = t.get("account_group", "")
-        if filter_groups is not None and acct not in filter_groups:
-            continue
         sym = t.get("symbol", "")
         action = t.get("action", "")
         qty = float(t.get("quantity", 0) or 0)
         price = float(t.get("price", 0) or 0)
+        # Record the fallback price BEFORE the account filter.  A
+        # security's market price is a property of the SYMBOL, not of
+        # whichever account happens to hold it, and
+        # `history.compute_history` builds this map globally.  Recording
+        # it after the filter made the fallback filter-dependent: the
+        # same position valued under a per-account filter could use a
+        # staler price than the portfolio-wide view, so `_value_at_date`
+        # silently disagreed with `history` for any symbol the price
+        # cache cannot resolve.  That matters because reconciliation
+        # ALWAYS filters to one account group.
         if sym and price > 0:
             last_txn_price[sym] = price
+        if filter_groups is not None and acct not in filter_groups:
+            continue
         # Skip USD balance tracking for non-Savings accounts (matches main.py).
         if sym in CASH_SYMBOLS and ACCOUNT_TYPES.get(acct) != "Savings":
             continue
