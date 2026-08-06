@@ -63,7 +63,12 @@ const LTCG_BRACKETS = _TAX_TABLES.ltcg_brackets
 };
 const STD_DEDUCTION = _TAX_TABLES.std_deduction || {
   2024: { 'Single': 14600, 'Married Filing Jointly': 29200, 'Married Filing Separately': 14600, 'Head of Household': 21900 },
-  2025: { 'Single': 15000, 'Married Filing Jointly': 30000, 'Married Filing Separately': 15000, 'Head of Household': 22500 },
+  // 2025 are the OBBBA (July 2025) amounts, which retroactively raised
+  // the originally-published figures (15000/30000/22500).  This fallback
+  // still carried the superseded numbers until an audit compared it
+  // against tax.py — hence tests/test_tax_table_js_parity.py, which
+  // fails if these literals drift from the Python tables again.
+  2025: { 'Single': 15750, 'Married Filing Jointly': 31500, 'Married Filing Separately': 15750, 'Head of Household': 23625 },
 };
 
 // Pick (year, status) from any of the three tables above, falling
