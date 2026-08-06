@@ -10,7 +10,7 @@ files, bug class, and severity only. The working ledger is
 | **Started** | 2026-08-05 |
 | **Segments complete** | **all nine** (8's sweeps partly absorbed elsewhere) |
 | **Findings** | 10 open / 17 fixed |
-| **Suite** | 478 → 797 tests, green · `src/` coverage 84.9% → **88.6%** · never-executed functions 23 → 13 |
+| **Suite** | 478 → 799 tests, green · `src/` coverage 84.9% → **88.8%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -55,8 +55,8 @@ with zero unexplained breaks.
 
 | | before | after |
 |---|---|---|
-| Tests | 478 | **797** |
-| `src/` coverage | 84.9% | **88.6%** |
+| Tests | 478 | **799** |
+| `src/` coverage | 84.9% | **88.8%** |
 | Never-executed functions | 23 | **13** |
 | Source changes | — | 6 in `src/`, 1 in `tools/` |
 
@@ -992,6 +992,36 @@ finding it did.
 - **`changes.py`** — see above; already pinned.
 
 ---
+
+## Post-audit follow-up
+
+### Sample coverage: wrap/unwrap and splits (2026-08-06)
+
+The first two items of the deferred extension list in
+`audit/sample-coverage.md`, taken because they were the paths most
+likely to break and the least testable.
+
+**Wrap/unwrap (ETH → CBETH → sell)** — basis-carrying, the rule CLAUDE.md
+says has broken most often. **A broker stock split** — reaches
+`basis._apply_split_to_lots`, which was on the never-executed list and is
+duplicated verbatim in `history.py`, with *neither* copy ever run
+(F-002 / F-015). That function is now covered; coverage 88.6% → 88.8%.
+
+**The lesson repeated itself, and I walked into it.** Both fixtures need
+a trailing **sale** to prove anything: a wrap preserves total basis by
+construction, and a split's shares are added by the balance walker
+regardless, so quantity and total basis are identical whether or not the
+lot-level work ran. I wrote that reasoning into the wrap fixture's
+comment and then failed to apply it to the split — mutation showed
+`ratio = 1.0` surviving my split assertions. Adding a post-split partial
+sale makes the rescale observable (rescaled, 5 shares relieve cost/4;
+unrescaled, cost/2) and the mutation is now caught.
+
+That is the same invariance trap that made the first draft of
+`test_split_walker_parity.py` vacuous, met again in a different guise —
+which suggests it is worth stating as a rule rather than an anecdote:
+**when a rule redistributes something without changing its total, no
+assertion on the total can see it. Consume the thing.**
 
 ## Improvement opportunities
 
