@@ -8,8 +8,8 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1, 2, 4, Segment 5 item 1 (pulled forward); Segment 3 substantially |
-| **Findings** | 7 open / 11 fixed |
+| **Segments complete** | 1, 2, 4, 6, Segment 5 item 1 (pulled forward); Segment 3 substantially |
+| **Findings** | 8 open / 11 fixed |
 | **Suite** | 478 → 636 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
@@ -22,6 +22,7 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-019 | low | The Performance tab's anchor cards invite an inference that doesn't hold — Total Return is not Realized + Unrealized |
 | F-018 | medium | `metadata.csv` silently degrades invalid input, and three documented clamps reject-to-default instead of clamping |
 | F-017 | **high** | *(tier 1 fixed)* A date-format change silently drops every row in every parser, with no output — 7 of 8 sample broker files went to zero rows in silence |
 | F-016 | medium | *(fixed)* Two documented `prices.py` behaviours had no test — the failure-backoff cap and `covered_end` monotonicity |
@@ -501,6 +502,72 @@ Item 2 (post-parse invariant property tests) is covered by
 `tests/test_sample_snapshot.py` and `tests/test_parser_sign_splits.py`,
 which assert non-negative quantity/price/fees/amount across all nine
 parsers. **Segment 4 is complete.**
+
+### Segment 6 — The Python↔JS boundary (2026-08-05)
+
+The largest unaudited surface: 8,774 lines across twelve `app/*.js`
+modules, zero behavioural tests.
+
+**Item 1 — recomputation inventory.** The JS makes **47** `ANALYTICS.*`
+reads against **28** traversals of raw `txns` / `holdings` / `history`.
+Triaged, most traversals are legitimate rendering rather than
+recomputation: enumerating unique values for filter pills, windowing a
+series to a user-selected range, feeding a table. Four in
+`90-performance.js` genuinely recompute figures Python also produces.
+
+Rather than flag those on principle, the useful question is whether the
+two would **agree** — which is testable without a JS runtime by
+evaluating the JS expressions against the golden export in Python:
+
+| figure | JS | Python | delta |
+|---|---|---|---|
+| lifetime realized | `sum(txn.realized_gain)` | `sum(analytics.positions.realized)` | **0.0000** |
+| lifetime unrealized | `sum(holding.unrealized_gain)` | `sum(analytics.positions.unrealized)` | **0.0000** |
+
+Exact agreement. The remaining two recomputations are windowed figures
+driven by a runtime-selected range that Python does not precompute for
+every window, so they are unavoidable without precomputing all of them.
+
+That comparison did surface **F-019**: `total_return` is not
+`realized + unrealized`, differing by `cost_basis − net_contributed +
+realized`. Both are correct — reinvested income creates basis with no
+external contribution — but they sit as adjacent cards a reader will try
+to add. Cosmetic, logged.
+
+**Item 3 — empty-state rendering, tested by actually running it.** No JS
+test harness was needed. The pipeline was run twice against
+deliberately degenerate inputs, and each dashboard loaded in a browser
+with every tab activated (renderers are lazy, so a null only bites on
+first activation):
+
+1. **All optional metadata stripped** — the state of a brand-new user.
+   39 of 59 metadata rows removed, leaving `rebalancing`,
+   `reconciliation`, `budget` and `paycheck` null exactly as CLAUDE.md
+   documents.
+2. **A two-transaction portfolio** — one deposit, one buy. No sells (so
+   realized is 0 and pct_return has a zero denominator), no options, no
+   crypto, no dividends. `monte_carlo` nulls as well.
+
+**Result: clean in both.** All ten tabs render with zero console errors
+and no `NaN`, `undefined`, `Infinity` or `null` anywhere in the rendered
+text. The four null-block sections **hide** rather than render empty,
+and `hideEmptyTabs` correctly sets Options and Crypto to `display: none`
+when there is no such activity.
+
+**The detector was validated before that result was trusted** —
+injecting `$NaN`, `undefined` and `Infinity` into a live panel flips the
+scan from `clean` to detecting all three, and back to `clean` on
+removal. A check that finds nothing is worth nothing until it has been
+seen to find something; that is the same discipline the prime directive
+applies to tests.
+
+**Technique worth reusing.** The plan suggested a node + DOM shim "only
+if time remains". Serving the generated dashboard over localhost and
+driving it with the browser tool gives real behavioural coverage of the
+JS layer for the cost of one script, with no new dependency and nothing
+added to the repo. The two degenerate-input builders live in the
+session scratchpad; promoting them to `tools/` would make this
+repeatable.
 
 ### Verified clean (no finding)
 
