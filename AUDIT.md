@@ -1168,6 +1168,63 @@ property that shortcut relies on — across both symbols, total realized
 equals proceeds less the original cost. If someone later "fixes" the
 surrender to carry basis, that assertion moves, which is the point.
 
+### The reverse split closes somewhere else entirely (2026-08-06)
+
+The last deferred item was "a reverse split", carried as a sub-note of
+the split fixture. Chasing it changed what the item *was*.
+
+**Two questions were hiding under one name.** Reverse splits reach fin
+by two independent routes, and only one of them is about transactions:
+
+1. **The transaction side.** Checking real broker data shows Robinhood
+   reports a reverse split as `SPR` rows using the same S-suffix
+   convention as `MRGS` — surrender the old shares, receive the new
+   ones. That is the *same parser branch* the stock-for-stock merger
+   added an hour earlier, differing only in a description string. A
+   sample row would have added a label, not a path.
+2. **The price side.** `split_factor_since` converts an as-of-date share
+   count into today's basis so it can be multiplied against yfinance's
+   always-split-adjusted `Close`. **The sample structurally cannot reach
+   it**: split history comes from yfinance, never from the CSVs, so no
+   snapshot bundle can carry one.
+
+CLAUDE.md is unambiguous about which one carries the risk — *"never
+multiply a historical balance by a historical cache price without
+applying `split_factor_since` first ... you'll get a wildly wrong
+number"* — and it names reverse-split penny stocks as the case. Every
+snapshot, daily-total walk and TWR period boundary runs through that
+function.
+
+**Coverage said it ran; mutation said nothing checked it.** The loop
+executes on ordinary runs, so line coverage looked fine. Two mutants
+survived all 855 tests:
+
+| mutation | consequence |
+|---|---|
+| `if d > target` -> `if d >= target` | a split dated the same day as the balance gets applied, when that day's close is already post-split — exactly one snapshot off by the full ratio |
+| drop the direct-proxy forward | every proxied holding silently un-splits |
+
+The first is the interesting one, and not only because the docstring
+specifies "strictly after". A *systematic* error is visible; this one
+misprices a single sample date, which reads as a one-day spike in the
+history chart rather than as a bug.
+
+`tests/test_split_factor.py` now pins the function directly: the
+boundary from both sides, splits multiplying only from the correct side
+of the date (with *different* ratios, so the wrong subset cannot land on
+the right product), reverse ratios shrinking rather than growing, direct
+proxies forwarding and scaled proxies deliberately not. 6/6 mutations
+caught by the new file alone, including a reciprocal that a forward-only
+fixture would have missed. `split_adjust_qty` came off the
+never-executed list; 13 -> 12.
+
+**The generalisable point:** the deferred list was written in terms of
+*fixtures the sample lacks*, which quietly assumes every gap is
+reachable from sample data. This one was not — and the sample-shaped
+framing was steering toward a fixture that would have exercised an
+already-covered branch while leaving the real gap open. Worth asking of
+the remaining backlog: is this a missing input, or a missing test?
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately

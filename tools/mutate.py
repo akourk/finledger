@@ -44,7 +44,7 @@ import json
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -85,8 +85,30 @@ def _run_pytest(selector: str, timeout: int) -> tuple[bool, str]:
     return proc.returncode == 0, reason
 
 
+def _match_file_newlines(pattern: str, text: str) -> str:
+    """Rewrite a pattern's newlines to whatever the file actually uses.
+
+    `_read_exact` deliberately keeps CRLF verbatim (see its docstring), so
+    a multi-line spec written with plain `\\n` matches nothing in a CRLF
+    file.  The failure is loud -- "substring never matched" -- but it
+    costs a round trip every time, and the spec author has no reason to
+    care which line ending a given source file happens to carry.
+
+    Detect the file's dominant ending and translate the pattern to it.
+    The FILE is never touched, so byte-exact round-tripping still holds.
+    """
+    if "\n" not in pattern or "\r\n" in pattern:
+        return pattern
+    if text.count("\r\n") > text.count("\n") - text.count("\r\n"):
+        return pattern.replace("\n", "\r\n")
+    return pattern
+
+
 def _apply(text: str, m: Mutation) -> tuple[str, int]:
     """Return (mutated_text, n_matches). Raises ValueError on ambiguity."""
+    if not m.regex:
+        m = replace(m, match=_match_file_newlines(m.match, text),
+                    replace=_match_file_newlines(m.replace, text))
     if m.regex:
         matches = list(re.finditer(m.match, text))
         n = len(matches)
