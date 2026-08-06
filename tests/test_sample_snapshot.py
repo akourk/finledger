@@ -644,3 +644,258 @@ class TestUnbridgedDistributionWarning:
             [self._distribution(account_group="Robinhood",
                                 account_type="Taxable")],
             {"rollover_bridges": []}) == []
+
+
+class TestCorporateActions:
+    """`src/reorgs.py` finally gets an end-to-end path.
+
+    The module exists to hold corp-action pooling and classification, and
+    it was exercised only by its own unit tests — nothing reached it
+    through a real run. That matters because the pooling is a *parser*
+    behaviour whose consequences land in the *basis walker*, and the two
+    were never checked together.
+
+    The sample now carries the two shapes that fail most quietly:
+
+    * **A cash merger.** Robinhood writes it as two rows: MRGS with an
+      "S"-suffixed quantity (shares SURRENDERED, no money) and MRGC (the
+      cash). `reorgs` pools them on (date, symbol) into ONE Sell at the
+      MRGC price. Every way this can break is silent: read the suffix
+      wrong and the surrender becomes a RECEIPT, doubling the position
+      and leaving cash unattached; miss the MRGC and the Sell books zero
+      proceeds, turning a gain into a total loss.
+    * **A stock-for-stock merger.** The other half of the same
+      convention: the target surrenders (MRGS with the suffix, no MRGC)
+      and the acquirer's shares arrive (MRGS with a plain quantity). It
+      is in the sample because with only a surrender present, reading the
+      suffix correctly and assuming every MRGS is a surrender produce
+      identical output — mutation confirmed exactly that. Two of each is
+      the minimum for the flag to mean anything.
+    * **Cash in lieu.** CIL pays out a fraction the user cannot hold, and
+      the quantity exists only inside the description string. Fail to
+      parse it and the cash arrives with the position never reduced.
+
+    Assertions are derived from the fixture's own rows rather than
+    hard-coded, per this module's convention.
+    """
+
+    MERGED = "TWTR"     # acquired for cash; position closes
+    TARGET = "XLNX"     # surrendered in a stock-for-stock merger
+    ACQUIRER = "AMD"    # shares received in that merger
+    CIL_SYM = "VTI"     # a fraction paid out in cash
+
+    @pytest.fixture
+    def exported(self, isolated_workdir, sample_data, stub_prices):
+        import json
+        import sys
+
+        argv_save = sys.argv
+        sys.argv = ["fin", "--skip-rename"]
+        try:
+            from src.main import main
+            main()
+        finally:
+            sys.argv = argv_save
+        return json.loads(
+            (isolated_workdir / "exports" / "transactions.json")
+            .read_text(encoding="utf-8"))
+
+    def _rows(self, exported, symbol):
+        return sorted((t for t in exported["transactions"]
+                       if t.get("symbol") == symbol),
+                      key=lambda t: t["date"])
+
+    # ---- cash merger -------------------------------------------------
+
+    def test_the_merger_collapses_to_a_single_disposal(self, exported):
+        """Two input rows, one output row.
+
+        A second row for the merged symbol means either the surrender and
+        the cash both survived (the balance goes negative) or the "S"
+        suffix was misread and the surrender added shares.
+        """
+        rows = self._rows(exported, self.MERGED)
+        assert len(rows) == 2, (
+            f"expected exactly a Buy and one pooled disposal for "
+            f"{self.MERGED}; got {[(r['action'], r['quantity']) for r in rows]}"
+        )
+        buy, sell = rows
+        assert buy["action"] == "Buy"
+        assert sell["action"] == "Sell", (
+            f"the merger produced a {sell['action']!r} row — MRGS/MRGC must "
+            "pool into a Sell so the position closes with proceeds"
+        )
+
+    def test_the_surrendered_quantity_is_the_whole_position(self, exported):
+        buy, sell = self._rows(exported, self.MERGED)
+        assert sell["quantity"] == pytest.approx(buy["quantity"]), (
+            "the merger did not surrender the full position — a quantity "
+            "whose S-suffix parse broke is the usual cause"
+        )
+
+    def test_the_cash_is_attached_to_the_disposal(self, exported):
+        """The MRGC proceeds must ride on the Sell, not arrive loose.
+
+        Loose cash is the failure that looks most benign and costs most:
+        the balance still reaches zero, so nothing is visibly wrong, but
+        the disposal books zero proceeds and the entire cost basis
+        realizes as a loss.
+        """
+        buy, sell = self._rows(exported, self.MERGED)
+        assert sell["amount"] > 0, "the disposal carries no proceeds"
+        assert sell["amount"] == pytest.approx(
+            sell["quantity"] * sell["price"]), (
+            "proceeds disagree with quantity x price, so the MRGC price "
+            "was not applied to the pooled row"
+        )
+
+    def test_the_merger_realizes_proceeds_minus_cost(self, exported):
+        buy, sell = self._rows(exported, self.MERGED)
+        assert sell["realized_gain"] == pytest.approx(
+            sell["amount"] - buy["amount"], abs=0.01), (
+            f"realized {sell['realized_gain']} but the merger should book "
+            f"{sell['amount'] - buy['amount']} — proceeds less the lot's cost"
+        )
+
+    def test_the_fixture_is_a_gain_not_a_wash(self, exported):
+        """Not-vacuous guard.
+
+        If the merger paid exactly what the shares cost, zero proceeds and
+        correct proceeds would both realize approximately nothing and the
+        test above would pass while measuring nothing.
+        """
+        buy, sell = self._rows(exported, self.MERGED)
+        assert sell["amount"] > buy["amount"] * 1.2, (
+            "the merger price is too close to the purchase price for a "
+            "dropped-proceeds bug to be visible"
+        )
+
+    def test_the_merged_position_leaves_holdings(self, exported):
+        """A cash merger ends the position. Shares lingering here means
+        the surrender was read as a receipt."""
+        left = [h for h in exported["holdings"]
+                if h.get("symbol") == self.MERGED]
+        assert not left, (
+            f"{self.MERGED} still holds shares after being acquired for cash"
+        )
+
+    # ---- stock-for-stock merger --------------------------------------
+
+    def test_the_acquirers_shares_arrive_as_a_receipt(self, exported):
+        """A plain (unsuffixed) MRGS quantity means shares ARRIVING.
+
+        Treating it as a surrender is the mutation that survived the
+        first version of this fixture: it subtracts shares the account
+        never had, so the acquirer's position goes negative and the
+        target's basis is stranded.
+        """
+        rows = self._rows(exported, self.ACQUIRER)
+        receipt = [t for t in rows if "Merger receipt" in (t.get("description") or "")]
+        assert len(receipt) == 1, (
+            f"expected one merger receipt for {self.ACQUIRER}; got "
+            f"{[(t['action'], t['quantity']) for t in rows]}"
+        )
+        assert receipt[0]["action"] == "Buy", (
+            f"the received shares arrived as {receipt[0]['action']!r} — an "
+            "unsuffixed MRGS quantity is a receipt, not a surrender"
+        )
+        assert receipt[0]["quantity"] > 0
+
+    def test_the_target_surrenders_without_proceeds(self, exported):
+        """No paired MRGC means no cash: the surrender books $0 and
+        realizes the whole basis as a loss.
+
+        This is the documented trade-off — balance-accurate, not
+        tax-accurate — and pinning it is what makes a future change to
+        that behaviour visible rather than silent.
+        """
+        rows = self._rows(exported, self.TARGET)
+        sell = next(t for t in rows if t["action"] == "Sell")
+        buy = next(t for t in rows if t["action"] == "Buy")
+        assert sell["amount"] == pytest.approx(0.0), (
+            "the stock-for-stock surrender booked proceeds — it has no "
+            "MRGC, so any cash here came from somewhere it should not"
+        )
+        assert sell["realized_gain"] == pytest.approx(-buy["amount"], abs=0.01)
+
+    def test_the_two_legs_net_to_the_true_economic_result(self, exported):
+        """The receive leg carries $0 basis, so the loss booked on the
+        surrender comes back as gain when the new shares are sold. Across
+        both symbols the total realized equals proceeds less the original
+        cost — which is the property the $0-basis shortcut relies on.
+        """
+        target = self._rows(exported, self.TARGET)
+        acquirer = self._rows(exported, self.ACQUIRER)
+        original_cost = next(t for t in target if t["action"] == "Buy")["amount"]
+        final_sale = max(
+            (t for t in acquirer
+             if t["action"] == "Sell"
+             and "Merger" not in (t.get("description") or "")),
+            key=lambda t: t["date"])
+
+        net = sum((t.get("realized_gain") or 0.0)
+                  for t in target + acquirer)
+        assert net == pytest.approx(final_sale["amount"] - original_cost,
+                                    abs=0.01), (
+            f"the two legs net to {net}, but the real result of buying at "
+            f"{original_cost} and selling at {final_sale['amount']} is "
+            f"{final_sale['amount'] - original_cost}"
+        )
+
+    def test_neither_merger_symbol_survives_in_holdings(self, exported):
+        """Both sides close out: the target was surrendered, the acquirer
+        was sold. Shares of either mean a leg was dropped."""
+        stuck = [h for h in exported["holdings"]
+                 if h.get("symbol") in (self.TARGET, self.ACQUIRER)]
+        assert not stuck, (
+            f"{[h['symbol'] for h in stuck]} still held after the merger "
+            "chain completed"
+        )
+
+    # ---- cash in lieu ------------------------------------------------
+
+    def test_cash_in_lieu_sells_exactly_the_fraction(self, exported):
+        rows = self._rows(exported, self.CIL_SYM)
+        sells = [t for t in rows if t["action"] == "Sell"]
+        assert len(sells) == 1, (
+            f"expected one CIL disposal for {self.CIL_SYM}, got {len(sells)}"
+        )
+        assert 0 < sells[0]["quantity"] < 1, (
+            f"CIL sold {sells[0]['quantity']} — the quantity lives only in "
+            "the description string, and a whole number means it was not "
+            "parsed out of it"
+        )
+
+    def test_cash_in_lieu_reduces_the_remaining_position(self, exported):
+        """The cash must not arrive with the share count untouched."""
+        rows = self._rows(exported, self.CIL_SYM)
+        bought = sum(t["quantity"] for t in rows if t["action"] == "Buy")
+        sold = sum(t["quantity"] for t in rows if t["action"] == "Sell")
+        holding = [h for h in exported["holdings"]
+                   if h.get("symbol") == self.CIL_SYM]
+        assert holding, f"the sample lost its {self.CIL_SYM} position"
+        assert holding[0]["quantity"] == pytest.approx(bought - sold), (
+            f"holding shows {holding[0]['quantity']} but {bought} bought "
+            f"less {sold} paid out in lieu is {bought - sold}"
+        )
+
+    def test_cash_in_lieu_relieves_a_proportional_basis(self, exported):
+        rows = self._rows(exported, self.CIL_SYM)
+        buy = next(t for t in rows if t["action"] == "Buy")
+        sell = next(t for t in rows if t["action"] == "Sell")
+        per_unit = buy["amount"] / buy["quantity"]
+        assert sell["cost_basis"] == pytest.approx(
+            per_unit * sell["quantity"], abs=0.01), (
+            "the fraction relieved the wrong basis — a CIL is an ordinary "
+            "partial disposal once the quantity is parsed"
+        )
+        assert sell["realized_gain"] == pytest.approx(
+            sell["amount"] - per_unit * sell["quantity"], abs=0.01)
+
+    def test_the_cil_price_differs_from_the_purchase_price(self, exported):
+        """Not-vacuous guard: at an identical price the relieved basis and
+        the proceeds coincide, so a basis error would be invisible."""
+        rows = self._rows(exported, self.CIL_SYM)
+        buy = next(t for t in rows if t["action"] == "Buy")
+        sell = next(t for t in rows if t["action"] == "Sell")
+        assert sell["price"] != pytest.approx(buy["price"])

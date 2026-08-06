@@ -266,6 +266,66 @@ def _build(tmp: Path) -> None:
          "Description": f"AAPL {_mdy(_recent(-400))} Call $250.00",
          "Quantity": "1", "Price": "$20.00", "Amount": "($2000.00)"},
 
+        # --- A cash merger: the position is acquired for cash ----------
+        # Robinhood writes this as TWO rows: MRGS with an "{N}S" suffix
+        # (shares SURRENDERED) carrying no money, and MRGC carrying the
+        # cash.  `reorgs.py` pools them on (date, symbol) and the parser
+        # emits ONE Sell at the MRGC price, so the position closes with
+        # proper proceeds and a proper realized gain instead of
+        # vanishing.  Without the pooling the shares disappear and the
+        # cash arrives unattached.
+        #
+        # reorgs.py exists for exactly this family and was exercised only
+        # by its own unit tests — no end-to-end path reached it.
+        {"Activity Date": "1/14/2022", "Trans Code": "Buy",
+         "Instrument": "TWTR", "Description": "Twitter Inc",
+         "Quantity": "20", "Price": "$40.00", "Amount": "($800.00)"},
+        {"Activity Date": "10/27/2022", "Trans Code": "MRGS",
+         "Instrument": "TWTR", "Description": "Twitter Inc",
+         "Quantity": "20S"},
+        {"Activity Date": "10/27/2022", "Trans Code": "MRGC",
+         "Instrument": "TWTR",
+         "Description": "Cash received thru Merger 20 shares at $54.20",
+         "Amount": "$1084.00"},
+
+        # --- A stock-for-stock merger ----------------------------------
+        # The other half of the "S" convention, and the reason it has to
+        # be here: with only a surrender in the sample, nothing
+        # distinguishes reading the suffix correctly from assuming every
+        # MRGS is a surrender.  Both fixtures are needed before the flag
+        # means anything.
+        #
+        # The target surrenders (MRGS "{N}S", no MRGC -> Sell at $0,
+        # realizing the full basis as a loss) and the acquirer's shares
+        # arrive (MRGS with a plain quantity -> Buy at $0).  The parser
+        # documents this as balance-accurate but not tax-accurate: the
+        # $0-basis receive carries the loss forward as unrealized gain,
+        # so the eventual sale nets out to the true economic result.
+        {"Activity Date": "5/10/2021", "Trans Code": "Buy",
+         "Instrument": "XLNX", "Description": "Xilinx Inc",
+         "Quantity": "10", "Price": "$150.00", "Amount": "($1500.00)"},
+        {"Activity Date": "2/14/2022", "Trans Code": "MRGS",
+         "Instrument": "XLNX", "Description": "Xilinx Inc",
+         "Quantity": "10S"},
+        {"Activity Date": "2/14/2022", "Trans Code": "MRGS",
+         "Instrument": "AMD", "Description": "Advanced Micro Devices",
+         "Quantity": "17"},
+        {"Activity Date": "3/15/2023", "Trans Code": "Sell",
+         "Instrument": "AMD", "Description": "Advanced Micro Devices",
+         "Quantity": "17", "Price": "$110.00", "Amount": "$1870.00"},
+
+        # --- Cash in lieu of a fractional share ------------------------
+        # CIL pays out a fraction the user cannot hold.  The description
+        # carries the fraction and price ("CIL on {qty} @ {price} -
+        # {symbol}"), which reorgs.parse_cil_description reads to emit a
+        # Sell of exactly that fraction — so the remaining position is
+        # reduced by the fraction rather than left untouched with
+        # unexplained cash.
+        {"Activity Date": "6/13/2025", "Trans Code": "CIL",
+         "Instrument": "VTI",
+         "Description": "CIL on 0.25 @ $290.00 - VTI",
+         "Amount": "$72.50"},
+
         {"Activity Date": "11/8/2024", "Trans Code": "Buy",
          "Instrument": "VTI", "Description": "Vanguard Total Stock Market",
          "Quantity": "8", "Price": "$280.00", "Amount": "($2240.00)"},

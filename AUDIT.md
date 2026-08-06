@@ -1108,6 +1108,66 @@ So the harness is in better shape than F-028 alone suggested. It had one
 inert fixture row, now load-bearing; the rest of what it claims to pin,
 it pins.
 
+### Sample coverage: corporate actions (2026-08-06)
+
+Item 8 of the deferred list, and the last one with a whole module behind
+it. `src/reorgs.py` exists specifically to hold corp-action pooling and
+classification, and nothing reached it through a real run — its only
+exercise was its own unit tests. That split matters here more than
+usual, because the pooling is a **parser** behaviour whose consequences
+land in the **basis walker**, and the two had never been checked
+together.
+
+Three shapes added to the sample, chosen as the ones that fail most
+quietly:
+
+- **A cash merger** — `MRGS` with an `S`-suffixed quantity (shares
+  surrendered, no money) plus a paired `MRGC` (the cash), pooled on
+  (date, symbol) into one Sell at the MRGC price. Both failure modes are
+  invisible: misread the suffix and the surrender becomes a *receipt*,
+  doubling the position while the cash arrives unattached; miss the
+  MRGC and the Sell books zero proceeds, turning a gain into a total
+  loss of basis.
+- **A stock-for-stock merger** — the target surrenders with no MRGC
+  (Sell at $0), the acquirer's shares arrive as an unsuffixed `MRGS`
+  (Buy at $0).
+- **Cash in lieu** — the disposal quantity exists *only* inside the
+  description string.
+
+`reorgs.py` 93% → 95%; overall coverage 88.8% → **89.5%**, never-executed
+functions 16 → 13.
+
+**"Two of each" — a third form of the same trap.** The first fixture
+carried only the cash merger, and mutation found that
+`is_surrender = True` (assume *every* MRGS is a surrender) **survived
+every assertion**. With no receipt anywhere in the sample, reading the
+suffix correctly and ignoring it entirely produce identical output. The
+stock-for-stock merger exists to supply the second case, and adding it
+takes the run to 5/5 caught.
+
+That now completes a trio of the same underlying shape, and the three
+are worth stating together because each looked like a different problem
+at the time:
+
+| trap | needs |
+|---|---|
+| a rule that redistributes without changing a total (split, wrap) | a later **sale** |
+| a config row with only one candidate (`Lot Method`) | two **lots** |
+| a flag with only one input value (`S` suffix) | two **rows** |
+
+All three are the same question — *does the fixture contain the thing
+the code chooses between?* A fixture that contains only one side of a
+branch cannot tell a correct branch from a missing one.
+
+**The documented trade-off is now pinned rather than merely described.**
+The parser notes that the stock-for-stock path is balance-accurate but
+not tax-accurate: the surrender realizes the full basis as a loss and
+the $0-basis receipt carries it forward as unrealized gain. The sample
+sells the acquirer's shares afterwards so the test can assert the
+property that shortcut relies on — across both symbols, total realized
+equals proceeds less the original cost. If someone later "fixes" the
+surrender to carry basis, that assertion moves, which is the point.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
@@ -1133,11 +1193,13 @@ exist.
 
 **2. The sample portfolio and the e2e fixture are two parallel synthetic
 portfolios.** Collapsing them would remove a duplicate fixture and was
-what closed F-001. `audit/sample-coverage.md` lists what the sample
-still cannot reach — wrap/unwrap, option exercise, `Cost Basis` and
-`Lot Method` overrides, rollover bridges, corporate actions, splits
-spanning a snapshot. Every one of those is a rule a later segment had to
-test in isolation because no end-to-end path reached it.
+what closed F-001. `audit/sample-coverage.md` listed what the sample
+could not reach — wrap/unwrap, option exercise, `Cost Basis` and
+`Lot Method` overrides, rollover bridges, balance anchors, corporate
+actions, splits spanning a snapshot. Every one was a rule a later
+segment had to test in isolation because no end-to-end path reached it.
+**Eight of nine are now in the sample**; a reverse split is the
+remainder.
 
 **3. `_pct` field names that hold fractions** (F-024). `max_drawdown`
 and `current_drawdown_pct` carry the same units under different naming
