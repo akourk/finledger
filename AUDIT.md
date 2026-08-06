@@ -10,7 +10,7 @@ files, bug class, and severity only. The working ledger is
 | **Started** | 2026-08-05 |
 | **Segments complete** | 1, 2, 4, 6, 7, Segment 5 item 1; Segment 3 substantially |
 | **Findings** | 9 open / 15 fixed |
-| **Suite** | 478 → 737 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
+| **Suite** | 478 → 767 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -751,6 +751,41 @@ dashboard multiplies by 100 at render.
 Two low findings fell out, both pinned rather than fixed: F-023
 (`_solve_xirr([])` returns −99.99% rather than None, unreachable because
 the caller guards it — and that guard is now tested) and F-024.
+
+### Segment 5 item 3 — Degenerate inputs and the NaN sweep (2026-08-06)
+
+Individual analytics modules already had degenerate tests. What was
+missing was a check on the **composed payload** — 27 blocks built from
+each other's output, on inputs where many of them divide by something
+that can be zero.
+
+The central assertion is one line: `json.dumps(payload,
+allow_nan=False)`. CLAUDE.md explains why that is not stylistic — a
+single `NaN` reaches the dashboard as a `NaN` *total*, not a parse
+error, because Python's `json.dump` writes a bare `NaN` literal that is
+valid JavaScript. That one line covers all 27 blocks, and catches
+`Infinity` too, which matters because the top tax bracket's `room_left`
+must be `None` and never `inf`.
+
+Eight degenerate ledgers — completely empty, one transaction, a single
+snapshot, all values zero, every transaction on one day, a fully
+withdrawn account, a zero-cost-basis position, history with no holdings.
+**All clean.**
+
+Verified live rather than assumed: injecting a `NaN` into
+`header_summary.change_1d` and an `Infinity` into `header_summary.value`
+are both caught.
+
+**A correction worth recording.** A third mutation — removing
+`concentration.py`'s `total <= 0` early return — survived, and my first
+reading of it was that this exposed a test gap. It did not. The
+accumulation loop already skips any holding whose value is not positive,
+so the early return is redundant and its removal is a genuine
+*equivalent* mutant. I had written a docstring asserting the opposite
+before checking; investigating it turned a plausible-sounding false
+claim into an accurate note about which of three overlapping guards
+actually does the work. Same lesson as the F-021 near-miss: **a
+surviving mutant is a question, not a verdict.**
 
 ### Verified clean (no finding)
 
