@@ -265,6 +265,42 @@ def _build(tmp: Path) -> None:
          "Price at Transaction": "$3500.00",
          "Subtotal": "$17.50", "Total (inclusive of fees and/or spread)": "$17.50",
          "Fees and/or Spread": "$0.00", "Notes": ""},
+
+        # --- Wrap / unwrap (ETH <-> CBETH) --------------------------------
+        # Basis-CARRYING, not a taxable disposal: the pair moves the same
+        # underlying, so the walker consumes the ETH lots with NO realized
+        # gain and carries their basis to CBETH, rescaled to the new
+        # quantity.  CLAUDE.md calls this out as the rule that has broken
+        # most often, and mapping it to Buy/Sell (the old behaviour)
+        # wrongly realized the whole gain at every wrap.
+        #
+        # The parser splits `Wrap Asset` by the sign of Quantity
+        # Transacted, so the OUT leg must carry a negative quantity.
+        # CBETH trades at a premium to ETH, hence fewer units in.
+        {"ID": "tx-5", "Timestamp": "2024-05-01 10:00:00 UTC",
+         "Transaction Type": "Wrap Asset", "Asset": "ETH",
+         "Quantity Transacted": "-0.5", "Price Currency": "USD",
+         "Price at Transaction": "$3000.00",
+         "Subtotal": "$1500.00", "Total (inclusive of fees and/or spread)": "$1500.00",
+         "Fees and/or Spread": "$0.00", "Notes": "Wrapped 0.5 ETH to CBETH"},
+        {"ID": "tx-6", "Timestamp": "2024-05-01 10:00:00 UTC",
+         "Transaction Type": "Wrap Asset", "Asset": "CBETH",
+         "Quantity Transacted": "0.46", "Price Currency": "USD",
+         "Price at Transaction": "$3200.00",
+         "Subtotal": "$1500.00", "Total (inclusive of fees and/or spread)": "$1500.00",
+         "Fees and/or Spread": "$0.00", "Notes": "Wrapped 0.5 ETH to CBETH"},
+        # Selling the wrapped asset is where the carried basis finally
+        # realizes.  Without this leg the wrap's basis handling is
+        # unobservable — a wrap alone preserves total basis by
+        # construction, so nothing distinguishes carrying it from
+        # rebuilding it (the same trap that made the split-parity test
+        # vacuous; see AUDIT.md).
+        {"ID": "tx-7", "Timestamp": "2025-08-15 13:00:00 UTC",
+         "Transaction Type": "Sell", "Asset": "CBETH",
+         "Quantity Transacted": "0.46", "Price Currency": "USD",
+         "Price at Transaction": "$4000.00",
+         "Subtotal": "$1840.00", "Total (inclusive of fees and/or spread)": "$1830.00",
+         "Fees and/or Spread": "$10.00", "Notes": ""},
     ])
 
     # Coinbase Pro / GDAX — a small trade pair (deposit + match buy + match
@@ -305,6 +341,42 @@ def _build(tmp: Path) -> None:
          "Description": "FIDELITY 500 INDEX",
          "Quantity": "16", "Price": "$190.00", "Fees & Comm": "",
          "Amount": "-$3040.00"},
+
+        # --- A broker stock-split row --------------------------------------
+        # `Stock Split` normalizes to the canonical `Split` action, whose
+        # basis effect rescales lot quantities and per-share basis while
+        # preserving TOTAL basis.  It reaches
+        # `basis._apply_split_to_lots` and history's inline copy of the
+        # same arithmetic — two verbatim implementations that, before
+        # this row existed, NEITHER of which was executed by anything
+        # (F-002 / F-015).  No sample symbol split after the sample's
+        # start date, so this path was unreachable end to end.
+        #
+        # Bought below, split 2:1 the following year, so the split spans
+        # several snapshot dates.
+        {"Date": "01/10/2023", "Action": "Buy", "Symbol": "SMH",
+         "Description": "VANECK SEMICONDUCTOR ETF",
+         "Quantity": "10", "Price": "$120.00", "Fees & Comm": "",
+         "Amount": "-$1200.00"},
+        {"Date": "05/05/2023", "Action": "Stock Split", "Symbol": "SMH",
+         "Description": "VANECK SEMICONDUCTOR ETF 2 FOR 1 SPLIT",
+         "Quantity": "10", "Price": "", "Fees & Comm": "",
+         "Amount": ""},
+        # A partial sale AFTER the split, and it is load-bearing.
+        #
+        # A split preserves TOTAL basis and the balance walker adds the
+        # new shares regardless, so quantity and total basis are
+        # identical whether or not the lot-level rescale ran.  Only
+        # CONSUMING lots exposes it: rescaled, these 5 shares relieve
+        # 5 x $60; unrescaled they would relieve 5 x $120 and leave the
+        # position with half the basis it should have.
+        #
+        # Same trap that made the first draft of
+        # tests/test_split_walker_parity.py vacuous.
+        {"Date": "06/10/2024", "Action": "Sell", "Symbol": "SMH",
+         "Description": "VANECK SEMICONDUCTOR ETF",
+         "Quantity": "5", "Price": "$220.00", "Fees & Comm": "",
+         "Amount": "$1100.00"},
     ])
 
     # Vanguard 401K — a few biweekly contributions to one fund.

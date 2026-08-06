@@ -230,6 +230,103 @@ class TestSampleDrivesAFullRun:
             "broker action string that fell through normalize.RULES"
         )
 
+    def test_wrap_carries_basis_instead_of_realizing_it(self, exported):
+        """ETH -> CBETH -> sell, end to end.
+
+        Wrap/unwrap is basis-CARRYING: the pair moves the same
+        underlying, so neither leg realizes gain and the destination
+        inherits the source's basis rescaled to the new quantity. Gain
+        appears only at the eventual real sale. CLAUDE.md calls this the
+        rule that has broken most often — mapping it to Buy/Sell (the old
+        behaviour) realized the whole gain at every wrap.
+
+        Added to the sample deliberately: before it existed, no
+        end-to-end path reached this code at all.
+        """
+        txns = exported["transactions"]
+        out = [t for t in txns if t.get("action") == "Wrap Asset Out"]
+        into = [t for t in txns if t.get("action") == "Wrap Asset In"]
+        assert out and into, "the sample no longer contains a wrap pair"
+
+        for leg in out + into:
+            assert not leg.get("realized_gain"), (
+                f"{leg['action']} realized {leg.get('realized_gain')} — a wrap "
+                "is not a disposal; gain belongs at the eventual sale"
+            )
+
+        # The destination inherits the source's basis, not $0 and not the
+        # full market value.
+        assert into[0]["cost_basis"] == pytest.approx(out[0]["cost_basis"]), (
+            "the wrapped asset did not inherit the source lot's basis"
+        )
+
+        sells = [t for t in txns
+                 if t.get("action") == "Sell" and t.get("symbol") == "CBETH-USD"]
+        assert sells, "no CBETH sale — the carried basis is never observed"
+        sell = sells[0]
+        assert sell["cost_basis"] == pytest.approx(into[0]["cost_basis"]), (
+            "the sale relieved a different basis than the wrap carried"
+        )
+        assert sell.get("realized_gain"), (
+            "the sale realized nothing — carried basis should produce a gain"
+        )
+
+    def test_a_stock_split_preserves_total_basis(self, exported):
+        """A broker `Stock Split` row reaches `Split`, whose basis effect
+        rescales lot quantity and per-share basis while leaving TOTAL
+        basis alone.
+
+        Also added deliberately: `basis._apply_split_to_lots` and
+        history's inline copy of the same arithmetic were both
+        never-executed before this row existed (F-002 / F-015).
+        """
+        txns = exported["transactions"]
+        splits = [t for t in txns if t.get("action") == "Split"]
+        assert splits, "the sample no longer contains a stock split"
+        sym = splits[0]["symbol"]
+
+        bought = sum(t.get("quantity", 0) for t in txns
+                     if t.get("symbol") == sym and t.get("action") == "Buy")
+        added = sum(t.get("quantity", 0) for t in splits)
+
+        holding = [h for h in exported["holdings_by_account"]
+                   if h["symbol"] == sym]
+        assert holding, f"{sym} is missing from holdings after the split"
+
+        cost = sum(abs(t.get("amount", 0)) for t in txns
+                   if t.get("symbol") == sym and t.get("action") == "Buy")
+
+        # The assertion that actually discriminates.  Quantity and TOTAL
+        # basis are identical whether or not the lot-level rescale ran —
+        # the balance walker adds the shares either way and a split
+        # creates no basis.  Only CONSUMING lots exposes it, so the
+        # sample sells part of the position after the split:
+        #
+        #   rescaled   -> 20 lots @ cost/20, selling 5 relieves cost/4
+        #   unrescaled -> 10 lots @ cost/10, selling 5 relieves cost/2
+        sells = [t for t in txns
+                 if t.get("symbol") == sym and t.get("action") == "Sell"]
+        assert sells, (
+            "the sample no longer sells after the split — without a "
+            "disposal the rescale is unobservable and this test proves "
+            "nothing (see AUDIT.md on invariance traps)"
+        )
+        sold_qty = sum(t["quantity"] for t in sells)
+        expected_relief = cost * (sold_qty / (bought + added))
+        assert sells[0]["cost_basis"] == pytest.approx(expected_relief, abs=0.05), (
+            f"sale relieved {sells[0]['cost_basis']} but post-split lots "
+            f"should relieve {expected_relief} — the split did not rescale "
+            "per-share basis"
+        )
+
+        remaining = cost - expected_relief
+        assert holding[0]["cost_basis"] == pytest.approx(remaining, abs=0.05), (
+            f"a split changed total cost basis ({holding[0]['cost_basis']} vs "
+            f"{remaining}) — it must only redistribute it across more shares"
+        )
+        assert holding[0]["quantity"] == pytest.approx(
+            bought + added - sold_qty)
+
     def test_pipeline_completes_and_emits_both_artifacts(
         self, isolated_workdir, sample_data, stub_prices
     ):
