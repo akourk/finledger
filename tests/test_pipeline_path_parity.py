@@ -63,6 +63,21 @@ def _write_wrap_ordering_trap(tmp: Path) -> None:
         f.write("Crypto Wallet,2024-02-05,Buy,CBETH,2,1500,3000,pricey lot\n")
         # Realize the carried basis.
         f.write("Crypto Wallet,2024-06-01,Sell,ETH,2,4000,8000,exit\n")
+        # --- Two lots simultaneously in the pool, priced 5x apart ------
+        # Without this the `Lot Method,,,Crypto,HIFO` row below is INERT.
+        # Every other consumption in this fixture has exactly ONE
+        # candidate lot available at the time (the unwrap runs before the
+        # same-day pricey buy), and with one candidate FIFO and HIFO pick
+        # identically — so the method never got to choose and mutating
+        # `account_methods` in EITHER pipeline path changed nothing.
+        # That is what let F-028 hide: a fixture that looked like it
+        # covered lot methods because it carried the metadata row.
+        #
+        #   FIFO -> relieves the 2024-03 lot (200)  -> +1300 gain
+        #   HIFO -> relieves the 2024-04 lot (1000) -> +500 gain
+        f.write("Crypto Wallet,2024-03-01,Buy,LOTA,10,20,200,cheap lot\n")
+        f.write("Crypto Wallet,2024-04-01,Buy,LOTA,10,100,1000,dear lot\n")
+        f.write("Crypto Wallet,2024-05-01,Sell,LOTA,10,150,1500,partial exit\n")
         # A Savings account and a Retirement account, so the fixture
         # also covers account-type-dependent logic.  Savings USD is the
         # one place holdings basis comes from `cash_principal` rather
@@ -148,6 +163,11 @@ def both_paths(isolated_workdir, stub_prices):
             "2024-06-01": 4000.0, "2024-12-31": 4000.0,
         })
         stub_prices.set_sector(sym, "Cryptocurrency")
+    stub_prices.set("LOTA", {
+        "2024-03-01": 20.0, "2024-04-01": 100.0,
+        "2024-05-01": 150.0, "2024-12-31": 150.0,
+    })
+    stub_prices.set_sector("LOTA", "Cryptocurrency")
 
     violations = []
     for argv in (["--skip-rename"], ["--refresh-prices"]):
