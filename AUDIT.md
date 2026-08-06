@@ -9,8 +9,8 @@ files, bug class, and severity only. The working ledger is
 |---|---|
 | **Started** | 2026-08-05 |
 | **Segments complete** | 1, 2, 4, 6, 7, Segment 5 item 1; Segment 3 substantially |
-| **Findings** | 7 open / 15 fixed |
-| **Suite** | 478 → 718 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
+| **Findings** | 9 open / 15 fixed |
+| **Suite** | 478 → 737 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -22,6 +22,8 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-024 | low | Drawdown values are fractions despite a `_pct` field name — a 100× trap for any future consumer |
+| F-023 | low | `_solve_xirr([])` returns −99.99% instead of None (unreachable from the real caller, which guards it) |
 | F-022 | low | Two documented limitations in wash-sale detection: same-day repurchases excluded, and no substantially-identical judgement |
 | F-021 | medium | *(fixed)* The audit's own offline harness corrupted prices for split-carrying symbols, producing a false reconciliation break |
 | F-020 | medium | *(fixed)* The JS tax-table fallback carried superseded 2025 standard deductions — OBBBA updated `tax.py` but not the JS literal |
@@ -713,6 +715,42 @@ user still reconciles the broker's 1099-B.
 **Segment 7 is complete** apart from verifying the tax tables against
 the IRS source documents themselves — the remainder of item 2, which
 needs external sources rather than code analysis.
+
+### Segment 5 item 2 — Headline figures, hand-computed (2026-08-06)
+
+Every other part of this audit tests **rules** — does this condition
+fire, does that carve-out apply. This item tests **arithmetic**, against
+answers derived by hand in the test comments rather than copied from a
+run. A test that records whatever the code currently produces pins a
+wrong answer just as firmly as a right one, and these are the figures
+where a wrong answer is invisible: a TWR off by a factor looks
+plausible, where a wrong holdings row does not.
+
+**Modified Dietz** — `r = (EV − SV − net) / (SV + net/2)`. The
+mid-period flow weighting is pinned by a case where the naive
+alternative (dividing by SV alone) gives 20% and the correct answer is
+13.33%, so the two can never be confused. Also pinned: a withdrawal must
+not read as a loss, and a flow that dwarfs the balance returns None
+rather than a number — a fabricated period return there compounds into
+the chain-linked lifetime figure.
+
+**XIRR** — 10% over a year, doubling, a loss, and the compounding check:
++10% in half a year annualizes to 21%, not 20%.
+
+**Drawdown** — −40% peak-to-trough, and that the running peak *resets*
+on a new high (100 → 200 → 150 is −25%, not −50%).
+
+All correct. 6/6 mutations caught, no source changes.
+
+Two conventions surfaced that are worth knowing before touching this
+code, both now recorded in the tests: `_solve_xirr` takes
+**years from t0**, not dates or ordinals; and drawdown values are
+**fractions** despite one field carrying a `_pct` suffix (F-024) — the
+dashboard multiplies by 100 at render.
+
+Two low findings fell out, both pinned rather than fixed: F-023
+(`_solve_xirr([])` returns −99.99% rather than None, unreachable because
+the caller guards it — and that guard is now tested) and F-024.
 
 ### Verified clean (no finding)
 
