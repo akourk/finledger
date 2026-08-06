@@ -8,9 +8,9 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1–7 and 9; Segment 8 partly absorbed (see Improvements) |
-| **Findings** | 9 open / 16 fixed |
-| **Suite** | 478 → 777 tests, green · `src/` coverage 84.9% → **88.6%** · never-executed functions 23 → 13 |
+| **Segments complete** | **all nine** (8's sweeps partly absorbed elsewhere) |
+| **Findings** | 10 open / 17 fixed |
+| **Suite** | 478 → 797 tests, green · `src/` coverage 84.9% → **88.6%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -23,8 +23,8 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 **fin's logic is in good shape. Its risk was concentrated almost
 entirely in undefended correctness.**
 
-Across seven segments, 26 findings, and roughly 300 targeted mutations,
-exactly **two live defects** were found in the application:
+Across all nine segments, 27 findings, and roughly 300 targeted
+mutations, **three live defects** were found in the application:
 
 - **F-017** (high) — a broker changing its date format silently drops
   every row of that file. 7 of 8 sample broker files went to zero rows
@@ -34,6 +34,11 @@ exactly **two live defects** were found in the application:
   carried the **pre-OBBBA** 2025 standard deduction for all four filing
   statuses. `tax.py` was updated when the law changed retroactively; the
   JS literal was not.
+- **F-026** (medium) — a malformed price-cache entry (a quoted number,
+  `Infinity`, a bool) was returned as a *value* rather than skipped,
+  flowing straight into `qty × price`. The shards are documented as
+  hand-editable, so the trigger is a plausible slip rather than an
+  exotic one.
 
 Everything else was code that was **already correct but could be broken
 silently**. That distinction is the audit's main result: of ~300
@@ -50,10 +55,10 @@ with zero unexplained breaks.
 
 | | before | after |
 |---|---|---|
-| Tests | 478 | **777** |
+| Tests | 478 | **797** |
 | `src/` coverage | 84.9% | **88.6%** |
 | Never-executed functions | 23 | **13** |
-| Source changes | — | 5 in `src/`, 1 in `tools/` |
+| Source changes | — | 6 in `src/`, 1 in `tools/` |
 
 Every source change was verified figure-neutral against a same-day
 golden, or had its scope measured explicitly.
@@ -116,6 +121,8 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-027 | low | Corrupt sidecar caches raise a bare `JSONDecodeError` that names neither the file nor the cache |
+| F-026 | medium | *(fixed)* A malformed price-cache entry (a quoted number, `Infinity`, a bool) was returned as a value instead of skipped |
 | F-025 | medium | *(fixed)* `_value_at_date`'s txn-price fallback was filter-scoped while `history`'s is global — a documented parity that was false |
 | F-024 | low | Drawdown values are fractions despite a `_pct` field name — a 100× trap for any future consumer |
 | F-023 | low | `_solve_xirr([])` returns −99.99% instead of None (unreachable from the real caller, which guards it) |
@@ -917,6 +924,42 @@ tempting to credit this fix, which landed near it. Reverting the fix and
 re-running showed the figures byte-identical: the improvement was
 entirely the **F-021 harness fix**. Two changes landing close together
 is exactly when a causal claim needs testing rather than asserting.
+
+### Segment 8 — Error paths (2026-08-06)
+
+The one cross-cutting sweep not absorbed by another segment. For each
+damaged input, the question was which of three things happens: **raises**
+(loud, fine), **degrades** (reduced but honest), or **silent** (a
+plausible wrong value — the bad case).
+
+Mostly good news. Truncated and empty price shards already degrade with
+a named `"unreadable price shard AAA.json — skipped"` note. `NaN`
+literals in a shard were already filtered, confirming the documented
+behaviour. A shard whose in-file symbol disagrees with its filename
+correctly yields nothing for the filename. A missing `yfinance` raises a
+clear `RuntimeError` naming the fix.
+
+**F-026** was the silent one. `get_price`'s guard was
+`isinstance(val, float) and isnan(val)` — float-only — so a shard entry
+holding `"110.0"` returned the **string**, and `Infinity`, `true`, a
+list and a dict all passed through into `val *= _tr_factor_after(...)`
+and every downstream `qty * price`. The trigger is realistic precisely
+because CLAUDE.md documents these shards as hand-editable and invites
+deleting them freely; quoting a number is the easiest slip there is.
+
+Fixed so anything that is not a finite real number is a **gap**, letting
+the lookback walk on to an earlier real close — strictly better than
+returning None at the bad entry, which would blind the surrounding days.
+Two near-misses are pinned: `0.0` is still a real price (a written-off
+position genuinely closes at zero), and `bool` is rejected explicitly
+because it is an `int` subclass.
+
+**F-027** (low, open) is the contrast. The four sidecar caches —
+`price_cache_meta`, `splits_cache`, `sector_cache`, `ticker_renames` —
+all die on corrupt JSON with a bare `JSONDecodeError` naming neither the
+file nor the cache. Crashing is the safe failure and far better than
+silent corruption, but these are the same files the docs invite editing
+by hand, and the price shards already show the better pattern.
 
 ### Verified clean (no finding)
 
