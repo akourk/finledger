@@ -9,8 +9,8 @@ files, bug class, and severity only. The working ledger is
 |---|---|
 | **Started** | 2026-08-05 |
 | **Segments complete** | **all nine** (8's sweeps partly absorbed elsewhere) |
-| **Findings** | 10 open / 18 fixed |
-| **Suite** | 478 → 801 tests, green · `src/` coverage 84.9% → **88.8%** · never-executed functions 23 → 13 |
+| **Findings** | 9 open / 19 fixed |
+| **Suite** | 478 → 810 tests, green · `src/` coverage 84.9% → **88.8%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -55,10 +55,10 @@ with zero unexplained breaks.
 
 | | before | after |
 |---|---|---|
-| Tests | 478 | **801** |
+| Tests | 478 | **810** |
 | `src/` coverage | 84.9% | **88.8%** |
 | Never-executed functions | 23 | **13** |
-| Source changes | — | 6 in `src/`, 1 in `tools/` |
+| Source changes | — | 7 in `src/`, 1 in `tools/` |
 
 Every source change was verified figure-neutral against a same-day
 golden, or had its scope measured explicitly.
@@ -122,7 +122,7 @@ not a verdict**, and so is a clean result.
 | ID | Sev | Claim |
 |---|---|---|
 | F-028 | medium | *(fixed)* The refresh path's per-account lot-method plumbing was unprotected — the parity fixture carried the `Lot Method` row but never gave it two candidate lots to choose between |
-| F-027 | low | Corrupt sidecar caches raise a bare `JSONDecodeError` that names neither the file nor the cache |
+| F-027 | low | *(fixed)* Corrupt sidecar caches raised a bare `JSONDecodeError` naming neither the file nor the cache |
 | F-026 | medium | *(fixed)* A malformed price-cache entry (a quoted number, `Infinity`, a bool) was returned as a value instead of skipped |
 | F-025 | medium | *(fixed)* `_value_at_date`'s txn-price fallback was filter-scoped while `history`'s is global — a documented parity that was false |
 | F-024 | low | Drawdown values are fractions despite a `_pct` field name — a 100× trap for any future consumer |
@@ -955,7 +955,7 @@ Two near-misses are pinned: `0.0` is still a real price (a written-off
 position genuinely closes at zero), and `bool` is rejected explicitly
 because it is an `int` subclass.
 
-**F-027** (low, open) is the contrast. The four sidecar caches —
+**F-027** is the contrast, now fixed. The four sidecar caches —
 `price_cache_meta`, `splits_cache`, `sector_cache`, `ticker_renames` —
 all die on corrupt JSON with a bare `JSONDecodeError` naming neither the
 file nor the cache. Crashing is the safe failure and far better than
