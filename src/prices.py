@@ -809,11 +809,25 @@ def get_price(symbol: str, on_date) -> float | None:
         probe = (target - timedelta(days=i)).isoformat()
         if probe in series:
             val = series[probe]
-            # Defensive: an older cache (written before _fetch_range
-            # filtered NaN) may still hold a NaN entry.  Treat it as a
-            # gap and keep walking back to a real prior close instead of
-            # propagating NaN into value/unrealized everywhere.
-            if isinstance(val, float) and math.isnan(val):
+            # Treat any entry that is not a finite real number as a GAP
+            # and keep walking back to a real prior close.
+            #
+            # NaN is the original case: an older cache (written before
+            # _fetch_range filtered NaN) may still hold one, and
+            # propagating it puts NaN into value/unrealized everywhere —
+            # and `json.dump` writes a bare NaN literal, which is valid
+            # JavaScript, so it renders rather than failing.
+            #
+            # The type check matters just as much.  These shards are
+            # documented as hand-editable ("plain JSON … delete freely"),
+            # and a hand-edit that QUOTES a number returned the string
+            # unchanged: `val *= _tr_factor_after(...)` below and every
+            # downstream `qty * price` then operate on a str.  bool is
+            # excluded explicitly because it is an int subclass and
+            # `True` is not a price.
+            if isinstance(val, bool) or not isinstance(val, (int, float)):
+                continue
+            if math.isnan(val) or math.isinf(val):
                 continue
             if _is_total_return_symbol(symbol):
                 val *= _tr_factor_after(symbol, probe)
