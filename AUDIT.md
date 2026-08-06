@@ -9,8 +9,8 @@ files, bug class, and severity only. The working ledger is
 |---|---|
 | **Started** | 2026-08-05 |
 | **Segments complete** | 1, 2, Segment 5 item 1 (pulled forward); Segment 3 substantially; Segment 4 begun |
-| **Findings** | 7 open / 10 fixed |
-| **Suite** | 478 → 585 tests, green · `src/` coverage 84.9% → 88.0% |
+| **Findings** | 6 open / 11 fixed |
+| **Suite** | 478 → 593 tests, green · `src/` coverage 84.9% → 88.0% |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -22,7 +22,7 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
-| F-017 | **high** | A date-format change silently drops every row in every parser, with no output — 7 of 8 sample broker files go to zero rows in silence |
+| F-017 | **high** | *(tier 1 fixed)* A date-format change silently drops every row in every parser, with no output — 7 of 8 sample broker files went to zero rows in silence |
 | F-016 | medium | *(fixed)* Two documented `prices.py` behaviours had no test — the failure-backoff cap and `covered_end` monotonicity |
 | F-015 | medium | *(fixed)* The Split basis rule is implemented twice, verbatim, and neither copy was executed by any test |
 | F-014 | low-med | *(fixed)* `build_holdings`' cost-basis source gate was unprotected while the same rule at two sibling sites was |
@@ -421,12 +421,32 @@ when one does, that account simply disappears from the portfolio. The
 only signal is an informational per-file count line. Partial drops are
 worse: no count anomaly at all.
 
-Logged unfixed with a three-tier fix sketch (see F-017). The cheapest
-tier — warn when a non-empty file yields zero rows — is additive stdout
-only, changes no figure, and is testable with `capsys`. It is the
-recommended next action, and was left undone only because a source
-change needs golden re-verification and a real-pipeline run, and the
-session had reached its budget ceiling.
+**Tier 1 fixed** (`e2c0e13`) — the audit's **first and only source
+change**. `parse_all_files` now calls out a recognised broker file that
+has data rows but yields zero transactions, and states the consequence.
+Golden export byte-identical, so no figure moved; four mutations CAUGHT,
+including a straight revert of the guard.
+
+The quiet half was designed as carefully as the loud half. The threshold
+sits above the longest known preamble (Voya writes six lines before its
+header) so the warning **cannot** fire on an empty-but-valid file — an
+empty `manual-adjustments.csv` is the common case. The cost is that
+losing a handful of rows stays silent. That trade is the right way
+round: a warning that fires every run trains the reader to skip the
+line, which is precisely the failure this audit found in the alerts
+panel. Tests cover both halves.
+
+Tiers 2 and 3 stay open: a skipped-row count per parser (catches
+**partial** loss, which tier 1 structurally cannot see) and surfacing it
+as a `data_health` check so it reaches the dashboard rather than only
+the console.
+
+**CLAUDE.md corrected** for the drift that sent the item-1 probe wrong:
+`parse_metadata` returns the account-group mapping and `main()` applies
+it. The note now spells out the consequence, because the failure is
+non-obvious and looks like a real bug — normalizing without that update
+makes every scoped rule miss and every action fall through to
+title-case.
 
 Items 2, 3 and 5 (post-parse invariant property tests, sign-split
 placement, metadata `Type` handling) remain. Item 2 is partly covered

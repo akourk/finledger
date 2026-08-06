@@ -671,8 +671,15 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
 - **`metadata.csv` is user-maintained metadata + project config.** The
   scanner classifies it as "skip" so the transaction pipeline never
   touches it, but `metadata.parse_metadata` reads it early in main()
-  to populate `retirement_meta` AND apply Account Group / Account
-  Type overrides onto `config.ACCOUNT_GROUPS` / `ACCOUNT_TYPES`.
+  to populate `retirement_meta`, which carries the Account Group /
+  Account Type overrides.  **`parse_metadata` RETURNS those mappings;
+  `main()` is what applies them** — `ACCOUNT_GROUPS.update(
+  retirement_meta["account_groups"])`.  Calling `parse_metadata` alone
+  therefore leaves `config.ACCOUNT_GROUPS` empty, and since
+  `normalize.RULES` are scoped by `account_group`, any code path that
+  normalizes actions without doing that update sees EVERY scoped rule
+  miss and every action fall through to title-case.  That looks exactly
+  like a swarm of classification gaps and is not one.
   Supported `Type` values:
   - `Personal Info` (Note=`Birthday`) — drives age math + Monte Carlo
     horizon.
