@@ -9,8 +9,8 @@ files, bug class, and severity only. The working ledger is
 |---|---|
 | **Started** | 2026-08-05 |
 | **Segments complete** | **all nine** (8's sweeps partly absorbed elsewhere) |
-| **Findings** | 10 open / 17 fixed |
-| **Suite** | 478 → 799 tests, green · `src/` coverage 84.9% → **88.8%** · never-executed functions 23 → 13 |
+| **Findings** | 11 open / 17 fixed |
+| **Suite** | 478 → 801 tests, green · `src/` coverage 84.9% → **88.8%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -55,7 +55,7 @@ with zero unexplained breaks.
 
 | | before | after |
 |---|---|---|
-| Tests | 478 | **799** |
+| Tests | 478 | **801** |
 | `src/` coverage | 84.9% | **88.8%** |
 | Never-executed functions | 23 | **13** |
 | Source changes | — | 6 in `src/`, 1 in `tools/` |
@@ -121,6 +121,7 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-028 | medium | The refresh path's per-account lot-method plumbing is unprotected — and `test_pipeline_path_parity.py` does not catch it despite a fixture built to |
 | F-027 | low | Corrupt sidecar caches raise a bare `JSONDecodeError` that names neither the file nor the cache |
 | F-026 | medium | *(fixed)* A malformed price-cache entry (a quoted number, `Infinity`, a bool) was returned as a value instead of skipped |
 | F-025 | medium | *(fixed)* `_value_at_date`'s txn-price fallback was filter-scoped while `history`'s is global — a documented parity that was false |
@@ -1022,6 +1023,44 @@ That is the same invariance trap that made the first draft of
 which suggests it is worth stating as a rule rather than an anecdote:
 **when a rule redistributes something without changing its total, no
 assertion on the total can see it. Consume the thing.**
+
+### Sample coverage: Lot Method and Cost Basis (2026-08-06)
+
+Item 3 of the deferred list. Both metadata rows change realized gain —
+tax — and neither was reachable from sample data.
+
+**Lot Method** (`Coinbase = HIFO`, which is what Coinbase really uses),
+made observable by two ADA lots priced 4× apart with the *later* one
+expensive, then a sale of one lot's worth: FIFO relieves the cheap lot
+for a +550 gain, HIFO the dear one for a −200 loss. Only Coinbase is
+overridden, so the effect is attributable to the row rather than to a
+changed default.
+
+**Cost Basis**, on an off-platform MATIC `Receive` — which also brings
+the external-boundary transfer path into the sample for the first time.
+The override is deliberately different from the FMV so the test can tell
+which was used.
+
+**And it turned up F-028.** Mutating the `account_methods` plumbing
+inside `_refresh_prices_only` **survives the entire suite**, while the
+same mutation inside `main()` is caught by the new sample test. So the
+refresh path could silently stop honouring per-account lot methods —
+which change realized gain, holding period, MAGI and Roth eligibility,
+while leaving balances untouched, so nothing else would flag it.
+
+What makes it worth a finding rather than a shrug is that
+`test_pipeline_path_parity.py` exists precisely to pin the two paths
+together, and its fixture is *not* naive: it carries a
+`Lot Method,,,Crypto,HIFO` row **and** two CBETH lots priced 3× apart,
+exactly the structure needed to tell HIFO from FIFO. It still misses
+this. `PLAN-audit.md` called the shot — *"its fixture had to be enlarged
+this session before one of its tests stopped being vacuous. Assume the
+others may be too."*
+
+Logged rather than fixed: the right fix depends on **why** the parity
+test misses it, and guessing at that would be the kind of
+plausible-but-unverified change this audit has spent forty commits
+arguing against.
 
 ## Improvement opportunities
 
