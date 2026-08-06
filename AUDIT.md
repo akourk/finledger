@@ -8,8 +8,8 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1, 2, Segment 5 item 1 (pulled forward); Segment 3 substantially |
-| **Findings** | 6 open / 10 fixed |
+| **Segments complete** | 1, 2, Segment 5 item 1 (pulled forward); Segment 3 substantially; Segment 4 begun |
+| **Findings** | 7 open / 10 fixed |
 | **Suite** | 478 → 585 tests, green · `src/` coverage 84.9% → 88.0% |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
@@ -22,6 +22,7 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-017 | **high** | A date-format change silently drops every row in every parser, with no output — 7 of 8 sample broker files go to zero rows in silence |
 | F-016 | medium | *(fixed)* Two documented `prices.py` behaviours had no test — the failure-backoff cap and `covered_end` monotonicity |
 | F-015 | medium | *(fixed)* The Split basis rule is implemented twice, verbatim, and neither copy was executed by any test |
 | F-014 | low-med | *(fixed)* `build_holdings`' cost-basis source gate was unprotected while the same rule at two sibling sites was |
@@ -388,6 +389,49 @@ reason:
 All three were caught only by running the mutation, never by reading the
 test. That is the concrete argument for the prime directive: **a test
 that has not been seen to fail is not yet evidence of anything.**
+
+### Segment 4 — The ingest layer (2026-08-05, begun)
+
+**Item 1 — action coverage on real data: clean.** All 14,063 real
+transactions across 48 broker files, 92 distinct
+`(account_group, raw action)` pairs, and **every one normalizes to a
+catalog entry**. Nothing falls through to title-case pass-through.
+
+Worth recording *how* that conclusion was nearly wrong. The first probe
+reported 16 actions falling through — `Reinvest Shares`,
+`trade_settle_out`, `Stock Split` and others — which would have been a
+substantial false finding. `normalize.RULES` are scoped by
+`account_group`, and the probe had left that field as the raw broker
+account name (`Schwab Roth IRA` rather than `Roth IRA`), so no scoped
+rule could match. The cause was a wrong assumption about
+`parse_metadata`: it *returns* the account-group mapping, and `main.py`
+applies it (`ACCOUNT_GROUPS.update(...)`). CLAUDE.md says
+`parse_metadata` applies the overrides itself — minor doc drift, but it
+is what sent the probe wrong. **Same trap as the sample-snapshot test
+earlier in this audit: normalization checked without the state it
+depends on.** Twice in one session from two different directions.
+
+**Item 4 — malformed input: F-017, the first high-severity finding that
+is a live robustness gap rather than a missing test.** Every parser
+drops a row whose date won't parse, silently, via `except ...: continue`.
+Simulating a broker date-format change on the synthetic sample takes 7
+of 8 broker files to **zero rows with no exception, no warning and no
+stderr** — 35 rows gone in silence. Brokers do change export formats;
+when one does, that account simply disappears from the portfolio. The
+only signal is an informational per-file count line. Partial drops are
+worse: no count anomaly at all.
+
+Logged unfixed with a three-tier fix sketch (see F-017). The cheapest
+tier — warn when a non-empty file yields zero rows — is additive stdout
+only, changes no figure, and is testable with `capsys`. It is the
+recommended next action, and was left undone only because a source
+change needs golden re-verification and a real-pipeline run, and the
+session had reached its budget ceiling.
+
+Items 2, 3 and 5 (post-parse invariant property tests, sign-split
+placement, metadata `Type` handling) remain. Item 2 is partly covered
+already by `tests/test_sample_snapshot.py`, which asserts non-negative
+quantity/price/fees/amount across all nine parsers.
 
 ### Verified clean (no finding)
 
