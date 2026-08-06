@@ -9,7 +9,7 @@ files, bug class, and severity only. The working ledger is
 |---|---|
 | **Started** | 2026-08-05 |
 | **Segments complete** | 1, 2, 4, 6, Segment 5 item 1; Segment 3 substantially; Segment 7 begun |
-| **Findings** | 7 open / 13 fixed |
+| **Findings** | 6 open / 15 fixed |
 | **Suite** | 478 → 686 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
@@ -22,6 +22,7 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-021 | medium | *(fixed)* The audit's own offline harness corrupted prices for split-carrying symbols, producing a false reconciliation break |
 | F-020 | medium | *(fixed)* The JS tax-table fallback carried superseded 2025 standard deductions — OBBBA updated `tax.py` but not the JS literal |
 | F-019 | low | The Performance tab's anchor cards invite an inference that doesn't hold — Total Return is not Realized + Unrealized |
 | F-018 | medium | *(silence fixed)* `metadata.csv` silently degraded invalid input; three documented clamps reject-to-default instead of clamping |
@@ -634,8 +635,46 @@ year fails. The test carries a not-vacuous guard: if the parsing regexes
 stop matching, or no year is shared, the comparison would pass by
 comparing nothing, and both are asserted.
 
+**Item 1 — reconciliation against broker ground truth: fin passes.**
+Every `Reconcile *` row in the real ledger — balances, 1099-B realized,
+§1256, 1099-DIV/INT income, crypto 1099-MISC other income, across five
+account groups and nine tax years — comes out `ok` or `explained`. The
+one row carrying a declared cash-sweep expectation lands on exactly that
+expectation. This is the technique with the highest consequence per
+finding in the whole plan, and it found nothing wrong.
+
+**It very nearly found something wrong that wasn't there — F-021.** The
+first run reported three Schwab balance rows breaking by thousands,
+including a retirement account off by a large amount. That was entirely an
+artifact of the audit's own offline harness: `golden.py` stubbed
+`_fetch_splits` to `[]`, which makes
+`prices._invalidate_prices_for_split_change` see a symbol's real split
+history vanish, drop its cached prices, and — with no way to refetch
+offline — freeze it at its last transaction price.
+
+Two things made that catchable rather than reportable. `get_price`
+returned correct moving values for the frozen symbols while a
+*neighbouring* position in the same account matched `get_price` exactly,
+which is not a shape any real pricing bug takes. And the obvious
+hypothesis was wrong on its first test: FSELX also carries cached
+splits and priced correctly, so "has splits" was not the discriminator
+and the theory had to be checked by running `compute_history` directly
+with no pipeline fetch step. It priced everything correctly, locating
+the fault in the harness.
+
+Blast radius was assessed rather than assumed: A/B golden diffs are
+unaffected (both sides degrade identically, so every figure-neutrality
+conclusion here still holds) and the Segment 6 smoke runs are unaffected
+(they assert on NaN and console errors, not absolute values). Only
+absolute figures from an offline run were wrong, and that reached just
+this one probe.
+
+The lesson generalises past this bug: **a stub is a claim about the
+world, and a wrong one degrades silently.** Returning `[]` looked like
+"no data" and was read as "the data changed".
+
 Verifying tables against the IRS source documents themselves (the rest
-of item 2) still wants doing, as do items 1, 3 and 5.
+of item 2) still wants doing, as do items 3 and 5.
 
 ### Verified clean (no finding)
 
