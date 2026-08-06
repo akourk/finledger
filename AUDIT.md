@@ -8,9 +8,9 @@ files, bug class, and severity only. The working ledger is
 | | |
 |---|---|
 | **Started** | 2026-08-05 |
-| **Segments complete** | 1, 2, 4, 6, Segment 5 item 1; Segment 3 substantially; Segment 7 begun |
-| **Findings** | 6 open / 15 fixed |
-| **Suite** | 478 → 686 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
+| **Segments complete** | 1, 2, 4, 6, 7, Segment 5 item 1; Segment 3 substantially |
+| **Findings** | 7 open / 15 fixed |
+| **Suite** | 478 → 718 tests, green · `src/` coverage 84.9% → **88.4%** · never-executed functions 23 → 13 |
 
 Severity: **high** = a displayed number is wrong, or tax/basis is
 affected. **medium** = wrong under conditions that haven't occurred
@@ -22,6 +22,7 @@ yet. **low** = latent, cosmetic, or a robustness gap.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-022 | low | Two documented limitations in wash-sale detection: same-day repurchases excluded, and no substantially-identical judgement |
 | F-021 | medium | *(fixed)* The audit's own offline harness corrupted prices for split-carrying symbols, producing a false reconciliation break |
 | F-020 | medium | *(fixed)* The JS tax-table fallback carried superseded 2025 standard deductions — OBBBA updated `tax.py` but not the JS literal |
 | F-019 | low | The Performance tab's anchor cards invite an inference that doesn't hold — Total Return is not Realized + Unrealized |
@@ -673,8 +674,45 @@ The lesson generalises past this bug: **a stub is a claim about the
 world, and a wrong one degrades silently.** Returning `[]` looked like
 "no data" and was read as "the data changed".
 
-Verifying tables against the IRS source documents themselves (the rest
-of item 2) still wants doing, as do items 3 and 5.
+**Item 3 — AGI/MAGI carve-outs: all correct, three were unprotected.**
+AGI feeds Roth eligibility, the marginal-rate display and the estimated
+capital-gains tax. Existing tests drive `_tax_rate_estimate` mostly with
+an *empty* transaction list, which exercises the salary/paycheck side
+and leaves the txn-driven rules unprotected. Mutation showed the
+retirement-income exclusion and the employer-match filter were caught;
+three were not:
+
+- the 401(k) deduction's `account_group` scope. The sharpest of the
+  three: without it a **Roth** contribution is deducted from AGI. Roth
+  money is post-tax, and understating AGI there corrupts the very Roth
+  eligibility figure the contribution belongs to.
+- realized gains restricted to Taxable accounts — without it, gains
+  realized inside an IRA enter the tax estimate.
+- the pretax-deduction clamp — without it a fat-fingered `Paycheck
+  Deduction` row drives wages negative and picks a nonsense bracket.
+
+Every fixture supplies both sides of its rule, so a test can only pass
+if the condition is doing work. 5/5 now caught; no source changes.
+
+**Item 5 — wash sales: correct, and two limitations now documented.**
+Only one of five rules was protected. The ±30-day boundaries are now
+pinned from both sides (day 30 inside, day 31 outside, each direction),
+along with the loss-only guard, the retirement-loss exclusion, and the
+fact that a repurchase *inside an IRA* still triggers a taxable-account
+loss — the IRS applies the rule across accounts. `Reinvest` and
+`Contribution` count as acquiring transactions, which is what makes a
+reinvested dividend the classic accidental wash sale.
+
+Two deliberate limitations are pinned as **behaviour** rather than
+asserted as correct (F-022), so changing either is a decision: a
+repurchase on the sale's own date is excluded, and fin makes no
+substantially-identical judgement (exact symbol only). Both
+under-report on a panel titled "Potential Wash Sales", against which the
+user still reconciles the broker's 1099-B.
+
+**Segment 7 is complete** apart from verifying the tax tables against
+the IRS source documents themselves — the remainder of item 2, which
+needs external sources rather than code analysis.
 
 ### Verified clean (no finding)
 
