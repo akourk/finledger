@@ -441,6 +441,14 @@ Tiers 2 and 3 stay open: a skipped-row count per parser (catches
 as a `data_health` check so it reaches the dashboard rather than only
 the console.
 
+**Validated on the real corpus, not just fixtures.** Parsing the user's
+48 real broker files (read-only — no network, no cache writes) emits
+**zero** warnings. Exactly one real file parses to zero rows, and it is
+header-only — genuinely empty, so the silence is correct rather than a
+miss. That is the property worth having evidence for: synthetic tests
+show the warning *can* fire, but only the real corpus shows it does not
+fire spuriously on the data the user actually runs every day.
+
 **CLAUDE.md corrected** for the drift that sent the item-1 probe wrong:
 `parse_metadata` returns the account-group mapping and `main()` applies
 it. The note now spells out the consequence, because the failure is
