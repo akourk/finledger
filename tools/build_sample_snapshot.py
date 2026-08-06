@@ -301,6 +301,50 @@ def _build(tmp: Path) -> None:
          "Price at Transaction": "$4000.00",
          "Subtotal": "$1840.00", "Total (inclusive of fees and/or spread)": "$1830.00",
          "Fees and/or Spread": "$10.00", "Notes": ""},
+
+        # --- Two ADA lots at very different prices, then a partial sale --
+        # This is what makes the `Lot Method` metadata row observable.
+        # The LATER lot is the EXPENSIVE one, so FIFO and HIFO relieve
+        # different lots and the realized gain differs sharply:
+        #   FIFO -> relieves the 2023 lot  (cheap basis, big gain)
+        #   HIFO -> relieves the 2024 lot  (dear basis, small gain)
+        # With both lots at the same price the two methods agree and the
+        # metadata row would be untestable.
+        {"ID": "tx-8", "Timestamp": "2023-02-10 10:00:00 UTC",
+         "Transaction Type": "Buy", "Asset": "ADA",
+         "Quantity Transacted": "1000", "Price Currency": "USD",
+         "Price at Transaction": "$0.25",
+         "Subtotal": "$250.00", "Total (inclusive of fees and/or spread)": "$250.00",
+         "Fees and/or Spread": "$0.00", "Notes": ""},
+        {"ID": "tx-9", "Timestamp": "2024-11-20 10:00:00 UTC",
+         "Transaction Type": "Buy", "Asset": "ADA",
+         "Quantity Transacted": "1000", "Price Currency": "USD",
+         "Price at Transaction": "$1.00",
+         "Subtotal": "$1000.00", "Total (inclusive of fees and/or spread)": "$1000.00",
+         "Fees and/or Spread": "$0.00", "Notes": ""},
+        {"ID": "tx-10", "Timestamp": "2025-09-05 10:00:00 UTC",
+         "Transaction Type": "Sell", "Asset": "ADA",
+         "Quantity Transacted": "1000", "Price Currency": "USD",
+         "Price at Transaction": "$0.80",
+         "Subtotal": "$800.00", "Total (inclusive of fees and/or spread)": "$800.00",
+         "Fees and/or Spread": "$0.00", "Notes": ""},
+
+        # --- An off-platform receive with user-supplied basis -----------
+        # A `Receive` is crypto arriving from a wallet fin cannot see, so
+        # it crosses fin's MEASUREMENT BOUNDARY (contribution at FMV) and
+        # fin has no way to reconstruct what it cost.  That is exactly
+        # the case the `Cost Basis` metadata row exists for — see the
+        # paired row in the metadata block below.
+        #
+        # Without the override this lot would take FMV-at-transfer basis,
+        # which is only an estimate; with it, the broker's
+        # customer-provided figure wins.
+        {"ID": "tx-11", "Timestamp": "2023-06-01 08:00:00 UTC",
+         "Transaction Type": "Receive", "Asset": "MATIC",
+         "Quantity Transacted": "2000", "Price Currency": "USD",
+         "Price at Transaction": "$0.90",
+         "Subtotal": "$1800.00", "Total (inclusive of fees and/or spread)": "$1800.00",
+         "Fees and/or Spread": "$0.00", "Notes": "Received from external wallet"},
     ])
 
     # Coinbase Pro / GDAX — a small trade pair (deposit + match buy + match
@@ -545,6 +589,21 @@ def _build(tmp: Path) -> None:
         # here, in the user's own metadata.csv, so they stay
         # personal/local.
         ["Account Group", "", "", "Robinhood",                   "Robinhood"],
+        # Lot-relief method for one account.  Coinbase really does
+        # default to HIFO, and this overrides fin's FIFO default for
+        # Coinbase ONLY — the other accounts stay FIFO, which is what
+        # makes the row's effect attributable.  Changes realized gain and
+        # holding period, never balances.
+        ["Lot Method", "", "", "Coinbase", "HIFO"],
+
+        # User-supplied basis for the off-platform MATIC receive above.
+        # Symbol = account_group, Date = acquired, Amount = TOTAL basis,
+        # Note = "<qty> <asset>".  fin matches this to one lot-creating
+        # txn by (account, symbol, date +-2d, qty) and stamps
+        # basis_override, which the walker honours instead of the
+        # FMV-at-transfer estimate.
+        ["Cost Basis", "2023-06-01", "1400", "Coinbase", "2000 MATIC"],
+
         ["Account Group", "", "", "Coinbase",                    "Coinbase"],
         ["Account Group", "", "", "Coinbase Pro",                "Coinbase"],
         ["Account Group", "", "", "Schwab Roth IRA",             "Roth IRA"],

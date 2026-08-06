@@ -327,6 +327,80 @@ class TestSampleDrivesAFullRun:
         assert holding[0]["quantity"] == pytest.approx(
             bought + added - sold_qty)
 
+    def test_lot_method_override_changes_which_lot_is_relieved(self, exported):
+        """`Lot Method: Coinbase = HIFO` must actually govern relief.
+
+        The sample holds two ADA lots at very different prices, with the
+        LATER one expensive, then sells exactly one lot's worth:
+
+            FIFO -> relieves the cheap 2023 lot  -> a large GAIN
+            HIFO -> relieves the dear 2024 lot   -> a small LOSS
+
+        Both lots at one price would make the two methods agree and this
+        test would prove nothing. The prices differ by 4x on purpose.
+
+        Only Coinbase is overridden; every other account stays FIFO,
+        which is what makes the effect attributable to the metadata row.
+        """
+        txns = exported["transactions"]
+        buys = sorted((t for t in txns
+                       if t.get("symbol") == "ADA-USD" and t.get("action") == "Buy"),
+                      key=lambda t: t["date"])
+        sells = [t for t in txns
+                 if t.get("symbol") == "ADA-USD" and t.get("action") == "Sell"]
+        assert len(buys) == 2 and sells, "the sample lost its ADA lot fixture"
+
+        cheap, dear = buys[0]["amount"], buys[1]["amount"]
+        assert dear > cheap * 2, (
+            "the two ADA lots are no longer far enough apart in price for "
+            "FIFO and HIFO to be distinguishable"
+        )
+
+        assert sells[0]["cost_basis"] == pytest.approx(dear), (
+            f"the sale relieved {sells[0]['cost_basis']}, but HIFO must "
+            f"relieve the DEAR lot ({dear}); relieving {cheap} means the "
+            "Lot Method row was ignored and FIFO ran"
+        )
+        assert sells[0]["realized_gain"] < 0, (
+            "under HIFO this sale is a loss; a gain means FIFO ran"
+        )
+
+        holding = [h for h in exported["holdings_by_account"]
+                   if h["symbol"] == "ADA-USD"]
+        assert holding[0]["cost_basis"] == pytest.approx(cheap), (
+            "the cheap lot should be what remains after a HIFO relief"
+        )
+
+    def test_cost_basis_override_beats_the_fmv_estimate(self, exported):
+        """A `Cost Basis` row supplies basis fin cannot reconstruct.
+
+        The sample receives MATIC from an off-platform wallet. fin cannot
+        see what it cost, so without the override the lot would take
+        FMV-at-transfer basis — a documented estimate, not the truth. The
+        metadata row carries the broker's customer-provided figure, and
+        it must win.
+
+        The override is deliberately DIFFERENT from the FMV so the test
+        can tell which one was used.
+        """
+        txns = exported["transactions"]
+        recv = [t for t in txns if t.get("symbol") == "MATIC-USD"]
+        assert recv, "the sample lost its off-platform receive"
+        row = recv[0]
+
+        fmv = row["amount"]
+        assert row["cost_basis"] != pytest.approx(fmv), (
+            f"basis equals the FMV amount ({fmv}) — the Cost Basis "
+            "override was not applied"
+        )
+        assert row["cost_basis"] == pytest.approx(1400.0), (
+            "basis should be the user-supplied figure from metadata.csv"
+        )
+
+        holding = [h for h in exported["holdings_by_account"]
+                   if h["symbol"] == "MATIC-USD"]
+        assert holding[0]["cost_basis"] == pytest.approx(1400.0)
+
     def test_pipeline_completes_and_emits_both_artifacts(
         self, isolated_workdir, sample_data, stub_prices
     ):
