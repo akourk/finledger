@@ -130,7 +130,7 @@ not a verdict**, and so is a clean result.
 | F-022 | low | Two documented limitations in wash-sale detection: same-day repurchases excluded, and no substantially-identical judgement |
 | F-021 | medium | *(fixed)* The audit's own offline harness corrupted prices for split-carrying symbols, producing a false reconciliation break |
 | F-020 | medium | *(fixed)* The JS tax-table fallback carried superseded 2025 standard deductions — OBBBA updated `tax.py` but not the JS literal |
-| F-019 | low | The Performance tab's anchor cards invite an inference that doesn't hold — Total Return is not Realized + Unrealized |
+| F-019 | low | *(fixed)* The Performance tab's anchor cards invited an inference that doesn't hold — Total Return is not Realized + Unrealized, and no simple sum reaches it |
 | F-018 | medium | *(silence fixed)* `metadata.csv` silently degraded invalid input; three documented clamps reject-to-default instead of clamping |
 | F-017 | **high** | *(tiers 1–2 fixed)* A date-format change silently drops every row in every parser, with no output — 7 of 8 sample broker files went to zero rows in silence |
 | F-016 | medium | *(fixed)* Two documented `prices.py` behaviours had no test — the failure-backoff cap and `covered_end` monotonicity |
@@ -1609,6 +1609,61 @@ identical, net −40 lines across the two walkers.
 The `fin-lot-walker-sync` skill now leads with the better advice:
 **prefer extraction over lockstep.** The strongest version of a
 change-both-copies checklist is not needing to follow it.
+
+### F-019: cards that invite arithmetic that does not hold (2026-08-06)
+
+The first item taken purely for usability rather than correctness, and
+the investigation changed what the fix should be.
+
+The Performance tab's five lifetime cards — Total Return, Realized,
+Unrealized, Net Contributed, Fees Paid — sat in one flat row of equal
+peers. The obvious reading is `Realized + Unrealized = Total Return`.
+**On the shipped sample it is short by about 16% of the total.** That is
+not a rounding gap a reader shrugs off; it is large enough to look like
+a bug in the dashboard.
+
+**The first instinct — build a reconciling bridge — was wrong, and
+measuring is what showed it.** I went looking for the missing term,
+expecting income and fees to close it. They do not, and chasing the
+residual through the ledger turned up no accounting error: portfolio-wide,
+basis created is LESS than funding available, with the difference being
+uninvested cash. The identity I was trying to complete simply does not
+exist.
+
+The reason is **redeployment**. Sell at a gain, buy something else, and
+that gain now sits inside the cost basis of a position you still hold —
+counted in neither Realized (the lot is closed, its gain already booked)
+nor Unrealized (which measures only movement since the new purchase).
+Add income arriving as cash without being a gain on any lot, and cash
+outside Savings accounts not being in holdings value at all, and there
+is no clean closed form to display.
+
+Worth recording as a general shape: **a number that refuses to
+reconcile is not always a bug — sometimes the identity you assumed was
+never true.** I spent three passes looking for a defect that was not
+there, and the giveaway was that my reconstruction disagreed with fin's
+own lot-queue parity check, which passes. When an ad-hoc recomputation
+disagrees with a check the codebase already enforces, suspect the
+recomputation.
+
+So the fix is presentational and honest about the limit:
+
+* Total Return moves to its own row, carrying a **visible** sub-line of
+  the one identity that does hold exactly — `value − contributed`.
+* The components sit under a caption stating they do not sum, with the
+  redeployment reason in one line.
+* The hover tooltip, which already explained this, now says it plainly
+  instead of hedging with "doesn't equal ... exactly".
+
+A tooltip was the pre-existing defence and it is the wrong instrument:
+it is invisible until you hover the exact card that confused you, which
+you only do if you already suspect something is wrong. The reader who
+needs it is the one who does not.
+
+Also verified in a browser at desktop and mobile widths rather than
+assumed. That turned up a **pre-existing** horizontal overflow at 375px
+in the page chrome (top bar, tab nav) — unrelated to this change
+(`#performance *` had zero offenders) and spun off separately.
 
 ## Improvement opportunities
 

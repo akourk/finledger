@@ -1196,19 +1196,29 @@ function renderPerformance() {
     <input type="date" class="hist-date" min="${_perfWindowMin}" max="${_perfWindowMax}"
            value="${perfTwrEnd || ''}" onchange="setPerfTwrEnd(this.value)">` : '';
 
-  const _totalReturnTitle = 'Current portfolio value minus net contributed (deposits − withdrawals).  Same formula as the Top bar and the Overview tab — the "did I make money?" answer.\n\nDoesn\'t equal Realized + Unrealized exactly because Income (dividends/interest/rewards) shows up in either side as cash without being a realized gain on a specific lot, and any cash outside Savings accounts isn\'t in the holdings value.';
+  const _totalReturnTitle = 'Current portfolio value minus net contributed (deposits − withdrawals).  Same formula as the Top bar and the Overview tab — the "did I make money?" answer.\n\nIt is NOT Realized + Unrealized, and no simple sum reaches it. Sale proceeds get redeployed into new positions, so a dollar of gain can end up inside the cost basis of something you still hold rather than in either figure. Income arrives as cash without being a realized gain on any lot, and cash outside Savings accounts is not in the holdings value.\n\nTreat Realized and Unrealized as two views of the portfolio, not two halves of this number.';
 
   // Row 1 — fixed anchor: WHOLE PORTFOLIO, ALL-TIME.  Doesn't react
   // to any toggles.  Gives the user a stable reference point above
   // the toggles so they can compare the windowed view (row 4) to
   // their full portfolio's lifetime numbers at a glance.
-  const anchorCards = [
+  // The headline answer, on its own row.  It used to sit in a flat line
+  // of five peers, which invites the reader to add Realized + Unrealized
+  // and wonder why the total is wrong (F-019).  No clean sum reaches it —
+  // see _totalReturnTitle — so the fix is to stop the cards LOOKING like
+  // addends, and to show visibly (not on hover) the one identity that
+  // does hold exactly.
+  const anchorHeadline = [
     {
       label: 'Total Return',
       value: fmtSigned(_whole_totalReturn) + (_whole_totalReturnPct != null ? ` <span class="sub">${(_whole_totalReturnPct >= 0 ? '+' : '') + _whole_totalReturnPct.toFixed(1)}%</span>` : ''),
       cls: _whole_totalReturn >= 0 ? 'positive' : 'negative',
+      note: `${fmtMoney(_whole_value)} value − ${fmtMoney(_whole_netContrib)} contributed`,
       title: _totalReturnTitle
     },
+  ];
+
+  const anchorCards = [
     { label: 'Realized', value: fmtSigned(_whole_realized) },
     { label: 'Unrealized', value: fmtSigned(_whole_unrealized) },
     { label: 'Net Contributed', value: fmtMoney(_whole_netContrib) },
@@ -1319,6 +1329,8 @@ function renderPerformance() {
   //   Row 5. Risk-adjusted ratios + Max Drawdown — filtered + windowed
   const statsHtml =
     `<div class="perf-anchor-label" style="color:var(--text-dim);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Whole portfolio · all-time</div>` +
+    _renderCardRow(anchorHeadline) +
+    `<div class="stats-caption">The figures below are separate views of the portfolio — they do <strong>not</strong> add up to Total Return. Proceeds from a sale get redeployed, so a gain can end up inside the cost basis of a position you still hold rather than in either one.</div>` +
     _renderCardRow(anchorCards) +
     // Both toggle rows live inside a single card so they read as one
     // grouped control surface (Account on top, Window below).  Shared

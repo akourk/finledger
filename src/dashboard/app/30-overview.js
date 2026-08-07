@@ -1085,12 +1085,19 @@ renderConcentration();
 //   cards       — [{ label, value, cls?, title? }]
 //   extraClass  — optional extra class for the wrapper (e.g.
 //                 "opt-anchor-stats" for the Options anchor row)
+// `note` is an OPTIONAL always-visible sub-line under the value. Use it
+// for something the reader needs in order to read the number correctly —
+// a definition, or a caveat that changes what the figure means. Anything
+// that is merely nice to know belongs in `title` (hover) instead;
+// a note on every card is noise, and noise is how the one that matters
+// gets skipped.
 function _renderStatCards(cards, extraClass) {
   const wrapCls = extraClass ? `stats ${extraClass}` : 'stats';
   return `<div class="${wrapCls}">` + cards.map(c => {
     const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
     const titleAttr = c.title ? ` title="${_htmlEsc(c.title)}"` : '';
-    return `<div class="${cls}"${titleAttr}><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
+    const note = c.note ? `<div class="stat-note">${c.note}</div>` : '';
+    return `<div class="${cls}"${titleAttr}><div class="label">${c.label}</div><div class="value">${c.value}</div>${note}</div>`;
   }).join('') + '</div>';
 }
 
