@@ -4,14 +4,22 @@ Measured before the fix, at a 375px viewport: `scrollWidth` 635 against
 `clientWidth` 375. The whole page shifted horizontally on every tab.
 
 **These are static assertions on the CSS, and that is a real limitation
-worth stating.** The actual verification was done in a browser at 375px,
-768px and 1400px — the numbers in this docstring came from there, not
-from these tests. What a stylesheet grep can do is stop a specific rule
-being deleted or reverted; what it cannot do is notice a NEW overflow
-from unrelated markup. Treat a green run here as "the known causes are
-still handled", not "the dashboard is responsive".
+worth stating.** The actual verification was done in a browser at 320px,
+375px, 768px and 1400px — the numbers here came from there, not from
+these tests. What a stylesheet grep can do is stop a specific rule being
+deleted or reverted; what it cannot do is notice a NEW overflow from
+unrelated markup. Treat a green run here as "the known causes are still
+handled", not "the dashboard is responsive".
 
-The four causes, all found by measuring rather than reading:
+**A methodology note that cost a round of false confidence.** The first
+sweep drove tabs with `location.hash`, which does NOT trigger the lazy
+per-tab renderers — most panels were still empty, so a clean result
+meant almost nothing. Clicking the actual tab buttons is what made the
+sweep real, and it immediately surfaced overflows the hash-driven pass
+had reported as clean. When a UI check passes suspiciously early, ask
+whether the UI was actually there.
+
+The causes, all found by measuring rather than reading:
 
 1. **`.panel` inside `.overview-split`** — a grid item defaults to
    `min-width: auto` and so refuses to shrink below its content. One
@@ -29,6 +37,16 @@ The four causes, all found by measuring rather than reading:
 4. **`.top-bar-title`** is `flex: 0 0 auto`. `min-width: 0` alone did
    nothing — `flex-shrink: 0` is what actually refuses. Both are needed,
    which is the kind of thing only measuring tells you.
+5. **Hidden tooltips still occupy layout.** 30 `opacity: 0` tooltips,
+   each ~170px wide and centred on a ~23px bar, put a scrollbar on the
+   page at TABLET width — the most commonly-hit of these.
+6. **`.mini-table` in a bare `.panel`** — nowrap cells, no scroll
+   container anywhere in the chain.
+7. **Nowrap flex rows** (`.date-range-group`, `.bracket-summary`,
+   `.if-totals`) holding content wider than their panel.
+8. **An inline `grid-template-columns`** on the FIRE stat row pinned
+   five columns; an inline style beats the media query, so the mobile
+   2-column rule never applied.
 """
 
 from __future__ import annotations
@@ -73,16 +91,24 @@ def _rule(block: str, selector: str) -> str:
 class TestGridItemsCanShrink:
     """Cause 1 — the largest by far."""
 
-    def test_overview_grid_children_have_min_width_zero(self, css):
-        body = _rule(css, ".overview-split > *,\n  .overview-split-2 > *")
-        assert re.search(r"min-width:\s*0", body), (
-            "grid items can no longer shrink below their content, so one "
-            "wide table will stretch the page again"
-        )
+    GRIDS = [".overview-split > *", ".overview-split-2 > *",
+             ".mc-stats > *", ".drawdown-stats > *",
+             ".concentration-grid > *"]
 
-    def test_the_rule_covers_both_overview_grids(self, css):
-        assert ".overview-split > *" in css
-        assert ".overview-split-2 > *" in css
+    def test_grid_children_may_shrink(self, css):
+        """One `min-width: 0` rule covers every card/panel grid.
+
+        Each entry is a grid whose children were, or could be, held wider
+        than their track by their own content.
+        """
+        i = css.index(".overview-split > *")
+        block = css[i:css.index("}", i) + 1]
+        for sel in self.GRIDS:
+            assert sel in block, (
+                f"{sel} dropped out of the min-width:0 rule — its cards can "
+                "hold the grid wider than the viewport again"
+            )
+        assert re.search(r"min-width:\s*0", block)
 
 
 class TestWideContentScrollsInsteadOfPushing:
@@ -187,4 +213,81 @@ class TestNoWideMinimumsOutsideAScrollContainer:
         assert re.search(r"min-width:\s*560px", mobile_block), (
             "the known wide-table rule is gone, so this lint no longer "
             "proves it is scanning the right block"
+        )
+
+
+class TestHiddenTooltipsLeaveTheLayout:
+    """An `opacity: 0` tooltip still occupies space and still counts
+    toward `scrollWidth`. Thirty of them, each ~170px wide and centred on
+    a ~23px bar, put a horizontal scrollbar on the page at tablet width
+    with nothing visible to scroll to."""
+
+    def test_the_hidden_state_is_display_none(self, css):
+        body = _rule(css, ".daily-pnl-bar .tip")
+        # Comments explain the old approach by name, so strip them before
+        # asserting the old approach is gone.
+        decls = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+        assert re.search(r"display:\s*none", decls), (
+            "the hidden tooltip is back in the layout and will widen the "
+            "page again"
+        )
+        assert not re.search(r"opacity:\s*0", decls), (
+            "opacity:0 does not remove an element from layout — that is "
+            "exactly the bug this replaced"
+        )
+
+    def test_hover_still_reveals_it(self, css):
+        body = _rule(css, ".daily-pnl-bar:hover .tip")
+        assert re.search(r"display:\s*block", body)
+
+
+class TestWideTablesScrollThemselves:
+    """`.mini-table` cells are `white-space: nowrap`, and most of these
+    tables sit directly inside a `.panel` with no scroll container."""
+
+    def test_mini_tables_scroll_at_mobile_width(self, mobile_block):
+        body = _rule(mobile_block, ".mini-table")
+        assert re.search(r"display:\s*block", body)
+        assert re.search(r"overflow-x:\s*auto", body)
+
+    def test_tables_already_in_a_scroll_container_are_exempt(self, mobile_block):
+        """Near-miss: turning one of THESE into a block box would break
+        its container's sticky header and its own horizontal scroll."""
+        assert ".mini-scroll .mini-table" in mobile_block
+        i = mobile_block.index(".mini-scroll .mini-table")
+        body = mobile_block[i:mobile_block.index("}", i)]
+        assert re.search(r"display:\s*table", body)
+
+
+class TestNowrapRowsWrap:
+    """Flex rows default to `nowrap`; several held content wider than a
+    narrow panel and pushed the page."""
+
+    @pytest.mark.parametrize("selector", [
+        ".dh-summary", ".date-range-group", ".bracket-summary",
+        ".income-forecast .if-totals",
+    ])
+    def test_row_wraps(self, css, selector):
+        body = _rule(css, selector)
+        assert re.search(r"flex-wrap:\s*wrap", body), (
+            f"{selector} is nowrap again and will overflow a narrow panel"
+        )
+
+
+class TestInlineGridsDoNotPinAColumnCount:
+    """An inline `grid-template-columns` beats the stylesheet's mobile
+    rule, so a fixed `repeat(N,1fr)` survives all the way to phone width.
+    That is how the FIRE row kept five columns at 375px and pushed its
+    last card off the screen."""
+
+    def test_fire_stats_use_auto_fit(self):
+        js = (Path(__file__).resolve().parent.parent / "src" / "dashboard"
+              / "app" / "50-retirement.js").read_text(encoding="utf-8")
+        assert "repeat(auto-fit" in js, (
+            "the FIRE stat row pins its column count inline again; the "
+            "media query cannot override it and the last card leaves the "
+            "screen"
+        )
+        assert "cards.length},1fr)" not in js, (
+            "a card-count-derived column template is back"
         )

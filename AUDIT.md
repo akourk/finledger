@@ -1766,6 +1766,57 @@ scrolls inside `.table-wrap`. These are static CSS assertions and the
 module says so — they stop a rule being reverted; they cannot notice a
 new overflow from unrelated markup.
 
+### Browser sweep round 2: four more layout bugs (2026-08-07)
+
+A systematic pass with the browser rather than the test suite: every tab
+at 320 / 375 / 768 / 1400px, plus every interactive control clicked.
+
+**The interactive layer is clean** — 88 controls across ten tabs, zero
+JS errors, zero panels collapsing, no `NaN` / `undefined` reaching
+rendered text. Worth stating because it is the part most likely to be
+assumed broken.
+
+**The layout was not.** Four more causes, on top of the four fixed the
+day before:
+
+- **Hidden tooltips still occupy layout.** The daily-P&L bars carry 30
+  `opacity: 0` tooltips, each ~170px wide and centred on a ~23px bar.
+  Invisible elements still count toward `scrollWidth`, so the page grew
+  a horizontal scrollbar at **tablet width** — with nothing visible to
+  scroll to. This is the most commonly-hit width of anything found in
+  either round. `display: none` until hover removes them from layout
+  entirely.
+- **`.mini-table` in a bare `.panel`** — nowrap cells, and unlike the
+  Overview tables no scroll container anywhere in the chain. 630px of
+  table in a 300px panel.
+- **Nowrap flex rows** — `.date-range-group` (470px of date inputs and
+  quick-range buttons), `.bracket-summary`, `.if-totals`.
+- **An inline `grid-template-columns`.** The FIRE stat row emitted
+  `repeat(5,1fr)` inline, which **beats the stylesheet's mobile rule**,
+  so the 2-column media query never applied and the fifth card sat off
+  the screen. Now `repeat(auto-fit, minmax(140px, 1fr))`, which collapses
+  on its own and still gives five columns at desktop.
+
+**A methodology error worth recording, because it produced false
+confidence.** The previous round's "all ten tabs clean at 375px" was
+overstated. That sweep drove tabs with `location.hash`, which does not
+trigger the lazy per-tab renderers — most panels were still empty, so
+there was nothing to overflow. Clicking the actual tab buttons made the
+sweep real and immediately surfaced overflows the hash-driven pass had
+called clean. **When a UI check passes suspiciously early, ask whether
+the UI was actually rendered.**
+
+A second, smaller version of the same lesson: the first overflow
+detector counted elements merely *clipped* by an ancestor's
+`overflow: auto`, reporting properly-contained tables as offenders.
+Skipping anything inside a scroll container is what separated signal
+from noise.
+
+Now genuinely clean at 375 / 768 / 1400 with every tab rendered.
+**320px keeps a small long tail** (`.total-value`, `.as-of-hint`) which
+is left deliberately: below the narrowest phone in common use, and each
+remaining case needs individual attention rather than a structural fix.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately

@@ -440,7 +440,11 @@ function _buildFireSection(mcRoot, mc) {
       <h2><span style="color:var(--accent);">FIRE (4% rule)</span></h2>
       <span class="as-of-hint" style="margin-left:auto;">25× annual expenses; "Coast FI" assumes no more contributions.</span>
     </div>
-    <div class="mc-stats" style="grid-template-columns:repeat(${cards.length},1fr);">${statsHtml}</div>
+    <!-- auto-fit, not a fixed count: an inline grid-template-columns
+         beats the stylesheet's mobile rule, so repeat(N,1fr) held five
+         columns at phone width and the last card hung off the screen.
+         auto-fit collapses to as many columns as actually fit. -->
+    <div class="mc-stats" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">${statsHtml}</div>
     ${fire ? `<div class="panel" style="margin-top:14px;">
       <h3>Year first reaching FI (per percentile)</h3>
       <table class="mini-table">

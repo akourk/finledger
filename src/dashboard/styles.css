@@ -394,6 +394,10 @@
      chips so "last 30 days" or "YTD" don't require typing dates. */
   .date-range-group {
     display: inline-flex;
+    /* Two date inputs, a separator and five quick-range buttons come to
+       ~470px on one nowrap line.  Its `.controls` parent already wraps;
+       this row did not, so on a narrow screen it hung out of the page. */
+    flex-wrap: wrap;
     align-items: center;
     gap: 4px;
   }
@@ -986,7 +990,10 @@
      hands the overflow back to whatever inside the panel is equipped to
      scroll it. */
   .overview-split > *,
-  .overview-split-2 > * {
+  .overview-split-2 > *,
+  .mc-stats > *,
+  .drawdown-stats > *,
+  .concentration-grid > * {
     min-width: 0;
   }
 
@@ -1805,13 +1812,20 @@
     font-size: 0.72rem;
     white-space: nowrap;
     pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.1s;
+    /* `display: none` rather than `opacity: 0` for the hidden state.
+       An invisible absolutely-positioned element still participates in
+       layout, so 30 of these — each ~170px wide and centred on a ~23px
+       bar — pushed the page's scrollWidth past the viewport at tablet
+       width.  The result was a horizontal scrollbar with nothing
+       visible to scroll to.  Out of the layout entirely, it cannot.
+       (Costs the 0.1s fade; a data tooltip appearing instantly is no
+       worse, and arguably better.) */
+    display: none;
     z-index: 5;
   }
 
   .daily-pnl-bar:hover .tip {
-    opacity: 1;
+    display: block;
   }
 
   .daily-pnl-empty {
@@ -2470,6 +2484,8 @@
 
   .bracket-summary {
     display: flex;
+    /* Nowrap by default; its items overflowed a narrow panel. */
+    flex-wrap: wrap;
     gap: 20px;
     margin-top: 8px;
     font-size: 0.82rem;
@@ -2503,6 +2519,8 @@
 
   .income-forecast .if-totals {
     display: flex;
+    /* Nowrap by default; its items overflowed a narrow panel. */
+    flex-wrap: wrap;
     gap: 28px;
     margin-bottom: 10px;
     padding-bottom: 8px;
@@ -2820,6 +2838,26 @@
     .table-wrap table {
       min-width: 560px;
       font-size: 0.78rem;
+    }
+
+    /* `.mini-table` cells are `white-space: nowrap`, so on a narrow
+       screen these tables are wider than the panel holding them — and
+       unlike the Overview ones they sit directly inside `.panel` with no
+       scroll container, so they pushed the page instead.  Making the
+       table its own block-level scroll container is the least invasive
+       fix available in CSS alone; the alternative is a wrapper element
+       at a dozen render sites.  Scoped to the breakpoint so desktop
+       table layout is untouched. */
+    .mini-table {
+      display: block;
+      overflow-x: auto;
+    }
+
+    /* ...except where one already lives in a scroll container, which
+       handles both axes and owns the sticky header. */
+    .mini-scroll .mini-table,
+    .table-wrap .mini-table {
+      display: table;
     }
 
     .controls {
