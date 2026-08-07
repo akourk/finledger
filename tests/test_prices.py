@@ -1245,9 +1245,32 @@ class TestSettledThroughGating:
 
     @staticmethod
     def _pin(monkeypatch, iso_utc: str) -> None:
-        """Pin the whole clock — `_today` derives from `_now_utc`."""
+        """Pin the whole clock, INCLUDING which zone counts as "local".
+
+        `_today()` is `_now_utc().astimezone().date()` — it converts the
+        instant to the RUNNER's local zone.  That is right in production
+        (`covered_end` must never name a future date *for the user*) and
+        it makes a test that pins only the instant non-hermetic: the same
+        UTC moment is a different calendar day on a US laptop and on a
+        UTC CI runner, so the settle comparisons land differently.
+
+        That is not hypothetical — it is what broke CI while passing
+        locally.  Pinning `2026-08-06T00:00Z` gives local date 2026-08-05
+        at UTC-7 (covered_end == today, unsettled, refetch) and
+        2026-08-06 at UTC+0 (covered_end in the past, settled, no work).
+
+        The times in this class are written as ET (see each comment), so
+        pin the zone to ET as well and every case means the same thing on
+        every machine.  `_today` is still derived from the same instant —
+        just through a fixed zone instead of the ambient one.
+        """
+        from zoneinfo import ZoneInfo
         from src import prices as _prices_mod
-        monkeypatch.setattr(_prices_mod, "_now_utc", lambda: _utc(iso_utc))
+        instant = _utc(iso_utc)
+        eastern = ZoneInfo("America/New_York")
+        monkeypatch.setattr(_prices_mod, "_now_utc", lambda: instant)
+        monkeypatch.setattr(_prices_mod, "_today",
+                            lambda: instant.astimezone(eastern).date())
 
     def test_intraday_fetch_does_not_mark_the_day_final(
             self, isolated_workdir, monkeypatch, stub_prices):
@@ -1463,9 +1486,15 @@ class TestProvisionalLabelling:
         from src import prices as _prices_mod
 
         # 11:00 ET on 2026-08-04 — the bar we store is a live mark.
+        # Pin `_today` too: it derives from `_now_utc` through the
+        # RUNNER's local zone, so pinning only the instant makes the
+        # calendar day depend on where the test runs.
+        from zoneinfo import ZoneInfo
+        _instant = datetime(2026, 8, 4, 15, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr(_prices_mod, "_now_utc", lambda: _instant)
         monkeypatch.setattr(
-            _prices_mod, "_now_utc",
-            lambda: datetime(2026, 8, 4, 15, 0, tzinfo=timezone.utc))
+            _prices_mod, "_today",
+            lambda: _instant.astimezone(ZoneInfo("America/New_York")).date())
         stub_prices.set("AAA", {"2026-08-03": 10.0, "2026-08-04": 11.0})
         _prices_mod.ensure_coverage(["AAA"], "2026-08-03", "2026-08-04",
                                     verbose=False)

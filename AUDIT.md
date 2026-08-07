@@ -1817,6 +1817,54 @@ Now genuinely clean at 375 / 768 / 1400 with every tab rendered.
 is left deliberately: below the narrowest phone in common use, and each
 remaining case needs individual attention rather than a structural fix.
 
+### F-030: a test that pinned the clock but not the calendar (2026-08-07)
+
+Found because the user was getting failure emails from GitHub Actions —
+not because anything local said so. **CI had been red since 2026-08-05,
+two days before this audit started**, and every commit in this session
+pushed onto an already-failing build without noticing. Running the suite
+locally is not the same as checking that the build is green, and I never
+looked.
+
+One test failing, on both matrix legs:
+`test_cache_without_settled_through_keeps_working`.
+
+`prices._today()` is `_now_utc().astimezone().date()` — it converts the
+instant to the **runner's local zone**. That is right in production:
+`covered_end` must never name a date in the future *for the user*. It
+makes a test that pins only `_now_utc` non-hermetic, because the same
+UTC instant is a different calendar day depending on where it runs.
+
+Pinning `2026-08-06T00:00Z`:
+
+| runner zone | local date | `covered_end` 2026-08-05 is… | result |
+|---|---|---|---|
+| UTC-7 (a US laptop) | 2026-08-05 | today → unsettled | refetch range |
+| UTC+0 (GitHub Actions) | 2026-08-06 | yesterday → settled | nothing |
+
+The assertion expected the first; CI got the second. **Nothing in the
+failure pointed at a timezone** — it read as an ordinary logic error, and
+it was unreproducible on any machine west of Greenwich.
+
+Fixed by having the pinning helpers fix the zone as well as the instant.
+The times in that class are written as ET in their comments, so the pin
+now converts through ET and every case means the same thing everywhere.
+A second site that pinned only the instant was safe by luck (15:00Z lands
+on the same date from UTC to UTC-7) and was pinned too.
+
+**The guard for it shipped broken, and mutation caught that.** The first
+version asked whether the function's AST mentioned `_today` — and
+`_pin`'s docstring discusses `_today` at length, so deleting the actual
+pin left the prose behind and the guard stayed green. It now looks for a
+`setattr(..., "_today", ...)` **call**. That is the second time this
+session a guard was written that could not fire, both times caught by
+mutating the thing it was supposed to protect. **A static guard that
+matches prose instead of code is not a guard.**
+
+Process note worth more than the fix: this session added ~90 tests and
+never once checked that CI agreed. A local green is evidence about one
+interpreter on one OS in one timezone.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
