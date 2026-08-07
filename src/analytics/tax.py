@@ -184,9 +184,13 @@ _BRACKETS_BY_YEAR_STATUS: dict[tuple[int, str], list[tuple[float, float]]] = {
     (2026, "Married Filing Separately"): [
         (12400, 0.10), (50400, 0.12), (105700, 0.22),
         (201775, 0.24), (256225, 0.32), (384350, 0.35), (math.inf, 0.37)],
+    # NOTE the 24% ceiling: 201,750 for HoH, 201,775 for Single.  In 2024
+    # and 2025 those two were the SAME figure; the IRS split them by $25
+    # for 2026.  This table carried the old pattern forward and had
+    # Single's value here until it was checked against the Rev. Proc.
     (2026, "Head of Household"): [
         (17700, 0.10), (67450, 0.12), (105700, 0.22),
-        (201775, 0.24), (256200, 0.32), (640600, 0.35), (math.inf, 0.37)],
+        (201750, 0.24), (256200, 0.32), (640600, 0.35), (math.inf, 0.37)],
 }
 
 _LTCG_BY_YEAR_STATUS: dict[tuple[int, str], list[tuple[float, float]]] = {

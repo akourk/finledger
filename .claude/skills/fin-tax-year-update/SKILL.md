@@ -38,7 +38,29 @@ standard deductions ($15,000→$15,750 Single, $30,000→$31,500 MFJ,
 $22,500→$23,625 HoH) — when that happens, update the *existing* year's
 rows and leave a comment citing the act.
 
+**Transcribe each status independently; never carry a pattern forward.**
+This is how F-029 happened. In 2024 and 2025 the Head-of-Household and
+Single 24% bracket ceilings were the SAME figure. For 2026 the IRS split
+them by $25, and the table kept Single's value in the HoH row. The error
+survived every existing test, because internal consistency and Python↔JS
+agreement are both properties a wrong-but-uniform figure satisfies
+perfectly. Two columns that have always matched are exactly the ones to
+re-read.
+
+**Cross-check with the Rev. Proc.'s own arithmetic.** Each rate schedule
+prints the cumulative tax at every boundary ("$39,207 plus 32% of the
+excess over $201,750"). Recomputing that running total from the
+thresholds you typed either reproduces the printed figure or proves a
+threshold is wrong — which is what confirmed F-029 rather than leaving
+it a judgement call.
+
 ## Tests
+
+`tests/test_tax_tables_vs_irs.py` — **add the new year here.** This is
+the module that compares figures to the published documents, with each
+value transcribed beside its citation, plus the cumulative-tax
+cross-check described above. `test_tax_tables.py` checks shape and
+Python↔JS agreement; only this one checks *correctness*.
 
 `tests/test_tax_tables.py` — update/extend:
 - `test_2026_tables_present_with_obbba_2025_std_deduction` is the

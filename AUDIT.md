@@ -1452,6 +1452,55 @@ it. All 24 checks are wired today; the point is that nothing said so,
 and a detector nobody calls is indistinguishable from a detector that
 finds nothing.
 
+### F-029: the tax tables, checked against the IRS documents (2026-08-06)
+
+The last deferred item, and it found a real error.
+
+Everything about the tax tables was already verified *except the one
+thing that mattered*: they were internally consistent, Python and JS
+agreed, and `tax_tables_to_json` was the single source for both. All
+true of figures that are simply wrong. Nothing had ever compared a
+number to what the IRS published.
+
+**F-029 — 2026 Head-of-Household 24% bracket ceiling was $201,775; the
+IRS sets it at $201,750.** Confirmed against Rev. Proc. 2025-32 §4.01
+two ways: the printed ceiling, and the Rev. Proc.'s own cumulative-tax
+figure, which reproduces as exactly $39,207 at 201,750 and not at
+201,775.
+
+The interesting part is *how* it got there. In **2024 and 2025 the HoH
+and Single 24% ceilings were the same figure**; the IRS split them by
+$25 for 2026, and the table carried the old pattern forward with
+Single's value. Not a typo — an inherited assumption that stopped being
+true. That is the failure mode a source check catches and no amount of
+internal consistency ever will, because the wrong value is perfectly
+self-consistent.
+
+**Impact: none for this user, and small in general.** Filing status is
+Single, so the HoH table is never consulted; the golden confirms the fix
+moves exactly ONE leaf value — the constant itself — with no computed
+figure downstream. For an actual HoH filer the error is worth about $2,
+inside a $25 band of taxable income.
+
+Everything else verifies clean against source: all four 2026 ordinary
+schedules (the other three), all four 2026 capital-gains breakpoints,
+2026 and OBBBA-amended-2025 standard deductions, the 401(k) elective
+deferral limits, and the Roth MAGI phase-out ranges including the
+deliberately non-indexed MFS band.
+
+`tests/test_tax_tables_vs_irs.py` transcribes each figure with its
+citation, so next year's update has something to diff against rather
+than a second copy of what the code already says. It also pins the
+HoH-vs-Single divergence by name, since re-copying that column is the
+natural mistake.
+
+One thing noted, not fixed: the Roth phase-out table keys its years by
+`int` while every other table in the export uses `str`. Harmless through
+`json.dumps`, which stringifies either way, but a Python consumer of
+`tax_tables_to_json()` has to know which table it holds. The test
+asserts the contract that actually matters — string-addressable after a
+JSON round trip, which is how the dashboard reads it.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
@@ -1529,11 +1578,10 @@ deliberate decision rather than inheritance.
   genuinely untouched is the **error-path sweep** — what happens when
   yfinance is down, the cache is corrupt JSON, or a price shard's
   in-file symbol disagrees with its filename.
-- **Tax tables against the IRS source documents.** Internal consistency
-  and Python↔JS agreement are both verified; the figures themselves have
-  been checked against neither Rev. Proc. nor the retirement Notice.
-  That needs external sources, and the `fin-tax-year-update` skill
-  already lists them.
+- ~~**Tax tables against the IRS source documents.**~~ — **DONE
+  2026-08-06**. Checked against Rev. Proc. 2025-32 and Notice 2025-67.
+  Found F-029 (2026 Head-of-Household 24% ceiling off by $25); every
+  other figure verifies clean. Write-up above.
 - ~~**The 13 `warn`/`info` `data_health` checks.**~~ — **DONE
   2026-08-06**. All thirteen have fire/near-miss pairs, and three
   meta-guards now stand behind the whole set (high covered, soft
