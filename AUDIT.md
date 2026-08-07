@@ -1535,6 +1535,31 @@ serially and book a failure against every symbol).
 10/10 mutations caught. Never-executed functions 11 → 5, coverage
 89.7% → 91.1%, 1030 tests.
 
+### Zero never-executed functions (2026-08-06)
+
+F-003, F-004 and F-005 closed together. Coverage's second table —
+functions with zero executed lines — is the actionable one, because an
+unexecuted line is unprotected *by construction*: no test enters it, so
+no test can notice it breaking. It started this audit at **23** and is
+now **empty**.
+
+The last five were `snapshot.export_snapshot` (F-003 — half of the
+move-between-machines feature; every test imported the shipped sample,
+none produced one), `normalize._amount_sign` (F-004, the sign-split
+family), `analytics.tax._pick_by_year`, `actions.names_with_basis_effect`
+and `main._usaa_position_before_date`.
+
+None of them was wrong. That is the expected outcome and not the point —
+until now any of them could have been deleted or inverted with the suite
+green. 8/8 mutations caught, including two whose correct behaviour is
+easy to state backwards: `_pick_by_year` must fall **back** to an
+earlier year (falling forward would apply figures that are not yet in
+effect), and `_usaa_position_before_date`'s as-of comparison is `>`, so
+same-day rows count.
+
+Final state: **1067 tests, 91.7% line coverage, 0 never-executed
+functions.**
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
