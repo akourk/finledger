@@ -1501,6 +1501,40 @@ One thing noted, not fixed: the Roth phase-out table keys its years by
 asserts the contract that actually matters — string-addressable after a
 JSON round trip, which is how the dashboard reads it.
 
+### Segment 8's error-path sweep: the yfinance boundary (2026-08-06)
+
+The last named segment item, and it turned out to be the same item as
+F-005. The six functions with **zero executed lines** —
+`prices._fetch_splits`, `prices._fetch_dividends`,
+`prices._batch_fetch_ranges`, `sectors._lazy_yf`,
+`sectors._fetch_from_yfinance`, `sectors.get_sector` — are precisely the
+code that talks to the outside world. They are the only inputs the
+project does not control, and none of their failure handling had ever
+run.
+
+Tested by injecting a fake `yfinance` into the module-level `_yf` global
+that `_lazy_yf` memoises: no network, no new dependency, and the fakes
+misbehave the way an outage does — raising, returning nothing, returning
+NaN, returning a partly-populated frame.
+
+**The contract worth stating is the split between raising and
+swallowing, which is deliberately different at each site:**
+
+| site | on failure | why |
+|---|---|---|
+| `sectors.*` | degrade to `"Other"`, never raise | a sector is cosmetic; a lookup failure must not stop a run |
+| `prices._fetch_splits` / `_fetch_dividends` | **raise** | `ensure_coverage` owns retry/backoff/tombstoning and can only do it if it hears about the failure. Returning `[]` is indistinguishable from "this symbol has never split" — and would be cached as fact |
+| `prices._batch_fetch_ranges` | return `None` | `None` means one specific thing: fall back to the per-symbol serial path, which owns the bookkeeping. A raise would take the run down over an outage the serial path absorbs |
+
+Getting those three backwards is invisible until the day yfinance is
+down, which is exactly when you least want to discover it. The empty
+frame is the subtle one: a weekend range legitimately returns no rows,
+and that must be `{}` (zero symbols fetched), not `None` (go re-ask
+serially and book a failure against every symbol).
+
+10/10 mutations caught. Never-executed functions 11 → 5, coverage
+89.7% → 91.1%, 1030 tests.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
@@ -1571,13 +1605,12 @@ deliberate decision rather than inheritance.
   files now surface as `data_health` checks (`high` for a whole missing
   account, `warn` for dropped rows), so they land in the dashboard panel
   rather than only the console. Write-up above.
-- **Segment 8's remaining sweeps.** Several were absorbed by other
-  segments: the NaN/Infinity sweep (Segment 5 item 3), as-of alignment
-  (Segment 5 item 1 and the reconciliation audit), vacuous guards (the
-  entire audit), ordering (sign splits, consume order, `seq`). What is
-  genuinely untouched is the **error-path sweep** — what happens when
-  yfinance is down, the cache is corrupt JSON, or a price shard's
-  in-file symbol disagrees with its filename.
+- ~~**Segment 8's remaining sweeps.**~~ — **DONE 2026-08-06**. Most were
+  absorbed by other segments (NaN/Infinity by Segment 5 item 3, as-of
+  alignment by Segment 5 item 1, vacuous guards by the whole audit,
+  ordering by the sign-split and consume-order work). The **error-path
+  sweep** was the genuine remainder and is now closed: corrupt caches by
+  F-026/F-027, and the yfinance boundary by the write-up above.
 - ~~**Tax tables against the IRS source documents.**~~ — **DONE
   2026-08-06**. Checked against Rev. Proc. 2025-32 and Notice 2025-67.
   Found F-029 (2026 Head-of-Household 24% ceiling off by $25); every
