@@ -270,3 +270,245 @@ class TestHasUnreadData:
         from src.parsers import _has_unread_data
 
         assert _has_unread_data(isolated_workdir / "data" / "nope.csv") is False
+
+
+class TestTierThreeReachesTheDashboard:
+    """F-017 tier 3. Detection is worth what it reaches.
+
+    Tiers 1 and 2 print to the console — the one place a daily run's
+    output is least likely to be read, for the highest-severity failure
+    there is: an account silently absent from the portfolio. Tier 3
+    records the findings so `data_health` can surface them in the
+    dashboard panel alongside every other integrity issue.
+
+    A file that parses to ZERO leaves no transactions behind, so the
+    out-of-band record is the only trace it existed. That is why this
+    cannot be reconstructed downstream and has to be captured at parse
+    time.
+    """
+
+    BROKEN = (
+        "Activity Date,Process Date,Settle Date,Instrument,Description,"
+        "Trans Code,Quantity,Price,Amount\n"
+        + "".join(
+            f"2022-{m:02d}-15,,,VOO,Vanguard S&P 500 ETF,Buy,1,$400.00,($400.00)\n"
+            for m in range(1, 13)
+        )
+    )
+
+    def _parse(self, workdir, files: dict):
+        import contextlib
+        import io as _io
+
+        from src.parsers import parse_all_files, parse_report
+
+        data = workdir / "data"
+        data.mkdir(parents=True, exist_ok=True)
+        for name, body in files.items():
+            (data / name).write_text(body, encoding="utf-8")
+        with contextlib.redirect_stdout(_io.StringIO()):
+            txns = parse_all_files(data)
+        return txns, parse_report()
+
+    def test_a_clean_parse_reports_nothing(self, isolated_workdir):
+        """The normal case. A report that is never empty is noise, and
+        noise is what trains a reader to skip the panel."""
+        txns, report = self._parse(isolated_workdir,
+                                   {"robinhood-1.csv": ROBINHOOD_CSV})
+        assert txns, "fixture did not parse — the near-miss is meaningless"
+        assert report == []
+
+    def test_a_zero_row_file_is_recorded(self, isolated_workdir):
+        txns, report = self._parse(isolated_workdir,
+                                   {"robinhood-1.csv": self.BROKEN})
+        assert txns == [], "fixture parsed after all; pick a worse date format"
+        assert len(report) == 1
+        assert report[0]["file"] == "robinhood-1.csv"
+        assert report[0]["parsed"] == 0
+        assert report[0]["empty_with_data"] is True
+
+    def test_the_report_is_rebuilt_per_run(self, isolated_workdir):
+        """A stale finding is worse than none — it would report an
+        account missing that is now present."""
+        self._parse(isolated_workdir, {"robinhood-1.csv": self.BROKEN})
+        _txns, report = self._parse(isolated_workdir,
+                                    {"robinhood-1.csv": ROBINHOOD_CSV})
+        assert report == [], (
+            "the previous run's finding survived into a clean run"
+        )
+
+    def test_reading_the_report_does_not_consume_it(self, isolated_workdir):
+        """Unlike `take_date_failures`, which MUST be cleared between
+        files. A consuming read here would mean whichever caller asked
+        first won, and the dashboard would show nothing."""
+        from src.parsers import parse_report
+
+        self._parse(isolated_workdir, {"robinhood-1.csv": self.BROKEN})
+        assert parse_report() == parse_report() != []
+
+    def test_the_returned_report_cannot_mutate_the_stored_one(self,
+                                                              isolated_workdir):
+        from src.parsers import parse_report
+
+        self._parse(isolated_workdir, {"robinhood-1.csv": self.BROKEN})
+        got = parse_report()
+        got[0]["file"] = "tampered"
+        assert parse_report()[0]["file"] == "robinhood-1.csv"
+
+
+class TestTheCheckSplitsSeverityOnEvidence:
+    """A whole missing account and one malformed row are not the same
+    finding, and giving them the same severity would make the loud one
+    unreadable."""
+
+    def _check(self, report):
+        from src.analytics.data_health import _check_parser_dropped_rows
+        return _check_parser_dropped_rows(report)
+
+    def _row(self, **kw):
+        base = {"file": "b-1.csv", "broker": "robinhood", "parsed": 400,
+                "dropped": 0, "empty_with_data": False}
+        base.update(kw)
+        return base
+
+    def test_a_zero_row_file_is_high(self, isolated_workdir):
+        issues = self._check([self._row(parsed=0, dropped=9,
+                                        empty_with_data=True)])
+        assert [i["severity"] for i in issues] == ["high"]
+        assert issues[0]["kind"] == "parser_produced_no_rows"
+
+    def test_dropped_rows_alone_are_warn(self, isolated_workdir):
+        """Ordinary in a real export. Escalating it would put a routine
+        finding next to 'an account is missing'."""
+        issues = self._check([self._row(dropped=3)])
+        assert [i["severity"] for i in issues] == ["warn"]
+        assert issues[0]["kind"] == "parser_dropped_rows"
+        assert issues[0]["count"] == 3
+
+    def test_a_zero_row_file_is_not_double_reported(self, isolated_workdir):
+        """It drops rows AND parses to zero. Reporting both would put the
+        same file under two headings and inflate the dropped-row count."""
+        issues = self._check([self._row(parsed=0, dropped=9,
+                                        empty_with_data=True)])
+        assert len(issues) == 1
+
+    def test_both_kinds_coexist_across_files(self, isolated_workdir):
+        issues = self._check([
+            self._row(file="a.csv", parsed=0, dropped=9, empty_with_data=True),
+            self._row(file="b.csv", dropped=3),
+        ])
+        assert sorted(i["severity"] for i in issues) == ["high", "warn"]
+
+    def test_dropped_counts_sum_across_files(self, isolated_workdir):
+        issues = self._check([self._row(file="a.csv", dropped=3),
+                              self._row(file="b.csv", dropped=4)])
+        assert issues[0]["count"] == 7
+        assert len(issues[0]["details"]) == 2
+
+    def test_an_empty_report_is_silent(self, isolated_workdir):
+        assert self._check([]) == []
+        assert self._check(None) == []
+
+    def test_the_details_name_the_file(self, isolated_workdir):
+        """The message has to be actionable without a console scrollback:
+        which file, which parser."""
+        issues = self._check([self._row(file="schwab-roth-ira-1.csv",
+                                        broker="schwab_roth", parsed=0,
+                                        dropped=5, empty_with_data=True)])
+        joined = " ".join(issues[0]["details"])
+        assert "schwab-roth-ira-1.csv" in joined
+        assert "schwab_roth" in joined
+
+
+class TestTheCheckIsActuallyWired:
+    """Working and connected are different claims.
+
+    Mutation found this: deleting the `issues.extend(...)` line from
+    `compute_data_health` survived the entire suite. Every test above
+    proves the detector detects and the report records — none proved the
+    two ever meet. That is precisely the failure tier 3 exists to
+    prevent, one level up: perfect detection that reaches nobody.
+    """
+
+    def _args(self, **kw):
+        """Minimal well-formed arguments for compute_data_health."""
+        base = {"txns": [], "holdings_by_account": [], "history": [],
+                "analytics": {}, "cache_dir": None}
+        base.update(kw)
+        return base
+
+    def test_an_explicit_report_reaches_the_output(self, isolated_workdir):
+        from src.analytics.data_health import compute_data_health
+
+        issues = compute_data_health(
+            **self._args(cache_dir=isolated_workdir / "cache"),
+            parse_report=[{"file": "b-1.csv", "broker": "robinhood",
+                           "parsed": 0, "dropped": 9,
+                           "empty_with_data": True}])
+        kinds = {i["kind"] for i in issues}
+        assert "parser_produced_no_rows" in kinds, (
+            "the parser check is not wired into compute_data_health, so a "
+            "missing account never reaches the dashboard"
+        )
+
+    def test_a_clean_report_adds_nothing(self, isolated_workdir):
+        from src.analytics.data_health import compute_data_health
+
+        issues = compute_data_health(
+            **self._args(cache_dir=isolated_workdir / "cache"),
+            parse_report=[])
+        assert not [i for i in issues
+                    if i["kind"].startswith("parser_")]
+
+    def test_it_defaults_to_the_last_parse_run(self, isolated_workdir):
+        """The production path passes no report — `main()` parses and
+        then builds analytics, and nothing threads the findings between
+        them. If the default lookup broke, every real run would silently
+        lose this check while the explicit-argument test above stayed
+        green."""
+        import contextlib
+        import io as _io
+
+        from src.parsers import parse_all_files
+        from src.analytics.data_health import compute_data_health
+
+        data = isolated_workdir / "data"
+        data.mkdir(parents=True, exist_ok=True)
+        (data / "robinhood-1.csv").write_text(
+            TestTierThreeReachesTheDashboard.BROKEN, encoding="utf-8")
+        with contextlib.redirect_stdout(_io.StringIO()):
+            parse_all_files(data)
+
+        issues = compute_data_health(
+            **self._args(cache_dir=isolated_workdir / "cache"))
+        assert "parser_produced_no_rows" in {i["kind"] for i in issues}
+
+
+def test_data_health_categories_are_a_closed_vocabulary():
+    """`category` is a UI grouping key, not free text.
+
+    The Overview panel groups issues by this string, so a synonym
+    silently creates a SECOND heading for one concept — which is what
+    happened when the parser checks landed as "Data integrity" beside
+    the established "Integrity". A string that becomes a grouping key is
+    an enum wearing a disguise.
+    """
+    import ast
+    import inspect
+
+    from src.analytics import data_health as D
+
+    allowed = {"Integrity", "Coverage", "Reconciliation"}
+    found = set()
+    for node in ast.walk(ast.parse(inspect.getsource(D))):
+        if not isinstance(node, ast.Dict):
+            continue
+        for k, v in zip(node.keys, node.values):
+            if (isinstance(k, ast.Constant) and k.value == "category"
+                    and isinstance(v, ast.Constant)):
+                found.add(v.value)
+    assert found <= allowed, (
+        f"unknown data_health category/ies {sorted(found - allowed)} — each "
+        "one renders as its own panel heading. Reuse an existing category, "
+        "or add the new one here deliberately."
+    )

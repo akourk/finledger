@@ -1355,6 +1355,64 @@ walker are still two implementations. That is a different problem — lot
 state, not valuation — and the `history_holdings_basis_parity` check
 plus the `fin-lot-walker-sync` skill still carry it.
 
+### F-017 tier 3: the warning reaches the dashboard (2026-08-06)
+
+Tiers 1 and 2 detect rows a parser dropped and print to the console.
+That is the one place a daily run's output is least likely to be read,
+carrying the highest-severity failure this audit found: a broker changes
+its date format, every row fails to parse, and the account simply
+vanishes from the portfolio. Nothing downstream reliably catches it —
+What's-Changed reports it only after the fact, and the empty-run guard
+fires only when EVERY file is empty, so one missing broker sails
+through.
+
+**Why it needed out-of-band capture rather than a downstream check.**
+A file that parses to zero leaves no transactions behind. There is
+nothing in `txns`, `holdings` or `history` to notice its absence
+against, so no consumer of those can reconstruct it. `parsers` now keeps
+a per-file report (rebuilt each `parse_all_files` call, so it always
+describes the run that produced the transactions in hand), and
+`compute_data_health` reads it.
+
+Severity splits on what the evidence supports, which is the part worth
+getting right: a **zero-row file is `high`** (an entire account is
+missing; there is no benign reading) and **dropped rows alone are
+`warn`** (one malformed row in an export is ordinary). Collapsing them
+to one severity would have made the loud one unreadable.
+
+No dashboard change was needed — the panel groups by free-text
+`category` and renders any issue shape.
+
+**Three things caught on the way in**, worth recording because two are
+the audit's own machinery working and the third is this entry's own
+lesson applied one level up:
+
+1. `test_data_health_guards.py`'s meta-guard failed the moment the new
+   `high` check landed, demanding a fire/near-miss pair. That test was
+   written in Segment 2 precisely to stop check #11 shipping
+   unprotected, and it did.
+2. Grouping by free-text category means a synonym silently creates a
+   second heading for one concept — I introduced `"Data integrity"`
+   next to the established `"Integrity"` and only noticed when reading
+   the renderer. Now normalised, with a test pinning the vocabulary
+   closed. A string that becomes a UI grouping key is an enum wearing a
+   disguise.
+3. **Mutation found the check was not pinned as WIRED.** Deleting the
+   `issues.extend(...)` line from `compute_data_health` survived all 931
+   tests. Every test written for this feature proved the detector
+   detects and the report records; none proved the two ever meet — so
+   the whole feature could have been disconnected and stayed green.
+   That is the failure tier 3 exists to prevent, recurring one level up:
+   perfect detection reaching nobody.
+
+   It is also the same shape as the option-floor delegation guard from
+   the valuation kernel. **"The component works" and "the component is
+   connected" are different claims, and a suite full of the first reads
+   like coverage of the second.** Both the explicit-argument path and
+   the default-lookup path are now pinned — the production caller passes
+   no report, so a broken default would lose the check on every real run
+   while the explicit test stayed green.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
@@ -1421,9 +1479,10 @@ deliberate decision rather than inheritance.
 
 ### Deferred audit work
 
-- **F-017 tier 3** — surface dropped rows as a `data_health` check so
-  they reach the dashboard rather than only the console. Tiers 1 and 2
-  ship the detection; this is about where it lands.
+- ~~**F-017 tier 3**~~ — **DONE 2026-08-06**. Dropped rows and zero-row
+  files now surface as `data_health` checks (`high` for a whole missing
+  account, `warn` for dropped rows), so they land in the dashboard panel
+  rather than only the console. Write-up above.
 - **Segment 8's remaining sweeps.** Several were absorbed by other
   segments: the NaN/Infinity sweep (Segment 5 item 3), as-of alignment
   (Segment 5 item 1 and the reconciliation audit), vacuous guards (the

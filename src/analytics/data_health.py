@@ -733,6 +733,72 @@ def _check_holding_days_non_negative(txns: list[dict]) -> list[dict]:
     }]
 
 
+def _check_parser_dropped_rows(parse_report: list[dict] | None) -> list[dict]:
+    """Rows a parser dropped, and files that parsed to zero.
+
+    F-017 tier 3. Every parser discards an unparseable row with a bare
+    ``continue`` — correct for one odd row, and catastrophic when a
+    broker changes its date format, because the whole file goes to zero
+    and that account simply vanishes from the portfolio.
+
+    Tiers 1 and 2 detect it and print to the console. That is the one
+    place a daily run's output is least likely to be read, and nothing
+    downstream reliably catches the miss: What's-Changed reports it only
+    after the fact, and the empty-run guard fires only when EVERY file
+    is empty, so one missing broker sails through.
+
+    Severity splits on what the evidence supports:
+
+    * **high** — a recognised file with data rows that parsed to ZERO.
+      An entire account is missing. There is no benign reading.
+    * **warn** — some rows dropped from a file that otherwise parsed.
+      One malformed row in an export is ordinary; a large count is the
+      same format change caught earlier, so the count is in the message.
+    """
+    if not parse_report:
+        return []
+
+    issues: list[dict] = []
+
+    empty = [r for r in parse_report if r.get("empty_with_data")]
+    if empty:
+        issues.append({
+            "kind": "parser_produced_no_rows",
+            "severity": "high",
+            "category": "Integrity",
+            "message": (
+                f"{len(empty)} broker file(s) were recognised and contain "
+                "data rows but parsed to ZERO transactions — those accounts "
+                "are MISSING from this portfolio entirely. The export "
+                "format has almost certainly changed; compare the file's "
+                "header and date format against its parser."),
+            "details": [f"{r['file']} — detected as '{r['broker']}', "
+                        f"0 transactions parsed" for r in empty],
+            "count": len(empty),
+        })
+
+    dropped = [r for r in parse_report
+               if r.get("dropped") and not r.get("empty_with_data")]
+    if dropped:
+        total = sum(int(r.get("dropped") or 0) for r in dropped)
+        issues.append({
+            "kind": "parser_dropped_rows",
+            "severity": "warn",
+            "category": "Integrity",
+            "message": (
+                f"{total} row(s) across {len(dropped)} file(s) were dropped "
+                "because their date could not be parsed. Those transactions "
+                "are absent from every figure on this dashboard. A handful "
+                "is usually one malformed export row; a large count means "
+                "the broker's format changed."),
+            "details": [f"{r['file']} ({r['broker']}) — {r['dropped']} "
+                        f"dropped, {r['parsed']} parsed" for r in dropped],
+            "count": total,
+        })
+
+    return issues
+
+
 def _check_unbridged_retirement_distribution(txns: list[dict],
                                              analytics: dict) -> list[dict]:
     """A Roth/Rollover IRA ``Distribution`` with no covering rollover
@@ -952,9 +1018,22 @@ def compute_data_health(txns: list[dict],
                         analytics: dict,
                         cache_dir: Path,
                         *,
-                        cash_summary: dict | None = None) -> list[dict]:
-    """Run all data-health checks and return a list sorted by severity."""
+                        cash_summary: dict | None = None,
+                        parse_report: list[dict] | None = None) -> list[dict]:
+    """Run all data-health checks and return a list sorted by severity.
+
+    ``parse_report`` carries per-file parse findings that cannot be
+    reconstructed from ``txns`` — a file that parsed to zero leaves no
+    transactions behind to notice its absence.  Defaults to the last
+    ``parse_all_files`` run, and can be passed explicitly for tests and
+    for any caller that parses out of band.
+    """
+    if parse_report is None:
+        from ..parsers import parse_report as _last_parse_report
+        parse_report = _last_parse_report()
+
     issues: list[dict] = []
+    issues.extend(_check_parser_dropped_rows(parse_report))
     issues.extend(_check_future_dated(txns))
     issues.extend(_check_negative_cost_basis(holdings_by_account))
     issues.extend(_check_value_qty_price_consistency(holdings_by_account))

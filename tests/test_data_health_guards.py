@@ -45,6 +45,19 @@ GUARD_CASES = [
            "action": "Buy", "symbol": "SYM"}],),
     ),
     (
+        # A recognised file with data rows that parsed to ZERO: an entire
+        # account absent from the portfolio, with no transaction left
+        # behind to notice it.  Clean is an EMPTY report — the check only
+        # ever receives files that already had a finding, so there is no
+        # "clean file" entry shape.  The warn-vs-high split has its own
+        # tests in test_parser_silent_drop.py.
+        "parser_dropped_rows",
+        D._check_parser_dropped_rows,
+        ([{"file": "broker-1.csv", "broker": "robinhood", "parsed": 0,
+           "dropped": 12, "empty_with_data": True}],),
+        ([],),
+    ),
+    (
         "negative_cost_basis",
         D._check_negative_cost_basis,
         ([_h(cost_basis=-100.0)],),

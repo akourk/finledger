@@ -67,6 +67,29 @@ _PARSERS = {
 # of rows going to zero.
 _EMPTY_FILE_LINE_ALLOWANCE = 8
 
+# Per-file parse findings from the most recent ``parse_all_files`` call.
+# Rebuilt from scratch on every call, so it always describes the run that
+# produced the transactions currently in hand — never a stale one.
+_parse_report: list[dict] = []
+
+
+def parse_report() -> list[dict]:
+    """Findings from the last ``parse_all_files``: files that dropped
+    rows, and files that parsed to zero despite carrying data.
+
+    Read (not consumed) — unlike ``take_date_failures``, which is a
+    per-file tally that MUST be cleared between files.  This one is
+    consulted once at the end of a run by
+    ``analytics.data_health``, and a consuming read would mean whichever
+    caller asked first won.
+
+    Empty is the normal case and means every recognised file parsed
+    cleanly.  A file that parses to zero has no transactions to
+    reconstruct it from, so this out-of-band record is the only trace
+    that it existed at all.
+    """
+    return [dict(r) for r in _parse_report]
+
 
 def _has_unread_data(path: Path) -> bool:
     """True when a file carries more content than a header/preamble.
@@ -99,6 +122,8 @@ def parse_all_files(data_dir: Path) -> list[Transaction]:
     only fires when EVERY file is empty, so one missing broker sails
     through.
     """
+    global _parse_report
+    _parse_report = []
     all_txns: list[Transaction] = []
     for csv_file in sorted(data_dir.glob("*.csv")):
         broker = detect_broker(csv_file)
@@ -117,12 +142,25 @@ def parse_all_files(data_dir: Path) -> list[Transaction]:
                   f"transactions are missing from the portfolio. If the "
                   f"count is large, the '{broker}' export format has "
                   f"probably changed.")
-        if not txns and _has_unread_data(csv_file):
+        empty_with_data = not txns and _has_unread_data(csv_file)
+        if empty_with_data:
             print(f"  !! WARNING: {csv_file.name} was detected as "
                   f"'{broker}' and has data rows, but parsed to ZERO "
                   f"transactions.  The export format has probably changed "
                   f"— rows whose date does not match the expected format "
                   f"are dropped silently.  This account will be MISSING "
                   f"from the portfolio.")
+        # Tier 3: keep the finding, don't just print it.  The console is
+        # the one place a daily run's output is least likely to be read,
+        # and this is the highest-severity failure mode there is — an
+        # account silently absent from the portfolio.
+        if dropped or empty_with_data:
+            _parse_report.append({
+                "file": csv_file.name,
+                "broker": broker,
+                "parsed": len(txns),
+                "dropped": dropped,
+                "empty_with_data": empty_with_data,
+            })
         all_txns.extend(txns)
     return all_txns
