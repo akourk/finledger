@@ -1713,6 +1713,59 @@ moment the test ran. Write the test with the fix, not after it.
 snapshot sitting exactly on the 365-day cutoff, so `>=` and `>` were
 indistinguishable. "Two of each" again, in miniature.
 
+### Mobile: the dashboard scrolled sideways on a phone (2026-08-07)
+
+Spotted while verifying the F-019 card change in a browser, which is the
+point worth leading with: **it was found by looking, not by reading.**
+Nothing in the test suite could have reported it, and nothing in the CSS
+looks wrong on inspection.
+
+At a 375px viewport the page measured `scrollWidth` 635 against
+`clientWidth` 375 — the whole dashboard shifted horizontally, on every
+tab.
+
+Four causes, none of them visible without measuring:
+
+1. **Grid items that refuse to shrink.** A grid item defaults to
+   `min-width: auto`, meaning it will not go below its content's
+   minimum. One wide table stretched the item, then the track, then the
+   grid, then the page: a 625px panel inside a 355px column. This was
+   most of the 635.
+2. **A scroll container that only scrolled one way.** `.mini-scroll`
+   declared `overflow-y: auto` and no `overflow-x`, so a table wider
+   than its panel had nowhere to go and pushed instead.
+3. **A constant duplicated across a breakpoint.** `.tabnav` bleeds
+   `-20px` to cancel the desktop body padding. The mobile block reduces
+   that padding to 10px and did not adjust the bleed, so the nav hung
+   10px off each edge.
+4. **`flex-shrink`, not `min-width`.** `.top-bar-title` is
+   `flex: 0 0 auto`. Adding `min-width: 0` changed nothing — measuring
+   showed the computed value applied and the width did not move, because
+   `flex-shrink: 0` is what actually refuses. Both declarations are
+   needed.
+
+**Two process notes.** The first fix appeared not to work and I nearly
+went looking for a specificity problem; the browser was serving a cached
+copy of the page. Asking the DOM which rules matched (`rules affecting
+width: []`) is what separated "my rule is wrong" from "my rule is not
+loaded" — worth reaching for before theorising. And my first
+overflow-detector counted elements that were *clipped* by an ancestor's
+`overflow: auto`, which listed a contained table as an offender;
+skipping anything inside a scroll container is what narrowed 18
+candidates down to the 4 real ones.
+
+Verified at 375px across all ten tabs (`scrollWidth == clientWidth`,
+zero uncontained offenders), and at 785px and 1400px to confirm desktop
+is untouched — the two-column grid still resolves to equal tracks and
+the base `flex-shrink: 0` and `-20px` bleed are unchanged.
+
+`tests/test_mobile_layout.py` pins the four rules plus a lint for the
+class: **no `min-width` wider than a phone inside the mobile
+breakpoint**, with a single allowlisted exception for the table that
+scrolls inside `.table-wrap`. These are static CSS assertions and the
+module says so — they stop a rule being reverted; they cannot notice a
+new overflow from unrelated markup.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately

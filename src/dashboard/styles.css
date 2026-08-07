@@ -979,6 +979,17 @@
     margin-top: 24px;
   }
 
+  /* A grid item defaults to `min-width: auto`, which means it refuses to
+     shrink below its content's minimum — so one wide table stretched the
+     track, the grid, and ultimately the page, and the whole dashboard
+     scrolled sideways on a phone.  `min-width: 0` lets the track win and
+     hands the overflow back to whatever inside the panel is equipped to
+     scroll it. */
+  .overview-split > *,
+  .overview-split-2 > * {
+    min-width: 0;
+  }
+
   @media (max-width: 900px) {
     .overview-split {
       grid-template-columns: 1fr;
@@ -999,6 +1010,12 @@
   .mini-scroll {
     max-height: 305px;
     overflow-y: auto;
+    /* Horizontal too.  Without it a table wider than the panel cannot
+       scroll inside its own box, so it pushes the panel out instead —
+       and because the panel is a grid item (see the min-width:0 rule
+       below) that widened the whole PAGE rather than just the panel.
+       Same containment the `.table-wrap` pattern already uses. */
+    overflow-x: auto;
   }
 
   .mini-scroll.tall {
@@ -2160,6 +2177,9 @@
 
   .dh-summary {
     display: flex;
+    /* Chips + hint on one nowrap line overflowed the panel on a narrow
+       screen.  Wrapping costs nothing at desktop width, where they fit. */
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     padding: 10px 14px;
@@ -2729,6 +2749,24 @@
 
     .tabnav {
       flex-wrap: wrap;
+      /* The base rule bleeds -20px to cancel the desktop body padding.
+         Mobile drops that padding to 10px, so -20px hung 10px off each
+         edge and scrolled the page sideways. */
+      margin-left: -10px;
+      margin-right: -10px;
+      padding-left: 10px;
+      padding-right: 10px;
+    }
+
+    /* The title block is `flex: 0 0 auto` at desktop, where not squashing
+       it is the right call.  On a phone that made the long
+       "Generated … prices as of … provisional" subtitle hold the whole
+       header wider than the screen.  BOTH parts are needed to release
+       it: `flex-shrink` is what actually refuses, and `min-width: 0`
+       stops the automatic minimum re-imposing the same floor. */
+    .top-bar-title {
+      flex-shrink: 1;
+      min-width: 0;
     }
 
     .tabnav .tab-btn {
