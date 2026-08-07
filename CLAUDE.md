@@ -421,9 +421,17 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     `account_methods` (per-account FIFO/LIFO/HIFO — main.py and the
     refresh path both pass `retirement_meta["lot_methods"]`).  The
     `history_holdings_basis_parity` data-health check (high severity,
-    enforced in tests) pins the two walkers together — **if you change
-    a basis rule, change BOTH walkers** (see the `fin-lot-walker-sync`
-    skill).
+    enforced in tests) pins the two walkers together NUMERICALLY, and
+    `tests/test_lot_walker_parity.py` pins them STRUCTURALLY — both
+    walkers must dispatch on the same set of basis effects, and the
+    rules extracted to be shared (`_apply_split_to_lots`, `fmv_basis`,
+    `basis_override_or`) must stay shared.  The structural half matters
+    because the numeric check only compares the LATEST snapshot for
+    symbols some fixture reaches; a branch present in one walker and
+    absent from the other is invisible to it until data arrives at that
+    branch.  **If you change a basis rule, change BOTH walkers** (see
+    the `fin-lot-walker-sync` skill) — or better, put the rule in
+    `basis.py` at module level and call it from both.
 15. **Export** (`export.export_json`) — JSON with a fixed field order so
     dashboard columns stay logical.
 16. **Dashboard** (`dashboard.generate_dashboard`) — string-interpolate the

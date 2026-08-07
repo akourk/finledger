@@ -561,6 +561,46 @@ def _add_to_avg(state, key, qty, basis_dollars):
     t[1] += basis_dollars
 
 
+def basis_override_or(t: dict, default: float) -> float:
+    """The user/broker-supplied cost-basis override, else ``default``.
+
+    Set by ``cost_basis_overrides.match_and_stamp`` from a metadata
+    ``Cost Basis`` row, or by ``broker_lots.stamp_acquisition_basis``
+    from a broker report.  Only consulted on lot-CREATING branches
+    (add / unpaired transfer-in / unpaired wrap-in) — the off-platform
+    acquisitions fin cannot see the basis for.
+
+    Module-level so **both** lot walkers use one copy.  It was a closure
+    inside ``_walk`` and open-coded four times in ``history.py``.
+    """
+    bo = t.get("basis_override")
+    return float(bo) if bo is not None else default
+
+
+def fmv_basis(t: dict, qty: float) -> float:
+    """Basis for a lot fin cannot price from a purchase.
+
+    An override wins.  Otherwise FMV at the event (``qty x price``) when
+    the broker recorded a spot price — the right basis for an asset
+    acquired at market, and a far better estimate than $0, which would
+    book the entire proceeds as gain on the eventual sale.  Falls back to
+    $0 only when no price is available.
+
+    Used by the ``zero_basis`` branch (rewards, spinoffs, mergers), the
+    unpaired transfer-in branch (crypto arriving from an off-platform
+    wallet), and the lone-wrap-leg fallback — in BOTH walkers.  CLAUDE.md
+    records that basis-rule changes have twice landed in ``basis.py``
+    without the matching ``history.py`` change; this is one of the rules
+    that happened to.
+    """
+    return basis_override_or(t, _fmv_at(t, qty))
+
+
+def _fmv_at(t: dict, qty: float) -> float:
+    price = float(t.get("price", 0) or 0)
+    return qty * price if price > 0 else 0.0
+
+
 def _apply_split_to_lots(lots: list[dict], old_total_qty: float, added_qty: float):
     """Scale lot quantities by the split ratio; preserve total basis."""
     if old_total_qty <= 0 or added_qty <= 0:
@@ -904,15 +944,9 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
         m = account_methods.get(acct, method)
         return m if m in ("fifo", "lifo", "hifo") else method
 
-    def _ov(t: dict, default: float) -> float:
-        """Use the user-supplied cost-basis override on this txn (set by
-        cost_basis_overrides.match_and_stamp from a metadata `Cost Basis`
-        row) when present, else the computed default.  Only consulted on
-        lot-CREATING branches (add / unpaired transfer-in / unpaired
-        wrap-in) — the off-platform acquisitions fin can't see the basis
-        for."""
-        bo = t.get("basis_override")
-        return float(bo) if bo is not None else default
+    # Thin alias: the rule itself is module-level so history.py's walker
+    # uses the same copy (see basis_override_or).
+    _ov = basis_override_or
 
     # Canonical walk order, established ONCE up front.  Every pre-pass
     # below reads this list rather than the caller's, so pairing and
@@ -1038,7 +1072,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             # else zero.  A user Cost Basis override wins (e.g. a free
             # share's grant-FMV basis that exists only on the 1099).
             price = float(t.get("price", 0) or 0)
-            basis = _ov(t, qty * price if price > 0 else 0.0)
+            basis = fmv_basis(t, qty)
             _push_txn_lots(state, method, key, t, qty, basis,
                            t.get("date", ""),
                            origin="reconstructed" if price > 0 else "fmv")
@@ -1135,8 +1169,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 # when no price is available.  A user-supplied basis
                 # override (off-platform "customer-provided" cost) wins
                 # over the FMV guess.
-                price = float(t.get("price", 0) or 0)
-                basis = _ov(t, qty * price if price > 0 else 0.0)
+                basis = fmv_basis(t, qty)
                 _push_txn_lots(state, method, key, t, qty, basis,
                                t.get("date", ""), origin="fmv")
                 cost_basis_value = basis

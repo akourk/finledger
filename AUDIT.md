@@ -1560,6 +1560,56 @@ same-day rows count.
 Final state: **1067 tests, 91.7% line coverage, 0 never-executed
 functions.**
 
+### Improvement #1, lot-walker half (2026-08-06)
+
+The valuation half became `src/valuation.py`. This is the other one:
+`basis._walk` and the inline walker in `history.compute_history` apply
+the same basis rules to the same lot state, and CLAUDE.md records that
+rule changes have **twice** landed in `basis.py` without the matching
+`history.py` change.
+
+**A full merge was considered and rejected.** The two walkers hold lot
+state differently — `basis._walk` supports average-cost (a tuple pool,
+not a lot list) and produces per-txn annotations, realized gain and lot
+breakdowns that history has no use for. history's dispatch is a strict
+*subset*, and forcing one function to serve both would mean threading
+mode flags through every branch: more coupling than the duplication it
+removed. So the work was extraction of what is genuinely identical, plus
+a structural guard for what is not.
+
+**Extracted** (module-level in `basis.py`, called by both):
+`basis_override_or` — the "user/broker override wins on lot-creating
+branches" rule, previously a closure in `_walk` and open-coded four
+times in history; and `fmv_basis` — "override, else qty × price when a
+spot price exists, else $0", the rule behind `zero_basis`, unpaired
+transfer-ins and the lone-wrap-leg fallback. history's `split` branch now
+calls `_apply_split_to_lots` instead of carrying it verbatim, which
+closes the remaining half of **F-015** (the rule existed twice and
+neither copy was executed by a test).
+
+**The structural guard is the real deliverable.**
+`tests/test_lot_walker_parity.py` asserts, by AST rather than source
+text, that both walkers dispatch on the *same set* of basis effects —
+plus that every effect they branch on is one the catalog produces (a
+typo'd branch is dead code that falls through to `ignore`), and that
+every effect the catalog produces is handled somewhere.
+
+That matters because of what the existing defences cannot do.
+`history_holdings_basis_parity` compares the two walkers numerically,
+but only on the LATEST snapshot and only for symbols some fixture
+reaches. **A branch present in one walker and absent from the other is
+invisible to it until data arrives at that branch** — which is exactly
+the shape of both documented misses. The structural check needs no
+fixture, so it cannot be outrun by a new rule.
+
+7/7 mutations caught, including re-inlining the split rescale and
+dropping a whole effect branch from history. 1081 tests, golden
+identical, net −40 lines across the two walkers.
+
+The `fin-lot-walker-sync` skill now leads with the better advice:
+**prefer extraction over lockstep.** The strongest version of a
+change-both-copies checklist is not needing to follow it.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
@@ -1583,13 +1633,14 @@ txn-price fallback and option-intrinsic floor — so the rule exists once.
 `_rescale_lots` from `basis.py`, so the precedent and the appetite both
 exist.
 
-**DONE 2026-08-06** for the *valuation* half — `src/valuation.py` now
-owns the price ladder, the dust filter and the near-zero cutoff, and all
-five sites (the three named above plus `analytics/daily_pnl` and
-`analytics/header`, which this entry missed) call it. Write-up below.
-The *lot-walker* half — `basis._walk` versus history's inline copy —
-is still two implementations and still carried by the
-`history_holdings_basis_parity` check.
+**DONE 2026-08-06**, both halves. The *valuation* half became
+`src/valuation.py`, which owns the price ladder, the dust filter and the
+near-zero cutoff for all five sites. The *lot-walker* half extracted the
+genuinely-shared rules (`basis_override_or`, `fmv_basis`,
+`_apply_split_to_lots`) and added a structural parity test, after a full
+merge was considered and rejected — history's dispatch is a strict
+subset of basis's, and one function serving both would need mode flags
+through every branch. Write-ups below.
 
 **2. The sample portfolio and the e2e fixture are two parallel synthetic
 portfolios.** Collapsing them would remove a duplicate fixture and was

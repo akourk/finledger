@@ -17,10 +17,11 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 
 from .basis import (
-    BASIS_EFFECTS, _basis_dollars, _basis_effect, _consume_for_rebase,
-    _consume_lots, _consume_lots_directed, _consume_lots_reserving,
-    _pair_transfers, _pair_wraps, _rebase_is_move, _rescale_lots,
-    _sort_key as _basis_sort_key,
+    BASIS_EFFECTS, _apply_split_to_lots, _basis_dollars, _basis_effect,
+    _consume_for_rebase, _consume_lots, _consume_lots_directed,
+    _consume_lots_reserving, _pair_transfers, _pair_wraps, _rebase_is_move,
+    _rescale_lots, _sort_key as _basis_sort_key,
+    basis_override_or, fmv_basis,
 )
 from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
                           reserved_future_demand, take_wrap_demand,
@@ -433,16 +434,13 @@ def compute_history(txns: list[dict],
             effect = _basis_effect_for_sym(sym, action)
             key = (acct, sym)
             if effect == "add":
-                bo = t.get("basis_override")
-                dollars = float(bo) if bo is not None else _basis_dollars(t)
-                _push_txn(key, t, qty, dollars, t.get("date", ""))
+                _push_txn(key, t, qty,
+                          basis_override_or(t, _basis_dollars(t)),
+                          t.get("date", ""))
             elif effect == "zero_basis":
                 # FMV-at-receipt when the broker recorded a price, else $0.
                 # Override wins — mirrors basis._walk's zero_basis branch.
-                bo = t.get("basis_override")
-                _push_txn(key, t, qty,
-                          float(bo) if bo is not None
-                          else (qty * p if p > 0 else 0.0),
+                _push_txn(key, t, qty, fmv_basis(t, qty),
                           t.get("date", ""),
                           origin="reconstructed" if p > 0 else "fmv")
             elif effect == "remove":
@@ -465,11 +463,8 @@ def compute_history(txns: list[dict],
                 if paired is None:
                     # External arrival with no visible origin leg — FMV at
                     # the transfer date (matches basis.py), override wins.
-                    bo = t.get("basis_override")
-                    basis = (float(bo) if bo is not None
-                             else (qty * p if p > 0 else 0.0))
-                    _push_txn(key, t, qty, basis, t.get("date", ""),
-                              origin="fmv")
+                    _push_txn(key, t, qty, fmv_basis(t, qty),
+                              t.get("date", ""), origin="fmv")
                 elif id(paired) in stashed_tout_lots:
                     for lot in stashed_tout_lots.pop(id(paired)):
                         lots[key].append(dict(lot))
@@ -520,21 +515,15 @@ def compute_history(txns: list[dict],
                             _consume((acct, ol.get("symbol", "")), oq)
                         for il in g["in"]:
                             iq = float(il.get("quantity", 0) or 0)
-                            px = float(il.get("price", 0) or 0)
-                            bo = il.get("basis_override")
-                            b = (float(bo) if bo is not None
-                                 else (iq * px if px > 0 else 0.0))
                             _push_txn((acct, il.get("symbol", "")), il,
-                                      iq, b, il.get("date", ""),
-                                      origin="fmv")
+                                      iq, fmv_basis(il, iq),
+                                      il.get("date", ""), origin="fmv")
             elif effect == "split":
                 lq = lots[key]
-                old_total = sum(lot["qty"] for lot in lq)
-                if old_total > 0 and qty > 0:
-                    ratio = (old_total + qty) / old_total
-                    for lot in lq:
-                        lot["qty"] *= ratio
-                        lot["basis_per_share"] /= ratio
+                # Shared with basis._walk rather than reimplemented.  This
+                # was a verbatim copy and F-015 is exactly that: the rule
+                # existed twice and NEITHER copy was executed by a test.
+                _apply_split_to_lots(lq, sum(lot["qty"] for lot in lq), qty)
             elif (effect == "ignore" and qty > 0 and sym
                   and sym != "USD" and t.get("basis_override") is not None):
                 # Neutral same-pool conversion with broker-reported

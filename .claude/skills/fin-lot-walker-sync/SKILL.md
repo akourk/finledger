@@ -64,6 +64,25 @@ All enforced as high-severity in tests via `FIN_ASSERT_INVARIANTS=1`:
   consumer bug; do not weaken it.
 - `negative_cost_basis`, `zero_qty_with_basis`, `negative_holding_days`.
 
+**Plus a STRUCTURAL check that needs no fixture:**
+`tests/test_lot_walker_parity.py` asserts both walkers dispatch on the
+same set of basis effects, that every effect they branch on is one the
+catalog actually produces, and that every effect the catalog produces is
+handled. The numeric checks above only compare the LATEST snapshot for
+symbols some fixture reaches — a branch present in one walker and absent
+from the other stays invisible to them until data arrives at it. That is
+precisely how the two documented misses happened.
+
+**Prefer extraction over lockstep.** The strongest version of this
+checklist is not following it: if the rule can live at module level in
+`basis.py` and be called from both walkers, put it there. Already
+shared: `_consume_lots`, `_consume_lots_directed`,
+`_consume_lots_reserving`, `_consume_for_rebase`, `_pair_transfers`,
+`_pair_wraps`, `_rescale_lots`, `_rebase_is_move`,
+`_apply_split_to_lots`, `basis_override_or`, `fmv_basis`.
+`test_lot_walker_parity.py` pins the last three as shared, so re-inlining
+one fails.
+
 ```bash
 python -m pytest tests/test_basis_walker.py tests/test_history.py \
   tests/test_data_health.py tests/test_pipeline_snapshot.py -q
