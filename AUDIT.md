@@ -1243,7 +1243,9 @@ tests would agree with them.
 snap the live path lacks. Subtracting `take * (total_basis / total_qty)`
 from `total_basis` is not bit-identical to zero, so exiting a position
 completely leaves basis behind on a position with no shares — measured
-at **~10% of full exits, worst case ~6e-11** over 200k randomized fills.
+at **~10% of full exits, worst case ~6e-11** over 200k randomized fills
+on one platform — whether a given pool round-trips exactly turns out not
+to be portable, which later broke a test that assumed it was.
 
 Nowhere near a displayed figure, so this is a hygiene fix rather than a
 defect. It is worth doing anyway because it is a *standing* wrong state
@@ -1861,9 +1863,26 @@ session a guard was written that could not fire, both times caught by
 mutating the thing it was supposed to protect. **A static guard that
 matches prose instead of code is not a guard.**
 
-Process note worth more than the fix: this session added ~90 tests and
+**And fixing it revealed a second failure I had caused.** The matrix
+runs 3.10 and 3.12; the default `fail-fast` cancels the surviving job on
+the first failure, so the 3.10 timezone bug had been hiding a 3.12 one.
+That second failure was my own not-vacuous guard for the average-cost
+snap, which asserted that
+`total_cost - total_qty * (total_cost / total_qty)` is non-zero for a
+particular fixture. True on CPython 3.11/Windows, exactly `0.0` on
+3.12/Linux. **Whether a given `(a/b)*b` round-trips exactly is not
+portable, and a guard must not rest on it** — which is also a better
+argument for the snap than the one the guard was making. Rewritten to
+measure the within-tolerance exit instead: `10.0 - 5e-13` takes the
+branch and leaves a residual under any IEEE implementation.
+
+`fail-fast: false` is now set, so both legs always report. Two failures
+in one run beats two round trips.
+
+Process note worth more than either fix: this session added ~90 tests and
 never once checked that CI agreed. A local green is evidence about one
-interpreter on one OS in one timezone.
+interpreter, on one OS, in one timezone. Both bugs were invisible to it
+by construction.
 
 ## Improvement opportunities
 

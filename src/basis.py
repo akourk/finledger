@@ -636,7 +636,10 @@ def _consume_from_key(state: dict, method: str, key: tuple, qty: float,
             # subtracting.  `take * (total_basis / total_qty)` is not
             # bit-identical to `total_basis`, so the arithmetic below
             # leaves a residual basis on a position with zero quantity
-            # (~10% of full exits, up to ~1e-10).  Sub-nanocent in any
+            # (~10% of full exits when measured, up to ~1e-10; whether a
+            # given pool round-trips exactly is platform-dependent, which
+            # is its own reason not to rely on the subtraction).
+            # Sub-nanocent in any
             # single figure, but it is a standing "basis without shares"
             # state that a later re-entry averages against.
             basis_removed = total_basis

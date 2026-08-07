@@ -514,7 +514,8 @@ class TestAverageCostFullLiquidation:
     full-liquidation snap. Subtracting `take * (total_basis / total_qty)`
     from `total_basis` is not bit-identical to zero, so exiting a position
     completely left basis behind on a position with no shares — about 10%
-    of full exits, up to ~1e-10. Far too small to move a displayed figure,
+    of full exits on one platform, up to ~1e-10 — whether a given pool
+    round-trips exactly is not portable. Far too small to move a figure,
     but it is a standing "basis without shares" state, and a later
     re-entry averages against it.
 
@@ -581,19 +582,29 @@ class TestAverageCostFullLiquidation:
             "full-liquidation snap is gone and the subtraction is back"
         )
 
-    def test_the_fixture_really_does_produce_an_inexact_quotient(self):
-        """Not-vacuous guard.
+    def test_plain_subtraction_would_not_reach_zero(self):
+        """Not-vacuous guard: the snap must do something subtraction
+        does not, or the exact-zero assertions above prove nothing.
 
-        With a pool whose basis divides evenly by its quantity, the
-        subtraction lands on exactly zero on its own and the snap proves
-        nothing. Confirm these fills do not.
+        This deliberately measures the QUANTITY, not the basis quotient.
+        An earlier version asserted that
+        `total_cost - total_qty * (total_cost / total_qty)` was non-zero
+        for this fixture — true on CPython 3.11/Windows, exactly `0.0` on
+        3.12/Linux, so the guard failed CI while passing locally. Whether
+        a particular `(a/b)*b` round-trips exactly is not portable, and a
+        guard must not rest on it.
+
+        The within-tolerance exit is deterministic: the branch fires when
+        `take >= total_qty - 1e-12`, so a sale 5e-13 short of the pool
+        takes it, and `total_qty - take` is a normal subtraction of two
+        widely-separated doubles — non-zero on any IEEE implementation.
         """
-        total_qty = sum(f[1] for f in self.FILLS)
-        total_cost = sum(f[2] for f in self.FILLS)
-        naive_residual = total_cost - total_qty * (total_cost / total_qty)
-        assert naive_residual != 0.0, (
-            "this fixture divides evenly, so the snap is indistinguishable "
-            "from plain subtraction — pick quantities that do not"
+        total_qty, take = 10.0, 10.0 - 5e-13
+        assert take >= total_qty - 1e-12, "sale is outside the snap's window"
+        assert take != total_qty, "sale is not actually short of the pool"
+        assert total_qty - take != 0.0, (
+            "plain subtraction reaches exactly zero here, so the snap is "
+            "indistinguishable from it and the exact-zero tests are vacuous"
         )
 
     def test_a_partial_exit_still_subtracts(self, isolated_workdir):

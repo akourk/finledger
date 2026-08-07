@@ -8,6 +8,11 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     strategy:
+      # Report BOTH legs.  With the default fail-fast, the first failure
+      # cancels the other job — so a 3.10-only failure hid a separate
+      # 3.12-only one, and fixing the first just revealed the second a
+      # push later.  Two failures found in one run beats two round trips.
+      fail-fast: false
       matrix:
         # 3.10 backs the README's "Python 3.10+" claim; 3.12 covers current.
         python-version: ["3.10", "3.12"]
