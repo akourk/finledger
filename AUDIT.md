@@ -1413,6 +1413,45 @@ lesson applied one level up:
    no report, so a broken default would lose the check on every real run
    while the explicit test stayed green.
 
+### The warn/info data-health checks get their guards (2026-08-06)
+
+The last of the deferred test work. Segment 2 gave every **high**-severity
+check a fire/near-miss pair, because those raise `InvariantViolation` and
+the whole suite leans on them. The twelve **warn/info** checks were left,
+and the reason they were left is the reason they mattered: nothing else
+in the suite ever exercises their violating branch, because they never
+raise. A `high` check that stops detecting takes tests down with it. A
+`warn` check that stops detecting just goes quiet — and **an empty panel
+reads as "all clear"**, so the failure presents as good news.
+
+Twelve checks now have both halves, plus a thirteenth
+(`_check_held_symbol_price_health`) in its own class, since it takes a
+`cache_dir` and reads cache sidecars rather than plain dicts. 9/9
+representative mutations caught; 972 tests.
+
+The near-miss half does more work here than it does for the `high`
+checks. Every one of these is a *threshold* — 95% priced coverage, a
+100× basis-to-price ratio, ±500% TWR, $1k of unclassified sector, $50
+of Coinbase bridge endpoint. A threshold set too loose is invisible; a
+threshold set too tight lights the panel permanently, and a permanently
+lit warning is indistinguishable from no warning while also burying the
+`high` items next to it.
+
+**Three meta-guards now stand behind the set**, and each closes a way a
+future check could arrive unprotected:
+
+1. every `high` check appears in `GUARD_CASES` (Segment 2);
+2. every `warn`/`info` check appears in `SOFT_GUARD_CASES` — or in the
+   explicit `_COVERED_BY_A_FIXTURE_CLASS` map, whose named classes are
+   themselves asserted to exist, so the exemption cannot quietly become
+   a hole;
+3. **every check is actually called by `compute_data_health`.**
+
+The third came directly from the F-017 mutation survivor and generalises
+it. All 24 checks are wired today; the point is that nothing said so,
+and a detector nobody calls is indistinguishable from a detector that
+finds nothing.
+
 ## Improvement opportunities
 
 Architectural observations surfaced by the audit, kept deliberately
@@ -1495,6 +1534,8 @@ deliberate decision rather than inheritance.
   been checked against neither Rev. Proc. nor the retirement Notice.
   That needs external sources, and the `fin-tax-year-update` skill
   already lists them.
-- **The 13 `warn`/`info` `data_health` checks.** The ten high-severity
-  ones are pinned; these are not. Their trip conditions were extracted
-  during Segment 5 item 1.
+- ~~**The 13 `warn`/`info` `data_health` checks.**~~ — **DONE
+  2026-08-06**. All thirteen have fire/near-miss pairs, and three
+  meta-guards now stand behind the whole set (high covered, soft
+  covered, and every check actually wired into `compute_data_health`).
+  Write-up above.
