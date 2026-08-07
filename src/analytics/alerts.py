@@ -23,6 +23,38 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 
+_COVERAGE_LOOKBACK_MONTHS = 12
+_COVERAGE_LOOKBACK_DAYS = 365
+
+
+def _snapshots_within(history: list[dict], days: int) -> list[dict]:
+    """The trailing `days` of snapshots, anchored to the NEWEST one.
+
+    Cadence-independent by construction: doubling the sampling rate
+    doubles how many rows come back and leaves the time span alone.
+    Counting rows instead is what let F-010 happen.
+
+    Falls back to the whole history when a date is unreadable — a
+    coverage alert is a diagnostic, and dropping it because a date is
+    malformed hides the very condition it exists to report.
+    """
+    if not history:
+        return []
+    try:
+        end = datetime.strptime(history[-1]["date"][:10], "%Y-%m-%d")
+    except (KeyError, TypeError, ValueError):
+        return list(history)
+    cutoff = (end - timedelta(days=days)).date().isoformat()
+    out = []
+    for s in history:
+        d = (s.get("date") or "")[:10]
+        if not d:
+            out.append(s)          # undated: can't exclude it on time
+        elif d >= cutoff:
+            out.append(s)
+    return out
+
+
 def compute_alerts(txns: list[dict],
                    holdings_by_account: list[dict],
                    history: list[dict],
@@ -85,16 +117,28 @@ def compute_alerts(txns: list[dict],
                 pass
 
     # 4. Coverage gaps in recent snapshots
-    recent = [s for s in (history[-12:] if history else [])
-              if s.get("priced_pct", 1) < 0.999]
+    #
+    # The window is a span of TIME, not a count of snapshots.  It used to
+    # be `history[-12:]`, written when history was sampled monthly — so
+    # twelve snapshots meant a year.  The cadence later went semimonthly
+    # and the window silently halved to about six months: same code, same
+    # tests, half the coverage, and a message still claiming "last 12".
+    # A day count cannot be moved by a cadence change (F-010).
+    #
+    # Anchored to the newest snapshot rather than today, so the alert
+    # describes the data it was given — a stale export reports on its own
+    # final year, not on an empty window.
+    recent_window = _snapshots_within(history, _COVERAGE_LOOKBACK_DAYS)
+    recent = [s for s in recent_window if s.get("priced_pct", 1) < 0.999]
     if recent:
         worst = min(s.get("priced_pct", 1) for s in recent)
         alerts.append({
             "kind":     "coverage_gap",
             "severity": "info",
-            "message":  (f"{len(recent)} of last 12 snapshots have unpriced "
-                         f"positions (worst: {worst*100:.1f}%) — some history "
-                         f"values may be approximations."),
+            "message":  (f"{len(recent)} of the last {len(recent_window)} "
+                         f"snapshots (past {_COVERAGE_LOOKBACK_MONTHS} months) "
+                         f"have unpriced positions (worst: {worst*100:.1f}%) — "
+                         f"some history values may be approximations."),
         })
 
     # 5. Failing tickers (failure_count > 0)

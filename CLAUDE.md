@@ -790,7 +790,9 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     `retirement_meta["reconcile"]`, consumed by
     `analytics/reconcile.py`, surfaced in the Overview's
     Reconciliation panel.  Absent → the panel hides.  A Note may
-    carry an `[expected ±N.NN]` token (no thousands separators)
+    carry an `[expected ±N.NN]` token (no thousands separators, plain
+    ASCII minus; a token that looks like one but won't parse is
+    REPORTED on the row rather than silently ignored)
     declaring a KNOWN, documented delta (a K-1 entity's
     distributions the 1099-DIV can't see, a broker's per-program
     reporting threshold, lot-relief basis residuals, structural

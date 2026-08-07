@@ -141,8 +141,8 @@ not a verdict**, and so is a clean result.
 | F-007 | high | *(fixed)* No test had ever tripped any of the 23 `data_health` checks — the suite's own safety net was entirely unverified |
 | F-008 | medium | *(fixed)* The reconciliation panel's break-flagging path was never exercised — no test produced a balance row that wasn't "ok" |
 | F-009 | medium | *(fixed)* `alerts.py` had no test file; five of seven alert sources had never been emitted |
-| F-010 | low | The coverage-gap alert's lookback window silently halved when the history cadence went semimonthly |
-| F-011 | low | A malformed `[expected ±N]` token is indistinguishable from no token, and its error branch is unreachable |
+| F-010 | low | *(fixed)* The coverage-gap alert's lookback window silently halved when the history cadence went semimonthly — now a day count, which a cadence change cannot move |
+| F-011 | low | *(fixed)* A malformed `[expected ±N]` token was indistinguishable from no token — now reported on the row |
 | F-001 | medium | *(fixed)* The shipped sample portfolio was not exercised by any test; five broker parsers had zero executed lines |
 | F-002 | medium | Two basis-walker branches (`_remove_from_avg`, `_apply_split_to_lots`) are never executed |
 | F-003 | low | `snapshot.py` has 0% coverage — export/import wholly untested, including the anti-clobber guard |
@@ -1664,6 +1664,54 @@ Also verified in a browser at desktop and mobile widths rather than
 assumed. That turned up a **pre-existing** horizontal overflow at 375px
 in the page chrome (top bar, tab nav) — unrelated to this change
 (`#performance *` had zero offenders) and spun off separately.
+
+### F-010 and F-011: two quiet ways of doing less than advertised (2026-08-06)
+
+Both are the shape this audit kept returning to — a protection that is
+configured, believed in, and not running.
+
+**F-010: a window that moved when something else changed.** The
+coverage-gap alert read `history[-12:]`. That was correct when history
+was sampled monthly: twelve snapshots meant a year. The cadence later
+went semimonthly and the window silently halved to about six months —
+same code, same tests, half the coverage, and a message still saying
+"last 12 snapshots".
+
+Nothing was wrong with either change on its own. The bug lives in the
+COUPLING: an alert's time horizon expressed as a count of rows, in a
+system where the row rate is a separate decision. The fix is a day
+count, which a cadence change cannot move, anchored to the newest
+snapshot rather than to today so a stale export reports on its own final
+year instead of an empty window. The message now states the span and the
+real row count.
+
+**F-011: an explanation that did nothing and said nothing.** A
+`[expected ±N]` token in a Reconcile note declares a known, documented
+delta. A malformed one — a thousands separator, a unicode minus pasted
+from a document, a missing number — was indistinguishable from no token:
+the strict parse returned `None` and the row quietly reverted to being
+banded on its raw delta. The user documents a difference, the row keeps
+flagging, and nothing connects the two.
+
+Same class as F-018, and it gets the same treatment: **keep the accepted
+syntax strict, and say plainly when something looked like an attempt and
+was not one.** Accepting the near-misses instead would grow a second,
+undocumented format beside the one CLAUDE.md specifies. The message
+lands on the reconciliation row the user is already looking at — the
+F-017 tier 3 lesson, that detection is worth what it reaches.
+
+**The fix shipped broken and its own test caught it**, which is worth
+recording. The malformed-token detector's regex went through a shell
+heredoc that turned `` into a literal backspace byte, so the pattern
+could never match anything. A guard that cannot fire — the exact defect
+class Segment 2 was built to find — introduced while fixing a different
+one. It was invisible on inspection (the source *reads* correctly; only
+`repr()` of the compiled pattern shows `expected`) and obvious the
+moment the test ran. Write the test with the fix, not after it.
+
+7/7 mutations caught, including a boundary survivor: no fixture had a
+snapshot sitting exactly on the 365-day cutoff, so `>=` and `>` were
+indistinguishable. "Two of each" again, in miniature.
 
 ## Improvement opportunities
 

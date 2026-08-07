@@ -140,6 +140,11 @@ def _computed_income(txns, account_group, year, buckets) -> float:
 _EXPECTED_RE = re.compile(r"\[expected\s+([+-]?\d+(?:\.\d+)?)\s*\]")
 
 
+# Deliberately loose: anything that OPENS like the token.  Used only to
+# notice a malformed one — what it accepts is not what fin honours.
+_EXPECTED_LOOSE_RE = re.compile(r"\[\s*expected[^\]]*\]", re.I)
+
+
 def _expected_delta(note: str) -> float | None:
     """Parse an ``[expected ±N.NN]`` token from a Reconcile row's Note.
 
@@ -154,10 +159,27 @@ def _expected_delta(note: str) -> float | None:
     m = _EXPECTED_RE.search(note or "")
     if not m:
         return None
-    try:
-        return float(m.group(1))
-    except ValueError:
-        return None
+    return float(m.group(1))
+
+
+def _malformed_expected(note: str) -> bool:
+    """True when the Note tries to declare an expectation and fails.
+
+    F-011.  A typo'd token — a thousands separator, a unicode minus, a
+    missing number — was indistinguishable from no token at all: the
+    strict parse returned None and the row silently reverted to being
+    banded on its RAW delta.  The user believes they have documented a
+    known difference and the row keeps flagging, which is the worst of
+    both worlds: the explanation does nothing and nothing says so.
+
+    Same class as F-018 — silently degrading user-supplied input — and
+    it gets the same treatment: keep the accepted syntax strict, and
+    say plainly when something looked like an attempt and was not one.
+    Accepting the near-misses instead would quietly grow a second,
+    undocumented format.
+    """
+    return (bool(_EXPECTED_LOOSE_RE.search(note or ""))
+            and _EXPECTED_RE.search(note or "") is None)
 
 
 def compute_reconciliation(txns, history, reconcile_meta):
@@ -234,6 +256,14 @@ def compute_reconciliation(txns, history, reconcile_meta):
 
         delta = computed - reported
         expected = _expected_delta(note)
+        if expected is None and _malformed_expected(note):
+            # Say so where the user is already looking, rather than
+            # letting the row flag for a reason they think they fixed.
+            detail = ("this note looks like an [expected ...] declaration "
+                      "but the amount could not be read — write it as "
+                      "[expected -1234.56], with no thousands separators "
+                      "and a plain ASCII minus"
+                      + (f" — {detail}" if detail else ""))
         if expected is not None:
             residual = round(delta - expected, 2)
             if residual == 0:
