@@ -21,6 +21,8 @@ relations that are true by construction of what the labels claim:
   a lower cumulative beside a higher annualized is impossible
 * two figures a card joins with "vs" report the same measured span
 * a window reaching back past the first snapshot reports lifetime
+* holdings total the same by account, by type and by sector
+* a figure rendered on two tabs is the same figure
 * a filtered view never shows rows predating the filter's own start
 * nothing renders as NaN / undefined / Infinity
 
@@ -37,6 +39,7 @@ the one that did not survive that check.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -94,9 +97,14 @@ def rendered(isolated_workdir, stub_prices):
     assert json_path.exists(), "pipeline did not produce transactions.json"
 
     try:
-        return probe(json_path)
+        out = probe(json_path)
     except ProbeUnavailable as exc:
         pytest.skip(f"dashboard probe needs node: {exc}")
+    # Carried along so the fixture-quality guards can check properties
+    # that are invisible in rendered output — see
+    # `test_fixture_can_distinguish_the_two_realized_sources`.
+    out["_export"] = json.loads(json_path.read_text(encoding="utf-8"))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +136,35 @@ def years_between(start: str, end: str) -> float:
 def find_cards(view: dict, pattern: str) -> list[dict]:
     rx = re.compile(pattern, re.I)
     return [c for c in view["cards"] if rx.search(c["label"])]
+
+
+_MONEY = re.compile(r"([-+]?)\$([\d,]+(?:\.\d+)?)")
+
+
+def money(text: str) -> float | None:
+    """First dollar figure in a displayed value."""
+    m = _MONEY.search(text or "")
+    if not m:
+        return None
+    return (-1 if m.group(1) == "-" else 1) * float(m.group(2).replace(",", ""))
+
+
+def require_nontrivial(**quantities: float | None) -> None:
+    """Fail unless every input to a relation is a real, non-zero number.
+
+    An equality between two zeros is not evidence of anything, and a
+    fixture that drifts toward emptiness turns a relation into decoration
+    without ever going red.  Both failure modes have already happened
+    here — the first fixture made the window-pairing relation untestable,
+    and the Overview captured no cards at all — so the guard is applied
+    at the point of use rather than trusted to a fixture review.
+    """
+    dead = [name for name, v in quantities.items() if v is None or abs(v) < 0.01]
+    assert not dead, (
+        f"relation inputs are absent or zero: {dead} — this comparison "
+        f"would hold trivially.  Enrich the fixture or drop the check; do "
+        f"not leave it passing on nothing."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +205,30 @@ class TestTheHarnessActuallyRan:
     def test_expected_tabs_were_reached(self, rendered):
         missing = {"overview", "performance", "holdings"} - set(rendered["tabs"])
         assert not missing, f"probe never rendered: {sorted(missing)}"
+
+    def test_fixture_can_distinguish_the_two_realized_sources(self, rendered):
+        """The dashboard can source Realized from the annotated walk (real
+        per-account lot methods) or from the pure-method comparison table.
+        Those two agree exactly unless some account overrides the default
+        AND owns more than one lot — so without both halves, a test that
+        checks WHICH source a tab reads passes either way.
+
+        That is not hypothetical: F-033's regression test passed against
+        the reverted fix until this fixture grew a `Lot Method` row and a
+        second lot.  `require_nontrivial` does not catch this shape — the
+        values are non-zero, they simply coincide.
+        """
+        d = rendered["_export"]
+        annotated = sum(t.get("realized_gain") or 0 for t in d["transactions"])
+        pure_fifo = d["basis_methods"]["fifo"]["totals"]["realized_gain"]
+        assert abs(annotated) > 0.01, "fixture realizes no gains at all"
+        assert abs(annotated - pure_fifo) > 1.0, (
+            f"annotated realized ({annotated:,.2f}) and pure FIFO "
+            f"({pure_fifo:,.2f}) are the same figure — this fixture cannot "
+            f"tell the two sources apart, so the cross-tab checks below "
+            f"pass whichever one the dashboard reads.  It needs a "
+            f"`Lot Method` override and at least two lots to relieve."
+        )
 
     def test_fixture_has_staggered_account_starts(self, rendered):
         """The relation F-031 broke is invisible unless some filter's
@@ -401,6 +462,103 @@ class TestFilteredViewsDoNotShowEmptyLeadingYears:
                     f"[{v['filter']}] Annual Returns opens on {first[0]} with "
                     f"an all-zero row: {first!r}.  A year the filter did not "
                     f"exist for renders beside a real benchmark percentage."
+                )
+
+
+# ---------------------------------------------------------------------------
+# Relation 5 — one number, several groupings
+# ---------------------------------------------------------------------------
+
+class TestHoldingsGroupingsAgree:
+    """By account, by type and by sector are three ways of partitioning
+    the SAME portfolio, so their totals are the same number three times.
+    A grouping that drops or double-counts a position shows up here and
+    almost nowhere else — each view looks internally plausible on its
+    own."""
+
+    def test_every_grouping_totals_the_same(self, rendered):
+        views = rendered.get("holdings_views", {})
+        assert set(views) >= {"account", "type", "sector"}, (
+            f"probe captured only {sorted(views)}"
+        )
+        totals = {k: money(v["fields"].get("holdingsTotalValue", ""))
+                  for k, v in views.items()}
+        require_nontrivial(**totals)
+        ref_name, ref = next(iter(totals.items()))
+        for name, val in totals.items():
+            assert val == pytest.approx(ref, abs=0.02), (
+                f"holdings total by {name} is {val:,.2f} but by {ref_name} "
+                f"it is {ref:,.2f} — the same positions, partitioned two ways."
+            )
+
+    def test_each_grouping_actually_partitions_something(self, rendered):
+        """Guards the guard: three identical totals prove nothing if every
+        view rendered a single all-encompassing row."""
+        views = rendered.get("holdings_views", {})
+        for name, v in views.items():
+            rows = sum(len(t["rows"]) for t in v["tables"])
+            assert rows >= 1, f"holdings view {name} rendered no rows"
+
+
+# ---------------------------------------------------------------------------
+# Relation 6 — the same quantity rendered on two tabs
+# ---------------------------------------------------------------------------
+
+class TestOverviewAgreesWithPerformance:
+    """Realized, Unrealized and Net Contributed appear on both Overview
+    and Performance, reached by different code paths.
+
+    F-033 lived here: Overview sourced Cost Basis, Unrealized and
+    Realized from `basisMethods.fifo` — the Lot Method Comparison table,
+    which holds four PURE single-method what-if walks.  The real
+    portfolio uses per-account methods from `Lot Method` metadata, so
+    with one account on HIFO the two tabs disagreed by roughly 19% on
+    Realized under one unqualified label.
+
+    This is the cross-tab form of the F-031 shape, and the reason it
+    survived is the same: both numbers were individually computable,
+    plausible, and never rendered next to each other.
+    """
+
+    PAIRS = [("Realized P&L", r"^Realized$"),
+             ("Unrealized P&L", r"^Unrealized$"),
+             ("Net Contributed", r"^Net Contributed$")]
+
+    def test_shared_figures_match(self, rendered):
+        ov = rendered["tabs"]["overview"]
+        perf = next((v for v in rendered["performance"]
+                     if v["filter"] == "Total" and v["window"] == "lifetime"), None)
+        assert perf is not None, "no Total/lifetime performance view"
+        for ov_label, perf_pattern in self.PAIRS:
+            a = find_cards(ov, r"^" + re.escape(ov_label) + r"$")
+            b = find_cards(perf, perf_pattern)
+            assert a, f"Overview no longer renders {ov_label!r}"
+            assert b, f"Performance no longer renders a card matching {perf_pattern!r}"
+            x, y = money(a[0]["value"]), money(b[0]["value"])
+            require_nontrivial(**{f"overview_{ov_label}": x, f"perf_{ov_label}": y})
+            assert x == pytest.approx(y, abs=0.02), (
+                f"{ov_label}: Overview shows {x:+,.2f}, Performance shows "
+                f"{y:+,.2f} for the same quantity.  Check both are reading "
+                f"the annotated walk and not the pure-method comparison table."
+            )
+
+    def test_overview_cost_basis_matches_the_holdings_table(self, rendered):
+        """Cost Basis has no counterpart on Performance, but the Holdings
+        table is built from the same annotated walk it should be using."""
+        ov = rendered["tabs"]["overview"]
+        card = find_cards(ov, r"^Cost Basis$")
+        assert card, "Overview no longer renders Cost Basis"
+        shown = money(card[0]["value"])
+        unreal = find_cards(ov, r"^Unrealized P&L$")
+        value_card = find_cards(ov, r"^(Total )?Value$")
+        require_nontrivial(cost_basis=shown)
+        # value = basis + unrealized is the identity the two cards imply.
+        if value_card and unreal:
+            v, u = money(value_card[0]["value"]), money(unreal[0]["value"])
+            if v is not None and u is not None:
+                assert v == pytest.approx(shown + u, abs=1.0), (
+                    f"Overview value {v:,.2f} != cost basis {shown:,.2f} + "
+                    f"unrealized {u:+,.2f} — the three cards do not close."
                 )
 
 

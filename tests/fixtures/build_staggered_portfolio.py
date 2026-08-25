@@ -3,8 +3,8 @@
 `build_synthetic_portfolio` is pinned by exact-figure assertions in
 `test_pipeline_snapshot.py`, so it cannot absorb new transactions.  This
 one exists separately because the dashboard-consistency checks need
-properties that fixture does not have, and both properties are
-load-bearing rather than incidental:
+properties that fixture does not have, every one of them load-bearing
+rather than incidental:
 
 1. **Staggered account starts.**  The pairing bug F-031 broke is
    invisible when every filter's natural window equals the portfolio's.
@@ -13,6 +13,15 @@ load-bearing rather than incidental:
    3mo, 30day) collapse to a flat zero on a portfolio whose data stops
    years ago, which would leave most of the (filter x window) matrix
    asserting nothing.
+3. **A lot-relief method that is not the default, with two lots to apply
+   it to.**  The dashboard has two sources for realized gain — the
+   annotated walk (real per-account methods) and the pure-method
+   comparison table.  They are identical unless some account overrides
+   the default AND has more than one lot to choose between, so without
+   both halves a test distinguishing the two sources passes whichever
+   one the code happens to read.  It did: F-033 survived its own
+   regression test until this fixture grew a `Lot Method` row and a
+   second AAPL lot.
 
 Everything is fictional and deliberately round.  The figures are never
 asserted directly — the tests check relations between them — so round
@@ -49,6 +58,11 @@ def build(tmp: Path) -> None:
          "Trans Code": "Buy", "Instrument": "AAPL",
          "Description": "AAPL", "Quantity": "50",
          "Price": "$150.00", "Amount": "($7500.00)"},
+        # A SECOND lot at a clearly different price, before the sell —
+        # see property 3.  One lot makes every relief method agree.
+        {"Activity Date": "05/10/2023", "Trans Code": "Buy",
+         "Instrument": "AAPL", "Description": "AAPL", "Quantity": "20",
+         "Price": "$190.00", "Amount": "($3800.00)"},
         # A partial exit, so realized and unrealized are both non-zero.
         {"Activity Date": "03/14/2025", "Trans Code": "Sell",
          "Instrument": "AAPL", "Description": "AAPL", "Quantity": "20",
@@ -90,6 +104,11 @@ def build(tmp: Path) -> None:
         f.write("Account Group,,,Voya 401K,Rollover IRA\n")
         f.write("Account Type,,,Robinhood,Taxable\n")
         f.write("Account Type,,,Rollover IRA,Retirement\n")
+        # A per-account lot-relief override, so the ANNOTATED walk and the
+        # pure-FIFO comparison table produce different realized gains.
+        # The dashboard has two sources for "Realized" and they are only
+        # distinguishable when some account is not on the default.
+        f.write("Lot Method,,,Robinhood,HIFO\n")
 
 
 def dense_prices(symbol_curves: dict[str, tuple[float, float]],

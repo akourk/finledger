@@ -121,6 +121,7 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-033 | **high** | *(fixed)* The Overview's Cost Basis, Unrealized and Realized read the pure-FIFO what-if table instead of the annotated walk, so they disagreed with the rest of the app whenever an account overrides the default lot method |
 | F-032 | **high** | *(fixed)* A Performance window reaching back past the first snapshot double-counted the founding deposit — a 5y view of a younger portfolio printed a dollar LOSS beside a large positive cumulative return; found by the new render-relation harness |
 | F-031 | **high** | *(fixed)* The Performance tab paired a filtered account's return with a SPY return measured over a different, much longer window — user-reported |
 | F-028 | medium | *(fixed)* The refresh path's per-account lot-method plumbing was unprotected — the parity fixture carried the `Lot Method` row but never gave it two candidate lots to choose between |
@@ -2017,6 +2018,55 @@ false law look true.  **Validate a candidate relation against real data
 before trusting a green synthetic run**; the check is cheap
 (`python -m tools.dashboard_probe exports/transactions.json`) and it is
 the only thing that distinguishes an invariant from a coincidence.
+
+### F-033: a headline figure sourced from the what-if table (2026-08-25)
+
+Found while extending the render-relation harness to Holdings and
+Overview, by the first cross-TAB relation it gained: Realized, Unrealized
+and Net Contributed are rendered on both tabs, by different code paths,
+and must agree.  Two of the three did not.
+
+`basisMethods` carries the Lot Method Comparison table — four PURE
+single-method walks, kept so the user can see what FIFO/LIFO/HIFO/Average
+would each have produced.  The real portfolio uses whatever method each
+broker actually applies, set by `Lot Method` rows in metadata.csv, and
+that ANNOTATED walk is what produces `holdings` and every per-txn
+`realized_gain`.  CLAUDE.md already says the comparison table's FIFO
+column "can differ from the annotated realized total once any account is
+overridden — that's expected."
+
+`renderStats` read `basisMethods.fifo.totals` for three of the Overview's
+headline cards.  With one account on HIFO, its Realized sat about 19%
+below the same quantity on Performance, and its Cost Basis and Unrealized
+below the Holdings table — a hypothetical published under an unqualified
+label, disagreeing with every other tab.
+
+Fixed by sourcing Cost Basis and Unrealized from the holdings rollup
+(which comes from the annotated walk's lot state) and Realized from the
+same annotation sum the Performance anchor card uses.  Realized still has
+no lot-state total in the export, so both tabs re-sum rounded annotations
+— the cent-scale drift CLAUDE.md warns about.  Agreeing on METHOD is
+worth four orders of magnitude more than that, but exporting the
+annotated walk's own totals would close both and is the better long-term
+shape.
+
+**The regression test passed against the reverted fix.**  Recorded
+because it is the third vacuity in one day and the first that the new
+`require_nontrivial` guard could not catch: the values were non-zero,
+they simply COINCIDED.  The fixture had no `Lot Method` row and only one
+lot, so the annotated walk and pure FIFO produced the same number and the
+test could not tell which source the tab read.  Fixed by giving the
+fixture an override and a second lot at a different price, plus a guard
+asserting the two sources actually differ before any cross-tab check
+runs.
+
+Generalising the three: **a relation needs its inputs to be non-zero
+(caught by `require_nontrivial`), non-empty (caught by the per-tab
+capture check), AND non-degenerate — the quantities must be capable of
+disagreeing.** Only the third requires knowing what the code chooses
+between, which is why it keeps being the one that slips through.  It is
+the same lesson as this audit's own "a fixture must contain the thing the
+code chooses between" table, arriving from a new direction.
 
 ## Improvement opportunities
 

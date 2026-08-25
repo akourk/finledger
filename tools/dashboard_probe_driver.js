@@ -14,7 +14,24 @@
   const { NODES, parseCards, parseTables, CONSOLE_ERRORS } = globalThis.__probe;
   const results = { console_errors: [], performance: [], tabs: {} };
 
-  const clearNodes = () => { for (const [, n] of NODES) n.innerHTML = ''; };
+  // textContent must be cleared alongside innerHTML: several figures
+  // (the Holdings total, count pills, the top-bar summary) are written
+  // that way, and a stale one would leak across matrix cells and make a
+  // later view look like it rendered something it did not.
+  const clearNodes = () => {
+    for (const [, n] of NODES) { n.innerHTML = ''; n.textContent = ''; }
+  };
+
+  // Figures written as textContent rather than markup — invisible to the
+  // card/table extractors, so collected separately by element id.
+  const snapshotFields = () => {
+    const out = {};
+    for (const [id, n] of NODES) {
+      const t = (n.textContent || '').trim();
+      if (t) out[id] = t;
+    }
+    return out;
+  };
 
   // Renderers write into inner ids, not the tab panel itself.  Joining
   // every stub node's innerHTML avoids tracking which id each one picked
@@ -38,6 +55,29 @@
   };
 
   // --- Performance: the (filter x window) matrix ---------------------
+  // --- Holdings: the same total under each grouping ------------------
+  // by-account / by-type / by-sector are three views of ONE number, so
+  // they are captured as a matrix the way Performance is.  A single
+  // render only ever shows whichever view the toggle happens to hold.
+  results.holdings_views = {};
+  for (const view of ['account', 'type', 'sector']) {
+    clearNodes();
+    try {
+      holdingsView = view;
+      renderHoldings();
+    } catch (e) {
+      results.console_errors.push('renderHoldings(' + view + '): ' + (e && e.message));
+      continue;
+    }
+    const html = snapshotHtml();
+    results.holdings_views[view] = {
+      cards: parseCards(html),
+      tables: parseTables(html),
+      fields: snapshotFields(),
+    };
+  }
+  try { holdingsView = 'account'; } catch (e) { /* restore default */ }
+
   const filters = [null, '__investments__', '__retirement__', '__taxable__'];
   try {
     const groups = [...new Set(
@@ -115,7 +155,11 @@
       continue;
     }
     const html = snapshotHtml();
-    results.tabs[name] = { cards: parseCards(html), tables: parseTables(html) };
+    results.tabs[name] = {
+      cards: parseCards(html),
+      tables: parseTables(html),
+      fields: snapshotFields(),
+    };
   }
 
   results.console_errors.push(...CONSOLE_ERRORS);

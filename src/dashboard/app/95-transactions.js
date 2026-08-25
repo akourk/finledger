@@ -8,13 +8,27 @@
 function renderStats() {
   const el = document.getElementById('stats');
 
+  // SOURCE, not just shape: `basisMethods` holds the Lot Method
+  // Comparison table — four PURE single-method what-if walks.  The real
+  // portfolio uses whatever method each broker actually applies, set by
+  // `Lot Method` rows in metadata.csv, and that annotated walk is what
+  // produces `holdings` and every per-txn `realized_gain`.
+  //
+  // Reading `basisMethods.fifo` here published the pure-FIFO hypothetical
+  // as though it were the actual figure.  With one account on HIFO it
+  // put this tab's Realized P&L roughly 19% below the same quantity on
+  // Performance, and its Cost Basis / Unrealized below the Holdings
+  // table — three headline numbers disagreeing with the rest of the app
+  // under one unqualified label (AUDIT.md F-033).  `basisMethods` is for
+  // the comparison table and nothing else.
   let totalValue, costBasis, unrealized, netContrib;
   if (isAsOfLatest()) {
     totalValue = holdingsByAsset.reduce(
       (s, r) => s + (typeof r.value === 'number' ? r.value : 0), 0);
-    const fifo = (basisMethods.fifo && basisMethods.fifo.totals) || {};
-    costBasis = fifo.cost_basis || 0;
-    unrealized = fifo.unrealized_gain || 0;
+    costBasis = holdingsByAsset.reduce(
+      (s, r) => s + (typeof r.cost_basis === 'number' ? r.cost_basis : 0), 0);
+    unrealized = holdingsByAsset.reduce(
+      (s, r) => s + (typeof r.unrealized_gain === 'number' ? r.unrealized_gain : 0), 0);
     netContrib = cashSummary.net_contributed || 0;
   } else {
     const snap = getAsOfSnapshot();
@@ -23,8 +37,11 @@ function renderStats() {
     unrealized = +(totalValue - costBasis).toFixed(2);
     netContrib = (snap && snap.net_contributed) || 0;
   }
-  const fifoLifetime = (basisMethods.fifo && basisMethods.fifo.totals) || {};
-  const realized = fifoLifetime.realized_gain || 0;
+  // Realized has no lot-state total in the export, so this is the same
+  // annotation sum the Performance tab's anchor card uses.  Agreeing
+  // with the rest of the app on METHOD is worth far more than the cent
+  // of drift CLAUDE.md warns about when summing rounded annotations.
+  const realized = txns.reduce((s, t) => s + (t.realized_gain || 0), 0);
   const income = cashSummary.income || 0;
 
   const unrealPct = costBasis > 0 ? (unrealized / costBasis) * 100 : null;
