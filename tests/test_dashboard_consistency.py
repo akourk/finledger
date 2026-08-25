@@ -20,11 +20,19 @@ relations that are true by construction of what the labels claim:
   `(1 + ann) ** years == 1 + cum` — the tell that identified F-031, since
   a lower cumulative beside a higher annualized is impossible
 * two figures a card joins with "vs" report the same measured span
+* a window reaching back past the first snapshot reports lifetime
 * a filtered view never shows rows predating the filter's own start
 * nothing renders as NaN / undefined / Infinity
 
 They are deliberately expressed as invariants rather than golden values,
 so they keep their teeth when the sample portfolio changes.
+
+One caution, learned immediately: a relation that passes on the synthetic
+fixture is not thereby a law.  The fixture's cash flows are simple by
+design, which makes some genuinely-independent quantities look locked
+together.  Check a candidate against a real portfolio before believing
+it — see the note under `TestAWindowLongerThanHistoryEqualsLifetime` for
+the one that did not survive that check.
 """
 
 from __future__ import annotations
@@ -282,7 +290,95 @@ class TestComparisonsShareTheirWindow:
 
 
 # ---------------------------------------------------------------------------
-# Relation 3 — a filtered view does not render rows it has no data for
+# Relation 3 — a window that contains all of history IS lifetime
+# ---------------------------------------------------------------------------
+
+class TestAWindowLongerThanHistoryEqualsLifetime:
+    """A portfolio cannot have returns from before it existed, so any
+    window reaching back past the first snapshot must report exactly the
+    lifetime figures.
+
+    F-032 lived here: the start value was read from the first snapshot AT
+    OR AFTER the cutoff while flows were counted from the cutoff, so the
+    founding deposit was subtracted twice and a 5y view of a younger
+    portfolio printed a dollar LOSS beside a large positive cumulative
+    return.
+    """
+
+    def _money(self, text: str) -> float | None:
+        m = re.search(r"([-+]?)\$([\d,]+(?:\.\d+)?)", text or "")
+        if not m:
+            return None
+        return (-1 if m.group(1) == "-" else 1) * float(m.group(2).replace(",", ""))
+
+    def _by_filter(self, rendered, window):
+        return {v["filter"]: v for v in rendered["performance"]
+                if v["window"] == window}
+
+    def test_dollar_return_matches_lifetime_for_an_oversized_window(self, rendered):
+        life = self._by_filter(rendered, "lifetime")
+        wide = self._by_filter(rendered, "5y")
+        assert life and wide, "fixture lost the lifetime or 5y views"
+        checked = 0
+        for filt, lv in life.items():
+            wv = wide.get(filt)
+            if wv is None:
+                continue
+            lcards = find_cards(lv, r"^Total Return")
+            wcards = find_cards(wv, r"^Total Return")
+            if not (lcards and wcards):
+                continue
+            # The last match is the windowed card; the first is the
+            # always-lifetime anchor card above the toggles.
+            a, b = self._money(lcards[-1]["value"]), self._money(wcards[-1]["value"])
+            if a is None or b is None:
+                continue
+            assert b == pytest.approx(a, abs=1.0), (
+                f"[{filt}] 5y dollar return {b:+,.2f} but lifetime {a:+,.2f}.  "
+                f"The 5y window starts before this portfolio's first "
+                f"snapshot, so the two must be the same figure."
+            )
+            checked += 1
+        assert checked >= 3, f"only {checked} filters compared"
+
+    def test_lifetime_dollar_return_matches_the_anchor_card(self, rendered):
+        """The Performance tab renders Total Return twice: once as an
+        always-lifetime anchor above the toggles (straight from
+        `analytics.header_summary`) and once as the windowed figure below.
+        At filter=Total / window=lifetime they are the same quantity by
+        two routes, and the code comment says so — which makes it exactly
+        the kind of claim that stops being true without anyone noticing.
+        """
+        v = next((x for x in rendered["performance"]
+                  if x["filter"] == "Total" and x["window"] == "lifetime"), None)
+        assert v is not None, "no Total/lifetime view rendered"
+        cards = find_cards(v, r"^Total Return")
+        assert len(cards) >= 2, (
+            f"expected an anchor and a windowed Total Return card, got "
+            f"{[c['label'] for c in cards]}"
+        )
+        anchor, windowed = self._money(cards[0]["value"]), self._money(cards[-1]["value"])
+        assert anchor is not None and windowed is not None
+        assert windowed == pytest.approx(anchor, abs=0.02), (
+            f"anchor Total Return {anchor:+,.2f} vs windowed {windowed:+,.2f} "
+            f"— the same figure by two routes has drifted."
+        )
+
+    # NOT asserted, deliberately: that the dollar return and the
+    # cumulative return agree in SIGN.  It looks like a law and it is not.
+    # The dollar figure is a single-period Modified Dietz numerator; the
+    # percentage is a chain-linked TWR that neutralises flow timing.  A
+    # deposit landing just before a decline drives them apart honestly —
+    # the same behaviour gap the tab already explains for XIRR vs TWR.
+    # This test existed for an hour and passed on the synthetic fixture,
+    # whose flows are too simple to separate them; running it against a
+    # real portfolio flagged 10 of 88 views, all with substantial net
+    # flows.  Validate a candidate relation against real data before
+    # trusting a green synthetic run to mean it holds.
+
+
+# ---------------------------------------------------------------------------
+# Relation 4 — a filtered view does not render rows it has no data for
 # ---------------------------------------------------------------------------
 
 class TestFilteredViewsDoNotShowEmptyLeadingYears:
@@ -309,7 +405,7 @@ class TestFilteredViewsDoNotShowEmptyLeadingYears:
 
 
 # ---------------------------------------------------------------------------
-# Relation 4 — nothing renders as a non-number
+# Relation 5 — nothing renders as a non-number
 # ---------------------------------------------------------------------------
 
 class TestNoNonNumbersReachTheReader:

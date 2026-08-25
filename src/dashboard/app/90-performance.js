@@ -1097,14 +1097,44 @@ function renderPerformance() {
   } else if (performanceWindow !== 'lifetime') {
     _winLowerIso = _windowCutoffIso(performanceWindow, _winRefIso);
   }
+  // ANCHOR the window on a snapshot we actually have, and measure every
+  // dollar figure in this row from THAT date.
+  //
+  // The nominal cutoff almost never coincides with a snapshot — history
+  // is semimonthly — so "value at the window start" has to resolve to a
+  // neighbour, and the choice has to agree with the flow window or the
+  // Modified Dietz numerator (end − start − flows) counts the same money
+  // twice.  It did: the start value was read from the first snapshot AT
+  // OR AFTER the cutoff while flows were counted from the cutoff, so
+  // every deposit in the gap landed on both sides.  Usually that gap is
+  // one snapshot period and the error is invisible.  When the window
+  // reaches back past the portfolio's first snapshot the gap swallows
+  // the founding deposit, and a 5y view of a 4-year-old portfolio
+  // printed a LOSS next to a +57% cumulative return (AUDIT.md F-032).
+  //
+  // So: anchor = the last snapshot at or before the cutoff, and flows
+  // are counted strictly after the anchor's own date.  No snapshot that
+  // early means the portfolio did not exist yet — start value 0, flows
+  // from inception, and the window correctly collapses to lifetime.
+  // Anchoring BACKWARD rather than forward also matches the benchmark
+  // chart, which prepends the pre-cutoff snapshot for the same reason.
+  let _winAnchorIso = '';
+  let _winStartValue = 0;
+  if (_winLowerIso) {
+    let anchor = null;
+    for (const h of history) {
+      if ((h.date || '') <= _winLowerIso) anchor = h; else break;
+    }
+    if (anchor) _winAnchorIso = anchor.date || '';
+  }
   // Realized in window: sum per-txn realized_gain on filtered txns
-  // where date is within (_winLowerIso, _winUpperIso].  A close at
+  // where date is within (_winAnchorIso, _winUpperIso].  A close at
   // the very start of the window doesn't count toward window-period
   // realized — it was banked before the window opened.
   const totalRealized = txns.reduce((s, t) => {
     if (!_aggMatchesTxn(t)) return s;
     const d = t.date || '';
-    if (_winLowerIso && d <= _winLowerIso) return s;
+    if (_winAnchorIso && d <= _winAnchorIso) return s;
     if (_winUpperIso && d > _winUpperIso) return s;
     return s + (t.realized_gain || 0);
   }, 0);
@@ -1122,7 +1152,7 @@ function renderPerformance() {
   for (const t of txns) {
     if (!_aggMatchesTxn(t)) continue;
     const d = t.date || '';
-    if (_winLowerIso && d <= _winLowerIso) continue;
+    if (_winAnchorIso && d <= _winAnchorIso) continue;
     if (_winUpperIso && d > _winUpperIso) continue;
     if (t.action !== 'Distribution') continue;
     if (!_ROLLOVER_GROUPS_JS.has(t.account_group)) continue;
@@ -1137,7 +1167,7 @@ function renderPerformance() {
   const netContrib = txns.reduce((s, t) => {
     if (!_aggMatchesTxn(t)) return s;
     const d = t.date || '';
-    if (_winLowerIso && d <= _winLowerIso) return s;
+    if (_winAnchorIso && d <= _winAnchorIso) return s;
     if (_winUpperIso && d > _winUpperIso) return s;
     return s + (t.cash_flow || 0);
   }, 0);
@@ -1172,11 +1202,10 @@ function renderPerformance() {
   // Total Return $ over the window for the filter: dollar gain net of
   // capital flows.  Equivalent to the Modified Dietz numerator — the
   // "money my investments made" answer for the window.
-  let _winStartValue = 0;
-  if (performanceWindow !== 'lifetime' && _winLowerIso) {
-    const startSnap = history.find(h => h.date >= _winLowerIso);
-    if (startSnap && Array.isArray(startSnap.positions)) {
-      for (const p of startSnap.positions) {
+  if (_winAnchorIso) {
+    const anchorSnap = history.find(h => h.date === _winAnchorIso);
+    if (anchorSnap && Array.isArray(anchorSnap.positions)) {
+      for (const p of anchorSnap.positions) {
         if (_aggFilterSet && !_aggFilterSet.has(p.account_group)) continue;
         if (typeof p.value === 'number') _winStartValue += p.value;
       }
@@ -1283,19 +1312,27 @@ function renderPerformance() {
   const _winLabel = performanceWindow;
   const totalReturnCls = totalReturn >= 0 ? 'positive' : (totalReturn < 0 ? 'negative' : '');
   const filteredLabel = performanceAccountFilter === null ? '' : ` <span class="sub">${performanceAccountFilter === '__investments__' ? 'investments' : performanceAccountFilter === '__retirement__' ? 'retirement' : performanceAccountFilter === '__taxable__' ? 'taxable' : performanceAccountFilter.toLowerCase()}</span>`;
+  // Every card in this row is measured over the SAME anchored span.
+  // Saying so on each of them is what lets a reader check that the
+  // dollar figures and the return figures describe one period.
+  const _rowSpan = `Measured ${_winAnchorIso || 'inception'} to ${_winUpperIso}.`;
   const filteredCards = [
     {
       label: `Total Return <span class="sub">${_winLabel}</span>`,
       value: fmtSigned(totalReturn) + (totalReturnPct != null ? ` <span class="sub">${(totalReturnPct >= 0 ? '+' : '') + totalReturnPct.toFixed(1)}%</span>` : ''),
       cls: totalReturnCls,
-      title: `Dollar return over the window for the active filter — Modified Dietz numerator: end value − start value − net cash flow.  Window: ${performanceWindow}.`
+      title: `Dollar return over the window for the active filter — Modified Dietz numerator: end value − start value − net cash flow.  Window: ${performanceWindow}.
+
+${_rowSpan}`
     },
     {
       label: `Realized <span class="sub">${_winLabel}</span>`
         + (rolloverDominates ? ' <span class="sub" style="color:var(--yellow);">incl. rollover</span>' : ''),
       value: fmtSigned(totalRealized),
       cls: totalRealized >= 0 ? 'positive' : (totalRealized < 0 ? 'negative' : ''),
-      title: `Realized gains for the active filter, on txns dated within the window.  Window: ${performanceWindow}.`
+      title: `Realized gains for the active filter, on txns dated within the window.  Window: ${performanceWindow}.
+
+${_rowSpan}`
         + (rolloverDominates
           ? `\n\n${fmtSigned(rolloverRealized)} of this is the custodial-rollover liquidation`
             + ` (${[...rolloverDates].sort().join(', ')}) — the custodian sold everything to`
@@ -1314,7 +1351,9 @@ function renderPerformance() {
     {
       label: `Net Contributed <span class="sub">${_winLabel}</span>`,
       value: fmtMoney(netContrib),
-      title: `Net cash flow into the filtered account(s) during the window (deposits − withdrawals).  Window: ${performanceWindow}.`
+      title: `Net cash flow into the filtered account(s) during the window (deposits − withdrawals).  Window: ${performanceWindow}.
+
+${_rowSpan}`
     },
     {
       label: `Cumulative Return <span class="sub">${performanceWindow}</span>`,

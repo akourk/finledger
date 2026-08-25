@@ -121,6 +121,7 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-032 | **high** | *(fixed)* A Performance window reaching back past the first snapshot double-counted the founding deposit — a 5y view of a younger portfolio printed a dollar LOSS beside a large positive cumulative return; found by the new render-relation harness |
 | F-031 | **high** | *(fixed)* The Performance tab paired a filtered account's return with a SPY return measured over a different, much longer window — user-reported |
 | F-028 | medium | *(fixed)* The refresh path's per-account lot-method plumbing was unprotected — the parity fixture carried the `Lot Method` row but never gave it two candidate lots to choose between |
 | F-027 | low | *(fixed)* Corrupt sidecar caches raised a bare `JSONDecodeError` naming neither the file nor the cache |
@@ -1962,6 +1963,60 @@ Verification note: the fix was checked by driving the real dashboard in a
 browser across five account filters and three windows, asserting each
 pair's cumulative and annualized figures agree on one span. The static
 source tests cannot see that; nothing in this repo's test suite can.
+
+### F-032: the window that reached back before the portfolio (2026-08-25)
+
+Found by `tests/test_dashboard_consistency.py` on its first real run —
+the harness built in response to F-031, doing the job it was built for.
+
+Selecting a 5y window on a portfolio younger than five years produced a
+dollar Total Return that was NEGATIVE, sitting beside a large positive
+Cumulative Return in the same card row.
+
+The Modified Dietz numerator is `end − start − flows`, and the two
+inputs were resolved against different dates.  History is semimonthly,
+so the nominal cutoff almost never lands on a snapshot and "value at the
+window start" has to resolve to a neighbour.  The start value took the
+first snapshot **at or after** the cutoff, while flows were counted from
+the cutoff itself — so every deposit falling in that gap was subtracted
+twice, once inside the start value and once as a flow.
+
+Ordinarily the gap is one snapshot period and the error is a rounding
+annoyance nobody would chase.  When the window reaches back past the
+first snapshot the gap contains the entire funding history, and the
+error becomes the whole starting balance.
+
+Fixed by anchoring the row on a snapshot that actually exists: the last
+one **at or before** the cutoff, with flows counted strictly after that
+anchor's own date.  No such snapshot means the portfolio did not exist
+yet — start value zero, flows from inception, and the window correctly
+collapses to lifetime.  Anchoring backward also matches the benchmark
+chart, which prepends the pre-cutoff snapshot for the same reason.  All
+three dollar cards in the row (Total Return, Realized, Net Contributed)
+now share the anchored bound and state it in their tooltips, so the row
+reconciles against itself.
+
+This is taxonomy (11) as-of/date-alignment, and it is worth noting which
+half of that entry caught it.  The hunt question there — "does the caller
+find out it got a different date than it asked for?" — would not have.
+The caller got a perfectly good date.  What was wrong is that a SECOND
+quantity in the same formula resolved a different one, which is (12)
+unpaired comparison operating inside a single expression rather than
+across two cards.
+
+**A relation that failed its own validation, recorded because it cost an
+hour and would have shipped.**  The obvious companion check — dollar
+return and percentage return must agree in sign — passed on the synthetic
+fixture and is NOT a law.  The dollar figure is single-period Modified
+Dietz; the percentage is chain-linked TWR, which neutralises flow timing.
+A deposit landing before a decline separates them honestly, exactly the
+behaviour gap the tab already explains for XIRR vs TWR.  Run against a
+real portfolio it flagged 10 of 88 views, every one with substantial net
+flows.  The fixture's flows are simple by design, which is what made a
+false law look true.  **Validate a candidate relation against real data
+before trusting a green synthetic run**; the check is cheap
+(`python -m tools.dashboard_probe exports/transactions.json`) and it is
+the only thing that distinguishes an invariant from a coincidence.
 
 ## Improvement opportunities
 
