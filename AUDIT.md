@@ -121,6 +121,7 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-031 | **high** | *(fixed)* The Performance tab paired a filtered account's return with a SPY return measured over a different, much longer window — user-reported |
 | F-028 | medium | *(fixed)* The refresh path's per-account lot-method plumbing was unprotected — the parity fixture carried the `Lot Method` row but never gave it two candidate lots to choose between |
 | F-027 | low | *(fixed)* Corrupt sidecar caches raised a bare `JSONDecodeError` naming neither the file nor the cache |
 | F-026 | medium | *(fixed)* A malformed price-cache entry (a quoted number, `Infinity`, a bool) was returned as a value instead of skipped |
@@ -1883,6 +1884,84 @@ Process note worth more than either fix: this session added ~90 tests and
 never once checked that CI agreed. A local green is evidence about one
 interpreter, on one OS, in one timezone. Both bugs were invisible to it
 by construction.
+
+### F-031: two figures side by side, over two different windows (2026-08-25)
+
+User-reported, and the report is the interesting part: *"pretty sure my
+401K is invested in the sp500, so this seems like a huge difference."*
+The Performance tab, with an account filter active and the window on
+lifetime, showed the account's return next to a SPY return that was
+several times larger. An index fund appeared to trail its own index by
+hundreds of basis points a year.
+
+**The pair was internally impossible and that is what pins it.** The
+account's cumulative return was lower than SPY's while its *annualized*
+return was higher. Two returns over one window cannot do that. Inverting
+each pair — `years = ln(1+cum) / ln(1+ann)` — gave roughly three years
+for the portfolio side and roughly nine for SPY. The windows were the
+bug; neither number was individually wrong.
+
+`computeWindowedMetrics` took cum/ann for a lifetime view from the
+precomputed per-filter summary, whose window is the **account's** natural
+start — the first snapshot where that account held value.
+`renderPerformance` then built its `twr` object with
+`start_date: windowedHistory[0].date`, which on a lifetime view is the
+**portfolio's** first snapshot, years earlier. The SPY card was measured
+over the second window and displayed against a return computed over the
+first.
+
+Two things made it survive:
+
+* **Python had already computed the right answer.**
+  `compute_twr_summary` emits `spy_cumulative` / `spy_annualized`
+  measured over the same window as the return it ships with, precisely
+  so the two travel together. The JS never read those fields.
+* **The wrong lookup returned a plausible number instead of nothing.**
+  `computeSPYReturnOverPeriod` scans *every* filter's summary for a
+  date match. Handed the portfolio-wide window it found the `Total`
+  entry and returned a real, correct-looking figure. A lookup that
+  missed would have rendered an em-dash and been noticed years ago.
+
+This is a new bug class for the taxonomy — **unpaired comparison**, now
+(12) in `PLAN-audit.md`. It is adjacent to (11) as-of/date-alignment but
+distinct: no single figure is keyed to the wrong date. Each is correct
+in isolation. The defect exists only in the *adjacency* — in the claim,
+made by layout alone, that two independently-derived numbers are
+comparable.
+
+Note what the taxonomy already said about this file: (11)'s known-surface
+list names "the TWR window snapping in `app/90-performance.js`". The
+surface was identified; the shape being hunted for was not.
+
+The fix makes the metric report the span it covers.
+`computeWindowedMetrics` now returns `startDate` / `endDate` alongside
+cum/ann and carries through the filter-paired SPY figure; the cards read
+those instead of the chart's bounds, and a tooltip states the measured
+span on all three. It also corrects a smaller mismatch on the trailing
+presets, where the chart prepends one pre-cutoff anchor snapshot that the
+return calculation does not use.
+
+Same class, one column over: the Annual Returns table rendered a row per
+year of *portfolio* history, so a filtered account showed years of
+all-zero rows beside real SPY percentages — reading as a flatline against
+a compounding market for years the account did not exist. Strictly-empty
+leading years are now dropped.
+
+`tests/test_benchmark_card_window.py` pins both halves: the Python
+contract (a filtered summary's SPY figure is measured over that filter's
+own window, and its cumulative and annualized figures agree on the span)
+behaviourally, and the JS wiring by source inspection, per this suite's
+convention for the untested JS layer.
+
+Adjacent, found while checking for siblings and **not** fixed:
+`analytics.benchmark_delta` is computed on every run and has no consumer
+in `src/dashboard/`. Both its sides come from one snapshot, so it carries
+no window bug — it is dead weight, spun off separately.
+
+Verification note: the fix was checked by driving the real dashboard in a
+browser across five account filters and three windows, asserting each
+pair's cumulative and annualized figures agree on one span. The static
+source tests cannot see that; nothing in this repo's test suite can.
 
 ## Improvement opportunities
 

@@ -21,6 +21,12 @@ missing entirely, and the way it hid exposed two failure shapes in the
 safety nets themselves. See taxonomy (11), the vacuous-safety-net
 subsection, and the perturbation technique.
 
+Updated 2026-08-25: and again. A user-reported bug on the Performance
+tab was a second class the taxonomy was missing — see (12), unpaired
+comparison. Both new classes arrived the same way: reported by the user,
+about a displayed number, in an area the taxonomy had already listed as
+known surface. The surface was right; the shape being hunted was not.
+
 Read this whole file before starting any segment. It carries a bug-class
 taxonomy derived from *this repo's actual failure history* — that is the
 part you cannot re-derive by reading code, and it is what makes the
@@ -197,6 +203,56 @@ snap would have excluded the anchor's own true-up and reported a delta
 equal to the drift the anchor had just corrected. Walking the ledger to
 the exact date was the only correct answer. Expect this shape elsewhere:
 the plausible fix that no test catches and that looks *more* right.
+
+### 12. Unpaired comparison — new class, 2026-08-25
+
+Two figures placed side by side, each derived from an independently
+computed window or filter, presented as comparable. **No individual
+figure is wrong.** The defect exists only in the adjacency — in the
+claim, made by layout alone, that the two can be subtracted.
+
+Found by a user, not by this audit: the Performance tab paired a filtered
+account's lifetime TWR (window = when *that account* first held value)
+with a SPY return measured over `windowedHistory` (window = the
+*portfolio's* first snapshot, years earlier). An S&P 500 fund appeared to
+trail its own index by hundreds of basis points a year. Python had
+already computed the correctly-paired SPY figure and shipped it in the
+same summary object; the JS never read it.
+
+Distinct from (11): nothing is keyed to the wrong date. Both windows are
+internally coherent. This is why (11)'s hunt — "does the caller find out
+it got a different date than it asked for?" — does not find it. The
+caller got exactly the window it asked for. It asked the wrong question.
+
+Two properties make it dangerous:
+
+- **A wrong lookup can return a plausible number instead of nothing.**
+  `computeSPYReturnOverPeriod` scans *every* filter's summary for a date
+  match; handed the wrong window it found a different filter's entry and
+  returned a real, correct-looking figure. Failure would have been
+  visible. Success at the wrong thing was not.
+- **The arithmetic tell is usually available and nobody checks it.** A
+  lower cumulative next to a higher annualized is impossible over one
+  window. Inverting each pair — `years = ln(1+cum) / ln(1+ann)` — gave
+  the two spans directly and identified the bug before any code was
+  read. Any two figures over a shared window carry a consistency
+  relation; assert it.
+
+**Hunt:** every place two numbers sit adjacent and invite subtraction, a
+ratio, or a "vs". For each, name the window and filter of BOTH sides from
+the code, not from the label. Ask: are they the same object, or two
+objects that happen to agree today? Prefer shipping the pair from one
+producer over deriving the second at the render site — the fix here was
+to read the SPY figure Python had already paired to the return, not to
+recompute it correctly. Known surface: the Performance tab's benchmark
+cards (fixed), its By-Account and Annual Returns sections, the Overview's
+reconciliation panel (fin vs broker, by construction), Target vs Actual,
+`vs_annual_expenses`, and every "% of" denominator.
+
+Corollary for the JS layer specifically: `analytics/` exists so a figure
+is computed once, but a *pairing* can still be invented at the render
+site out of two correctly-computed inputs. Compute-once does not protect
+an adjacency it was never told about.
 
 ---
 

@@ -470,7 +470,14 @@ function computeAnnualTWR(accountFilter) {
 // and end dates from an analytics summary, we can short-circuit and
 // pull the pre-computed spy_cumulative / spy_annualized.
 function computeSPYReturnOverPeriod(startDate, endDate) {
-  // Try to find a matching analytics summary first
+  // Try to find a matching analytics summary first.  Scanning EVERY
+  // filter is safe on purpose: SPY's return over a window is a market
+  // fact, identical in every filter's summary that shares the window.
+  // But note what that means when the caller is wrong — it hands back
+  // another filter's plausible-looking number instead of nothing.  It
+  // did exactly that when the benchmark card passed the chart's window
+  // instead of the metric's (AUDIT.md F-031).  Pass the window the
+  // return you're pairing against was actually measured over.
   for (const perf of Object.values(ANALYTICS_PERF)) {
     const s = perf && perf.summary;
     if (s && s.start_date === startDate && s.end_date === endDate) {
@@ -809,6 +816,7 @@ function computeWindowedMetrics(filterKey, windowKey) {
     cum: null, ann: null, sharpe: null, sortino: null,
     mdd: null, mddPeak: null, mddTrough: null, calmar: null,
     nMonths: 0, nInRatio: 0,
+    startDate: null, endDate: null, spyCum: null, spyAnn: null,
   };
   if (!history.length) return empty;
   const filterSet = _resolveAccountFilter(filterKey);
@@ -849,24 +857,43 @@ function computeWindowedMetrics(filterKey, windowKey) {
   // (regardless of filter) so the top cards and By Account cards
   // agree.  When no precomputed entry exists for a filter (e.g.
   // __taxable__ on older JSON), fall through to JS computation.
-  let cum = null, ann = null;
+  //
+  // ``startDate`` / ``endDate`` report the window cum/ann ACTUALLY
+  // covers, which is not always the sliced ``windowed`` array:
+  //   - lifetime + account filter -> the ACCOUNT's natural window
+  //     (first snapshot where it held value), which can start years
+  //     after the portfolio's first snapshot.
+  //   - trailing presets -> the nearest-snapshot snap inside
+  //     computeTimeWeightedReturnForWindow, not the raw cutoff.
+  // The benchmark card pairs a SPY return against these dates, so
+  // reporting the wrong ones measures SPY over a different span than
+  // the return it sits next to.
+  let cum = null, ann = null, spyCum = null, spyAnn = null;
+  let startDate = windowed[0].date;
+  let endDate = windowed[windowed.length - 1].date;
   if (windowKey === 'lifetime') {
     const summary = ANALYTICS_PERF[_analyticsFilterName(filterKey)]?.summary;
-    if (summary) { cum = summary.cumulative; ann = summary.annualized; }
+    if (summary) {
+      cum = summary.cumulative; ann = summary.annualized;
+      if (summary.start_date) startDate = summary.start_date;
+      if (summary.end_date) endDate = summary.end_date;
+      // Python already measured SPY over exactly this window.
+      if (summary.spy_cumulative != null) spyCum = summary.spy_cumulative;
+      if (summary.spy_annualized != null) spyAnn = summary.spy_annualized;
+    }
   }
   if (cum == null) {
-    if (windowKey === 'custom') {
-      const twr = computeTimeWeightedReturnForWindow(filterKey, perfTwrStart, perfTwrEnd);
-      if (twr) { cum = twr.cumulative; ann = twr.annualized; }
-    } else {
-      const startDate = windowed[0].date;
-      const endDate = windowed[windowed.length - 1].date;
-      const twr = computeTimeWeightedReturnForWindow(
+    const twr = windowKey === 'custom'
+      ? computeTimeWeightedReturnForWindow(filterKey, perfTwrStart, perfTwrEnd)
+      : computeTimeWeightedReturnForWindow(
         filterKey,
         windowKey === 'lifetime' ? null : startDate,
         windowKey === 'lifetime' ? null : endDate,
       );
-      if (twr) { cum = twr.cumulative; ann = twr.annualized; }
+    if (twr) {
+      cum = twr.cumulative; ann = twr.annualized;
+      if (twr.start_date) startDate = twr.start_date;
+      if (twr.end_date) endDate = twr.end_date;
     }
   }
 
@@ -954,6 +981,7 @@ function computeWindowedMetrics(filterKey, windowKey) {
     calmar,
     nMonths: periodReturns.length,
     nInRatio: sigReturns.length,
+    startDate, endDate, spyCum, spyAnn,
   };
 }
 
@@ -964,7 +992,18 @@ function renderPerformance() {
   // Annual returns table (filtered to the selected account).  The
   // earlier "Total" version of this table was removed — it duplicated
   // the same data shown when this filter is set to Total.
-  const annualByAcct = computeAnnualReturns(performanceAccountFilter);
+  // Drop leading years the filter didn't exist for.  They render as a
+  // row of $0.00 with a real SPY percentage beside them, which reads
+  // as "this account flatlined while the market compounded" — the same
+  // unpaired-comparison trap as the benchmark cards, one column over.
+  // Only strictly-empty years go (no value at either end, no flows),
+  // so a real year that merely round-trips to zero is kept.
+  const annualByAcct = (() => {
+    const rows = computeAnnualReturns(performanceAccountFilter);
+    let i = 0;
+    while (i < rows.length && !rows[i].start && !rows[i].end && !rows[i].net) i++;
+    return rows.slice(i);
+  })();
   const annualTwrByAcct = computeAnnualTWR(performanceAccountFilter);
   const positions = computePositionReturns();
 
@@ -1718,8 +1757,11 @@ function renderPerformance() {
     ? {
       cumulative: win.cum,
       annualized: win.ann,
-      start_date: windowedHistory[0].date,
-      end_date: windowedHistory[windowedHistory.length - 1].date,
+      // The window the RETURN covers, not the window the CHART covers.
+      // On a filtered lifetime view those differ: the chart spans all
+      // history, the account's TWR starts when the account did.
+      start_date: win.startDate || windowedHistory[0].date,
+      end_date: win.endDate || windowedHistory[windowedHistory.length - 1].date,
     }
     : null;
   // SPY return over the same window — uses the raw SPY close prices
@@ -1727,7 +1769,10 @@ function renderPerformance() {
   // value (which compounds with our contribution stream).  Pure
   // market return over the window is what you actually compare a
   // TWR against.
-  const spyR = twr ? computeSPYReturnOverPeriod(twr.start_date, twr.end_date) : null;
+  const spyR = !twr ? null
+    : (win.spyCum != null
+      ? { cumulative: win.spyCum, annualized: win.spyAnn }
+      : computeSPYReturnOverPeriod(twr.start_date, twr.end_date));
 
   const pctStr = (v, digits = 2) => v == null
     ? '—'
@@ -1752,16 +1797,31 @@ function renderPerformance() {
   const vsSpyAnnCls = vsSpyAnnPp == null ? '' : (vsSpyAnnPp >= 0 ? 'positive' : 'negative');
 
   const winLabel = performanceWindow === 'lifetime' ? 'lifetime' : performanceWindow;
+  // Both sides of the comparison are measured over this exact span.
+  // Worth spelling out: on a filtered lifetime view "lifetime" is the
+  // ACCOUNT's lifetime, which is shorter than the chart's x-axis.
+  const spanNote = twr ? `Measured ${twr.start_date} to ${twr.end_date}.` : '';
   const benchStatCards = [
     {
       label: `Your Return (TWR) <span class="sub">${winLabel}</span>`,
-      value: twrMainStr + ' ' + twrSubStr, cls: twrCls
+      value: twrMainStr + ' ' + twrSubStr, cls: twrCls,
+      title: `Time-weighted return for the active account filter.
+
+${spanNote}`
     },
     {
       label: `SPY Return <span class="sub">${winLabel}</span>`,
-      value: spyMainStr + ' ' + spySubStr, cls: spyCls
+      value: spyMainStr + ' ' + spySubStr, cls: spyCls,
+      title: `SPY's market return over the SAME span as Your Return, so the two are directly comparable.
+
+${spanNote}`
     },
-    { label: 'Vs SPY (annualized)', value: vsSpyAnnStr, cls: vsSpyAnnCls },
+    {
+      label: 'Vs SPY (annualized)', value: vsSpyAnnStr, cls: vsSpyAnnCls,
+      title: `Your annualized TWR minus SPY's annualized return over the same span.
+
+${spanNote}`
+    },
     { label: 'Your Portfolio', value: fmtMoney(finalValue) },
     { label: 'SPY Benchmark', value: fmtMoney(finalSpy) },
     { label: 'Net Contributed', value: fmtMoney(finalNC) },
@@ -1773,7 +1833,8 @@ function renderPerformance() {
   ];
   const benchStatsHtml = '<div class="stats">' + benchStatCards.map(c => {
     const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
-    return `<div class="${cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
+    const titleAttr = c.title ? ` title="${_htmlEsc(c.title)}"` : '';
+    return `<div class="${cls}"${titleAttr}><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
   }).join('') + '</div>';
 
   // Top 10 winners — POSITIVE total_gain only.  Without the sign

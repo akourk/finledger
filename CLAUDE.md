@@ -162,6 +162,22 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       natural window and flow rules (what the user's DOLLARS earned,
       contribution timing included — shown beside TWR on the
       Performance tab to surface the behavior gap).
+      **Each filter's window is its OWN** — `summary.start_date` is the
+      first snapshot where THAT account held value, which for a 401K
+      opened years into the ledger is nowhere near `history[0].date`.
+      The summary therefore ships `spy_cumulative` / `spy_annualized`
+      measured over exactly that window, so the benchmark travels with
+      the return instead of being re-derived beside it.  **Any consumer
+      displaying a return next to a benchmark MUST use the paired
+      fields** (or `computeWindowedMetrics`' `startDate` / `endDate` /
+      `spyCum` / `spyAnn`, which carry them through).  The dashboard
+      used to build the SPY side from the CHART's window — all of
+      history on a lifetime view — and printed an S&P 500 fund
+      trailing its own index by hundreds of basis points a year.  The
+      tell is arithmetic and worth knowing: a lower cumulative beside a
+      higher annualized is impossible over one window, and
+      `years = ln(1+cum) / ln(1+ann)` recovers each side's true span.
+      See AUDIT.md F-031 and PLAN-audit.md taxonomy (12).
     - `savings_by_year` — per-year `{gross_income, net_contributed,
       savings_rate_pct}` (salary + bonus from metadata vs external net
       contributions; `analytics/savings.py`).  Drives the Sav% column
@@ -171,6 +187,9 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       Performance.
     - `benchmark_delta` — latest-snapshot `{portfolio, spy, delta,
       as_of}` dollar comparison vs the SPY-equivalent simulation.
+      Currently has NO consumer in `src/dashboard/` — both sides come
+      from one snapshot, so it's inert rather than wrong, but don't
+      assume it's what the Overview renders.
     - `options` — open_contracts, closed_trades (with parsed
       underlying/expiry/type/strike + hold_days), by_underlying,
       annual_summary, cumulative_pnl, stats.
