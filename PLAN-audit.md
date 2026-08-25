@@ -284,6 +284,22 @@ rendering every number the user actually reads. Enormous surface, no
 coverage. Highest yield here does NOT require a JS test runner — see
 Segment 6.
 
+**4b. Rendered-output relation checks.**  Added 2026-08-25, after (12).
+`tools/dashboard_probe.js` evaluates the real bundle under an ~80-line DOM
+stub and reports the figures each tab actually displays;
+`tests/test_dashboard_consistency.py` asserts RELATIONS between them
+across the whole (filter x window) matrix — a cumulative and an annualized
+return agree on their own span, a "vs" pair states one span for both
+sides, a filtered table shows no rows predating its filter.  This reaches
+the render site, which is the point: the compute layer was correct in
+both escaped bugs.  It cost about an afternoon, needs no JS test runner
+(node only, skipped when absent — CI installs it explicitly so the suite
+cannot silently stop running), and it re-detects F-031 four different
+ways when the fix is reverted.  Note what it found on first run: the
+fixture it started on had every account opening on the same date, so the
+relation it exists to check was untestable — see the vacuous-fixture
+shapes above, and expect the same on any new relation.
+
 **5. Property / differential testing.** Generate weird-but-legal
 ledgers; assert the 26 existing `data_health` invariants hold. Finds
 edge cases nobody thinks to write by hand.

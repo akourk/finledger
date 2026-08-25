@@ -1314,6 +1314,20 @@ threads through every consumer.
   - **End-to-end pipeline snapshot** — synthetic multi-broker
     portfolio, full `main()` run, asserted against known-good figures.
     This is the safety net for structural refactors.
+  - **Rendered-dashboard consistency**
+    (`test_dashboard_consistency.py` + `tools/dashboard_probe.js`) —
+    the only tests that reach the JS render site.  The probe evaluates
+    the real bundle under a small DOM stub and reports the figures each
+    tab DISPLAYS; the tests assert relations between them across the
+    whole (filter × window) matrix rather than pinning values.  This
+    exists because `analytics/`'s compute-once rule cannot protect a
+    PAIRING that only exists in the layout — see AUDIT.md F-031.
+    Needs `node`; skips without it (CI installs it explicitly so the
+    suite can't silently stop running).  Its fixture
+    (`tests/fixtures/build_staggered_portfolio.py`) is separate from
+    the pipeline-snapshot one because it needs staggered account starts
+    and activity reaching the present — properties the tests assert
+    rather than assume.
 
   Run with `python -m pytest tests/`.  All tests must pass before
   merging changes.
