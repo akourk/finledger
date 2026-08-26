@@ -18,13 +18,14 @@ from datetime import date, datetime, timedelta
 
 from .basis import (
     BASIS_EFFECTS, _apply_split_to_lots, _basis_dollars, _basis_effect,
+    basis_effect_for, reserved_for, wrap_carry_lots, wrap_kind,
+    zero_basis_origin,
     _consume_for_rebase, _consume_lots, _consume_lots_directed,
     _consume_lots_reserving, _pair_transfers, _pair_wraps, _rebase_is_move,
-    _rescale_lots, _sort_key as _basis_sort_key,
+    _sort_key as _basis_sort_key,
     basis_override_or, fmv_basis,
 )
 from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
-                          reserved_future_demand, take_wrap_demand,
                           wrap_next_dates, wrap_symbol_families)
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS
 from .prices import get_price
@@ -34,15 +35,6 @@ from .valuation import QTY_EPSILON, mark, mark_is_dust
 # vocabulary, so any new canonical action lands here automatically.
 from .actions import SUBTRACT_ACTIONS as _SUBTRACT_ACTIONS
 from .actions import NEUTRAL_ACTIONS as _NEUTRAL_ACTIONS
-
-
-def _basis_effect_for_sym(sym: str, action: str) -> str:
-    """Same classification as basis.py, inlined to avoid the pairing
-    machinery (history walks forward once with main.py-style sort).
-    """
-    if not sym or sym == "USD":
-        return "ignore"
-    return BASIS_EFFECTS.get(action, "unknown")
 
 
 def _sample_dates(first: str, last: str, cadence: str) -> list[str]:
@@ -329,10 +321,8 @@ def compute_history(txns: list[dict],
     _wrap_demand = build_wrap_demand(_disposal_lots)
 
     def _reserved_for(acct, date, sym):
-        """Acquired-date reservation for undirected consumption —
-        mirrors basis._walk's _reserved_for."""
-        return reserved_future_demand(_disposal_lots, acct, date,
-                                      symbols=_sym_families.get(sym, {sym}))
+        """Bound alias for the module-level rule shared with basis._walk."""
+        return reserved_for(_disposal_lots, _sym_families, acct, date, sym)
 
     def _consume(key, qty_to_remove, hints=None, reserved=None):
         """Remove qty_to_remove from lots[key] using the owning account's
@@ -431,7 +421,7 @@ def compute_history(txns: list[dict],
             # invariant).  A user-supplied basis_override (metadata `Cost
             # Basis` row, stamped by cost_basis_overrides.match_and_stamp)
             # wins on the lot-creating branches, same as basis.py's _ov.
-            effect = _basis_effect_for_sym(sym, action)
+            effect = basis_effect_for(sym, action)
             key = (acct, sym)
             if effect == "add":
                 _push_txn(key, t, qty,
@@ -441,8 +431,7 @@ def compute_history(txns: list[dict],
                 # FMV-at-receipt when the broker recorded a price, else $0.
                 # Override wins — mirrors basis._walk's zero_basis branch.
                 _push_txn(key, t, qty, fmv_basis(t, qty),
-                          t.get("date", ""),
-                          origin="reconstructed" if p > 0 else "fmv")
+                          t.get("date", ""), origin=zero_basis_origin(t))
             elif effect == "remove":
                 _consume(key, qty,
                          hints=hints_for(_disposal_lots, acct, sym,
@@ -479,7 +468,7 @@ def compute_history(txns: list[dict],
                 # (account, date, kind) group atomically the first time any
                 # leg walks — consume source lots (no gain), carry total
                 # basis rescaled to the destination qty.  Mirrors basis.py.
-                kind = "unwrap" if "Unwrap" in (action or "") else "wrap"
+                kind = wrap_kind(action)
                 gkey = (acct, t.get("date", "") or "", kind)
                 if gkey not in wrap_done:
                     wrap_done.add(gkey)
@@ -489,22 +478,14 @@ def compute_history(txns: list[dict],
                         # destination's FUTURE report disposals (wrap
                         # demand) — mirrors basis._walk's wrap branch
                         # exactly.
-                        _wh = take_wrap_demand(_wrap_demand, acct,
-                                               g["dst"], t.get("date", ""),
-                                               g["q_in"], g["q_out"],
-                                               until=wrap_until.get(
-                                                   (acct, g["dst"],
-                                                    t.get("date", "") or "")))
-                        _wrsv = _reserved_for(acct, t.get("date", ""),
-                                              g["src"])
-                        if _wh:
-                            _b, carried = _consume((acct, g["src"]),
-                                                   g["q_out"], hints=_wh,
-                                                   reserved=_wrsv)
-                        else:
-                            _b, carried = _consume((acct, g["src"]),
-                                                   g["q_out"], reserved=_wrsv)
-                        for lot in _rescale_lots(carried, g["q_in"]):
+                        _b, _dest = wrap_carry_lots(
+                            g, acct, t.get("date", ""),
+                            wrap_demand=_wrap_demand, wrap_until=wrap_until,
+                            consume=lambda k, q, h, r: _consume(
+                                k, q, hints=h, reserved=r),
+                            reserved=_reserved_for(acct, t.get("date", ""),
+                                                   g["src"]))
+                        for lot in _dest:
                             lots[(acct, g["dst"])].append(lot)
                     elif g:
                         # Lone / malformed group — per-leg fallback so basis

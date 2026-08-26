@@ -2093,6 +2093,38 @@ Architectural observations surfaced by the audit, kept deliberately
 separate from defects. **None of these is a bug**; each is a place where
 the current shape makes a future bug more likely, ordered by leverage.
 
+> **Progress, 2026-08-25.**  The LOT-walker half of #1 below is now
+> mostly closed.  Five more rules moved to module level in `basis.py`
+> and are called by both walkers — the symbol-aware effect classifier
+> (whose history copy had already drifted: it omitted the `.strip()`,
+> so a whitespace-only symbol classified differently in each), the
+> future-demand lot reservation (verbatim in both, history's docstring
+> saying it "mirrors basis._walk's"), the wrap-kind test, the
+> zero-basis provenance rule, and `wrap_carry_lots` — the entire
+> basis-carrying half of a wrap, ~25 duplicated lines per walker and
+> one of the two rules CLAUDE.md names as having shipped to `basis.py`
+> only.  Each is pinned by `test_lot_walker_parity.py` with a test that
+> fails if a walker re-inlines it.
+>
+> What remains is the DISPATCH structure, and it is not obviously worth
+> collapsing: `basis._walk` additionally annotates txns, accumulates
+> realized gain, and supports `avg`, whose "lots" are scalars rather
+> than lots.  Unifying those would mean a hook-laden walker serving two
+> shapes, which trades a checkable duplication for an unclear one.
+>
+> Verified behaviour-preserving on REAL data, not just fixtures: the
+> same pipeline run under both revisions against the user's actual CSVs
+> produced **zero** differences across every per-txn `cost_basis` /
+> `realized_gain` / `basis_effect` / `holding_days` annotation in the
+> real ledger, and an
+> identical history cost-basis series.  The only deltas were `value` /
+> `unrealized_gain`, uniform at the same figure across all four
+> methods — a crypto mark moving between two runs minutes apart, which
+> is what a price difference looks like and what a logic difference
+> does not.  Worth repeating for any future basis refactor: fixtures
+> cannot reach the Coinbase wrap-plus-broker-report interaction, and a
+> git worktree at the prior revision makes the comparison mechanical.
+
 **1. Four valuation implementations, pairwise-asserted rather than
 shared.** `basis._walk`, `history`'s snapshot walker,
 `history.compute_daily_totals`, and `_shared._value_at_date` all decide

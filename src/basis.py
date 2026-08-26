@@ -197,18 +197,29 @@ METHODS = ("fifo", "lifo", "hifo", "avg")
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _basis_effect(txn: dict) -> str:
-    """Classify a txn for basis-walker purposes.
+def basis_effect_for(sym: str, action: str) -> str:
+    """Classify a ``(symbol, action)`` pair for basis-walker purposes.
 
     Symbol-aware: USD (cash) and empty-symbol rows are always "ignore",
     even if the action name would otherwise suggest a share movement —
     they're cash flows that belong in the cash summary, not the lot
     queue.  For non-USD symbols we look up the action directly.
+
+    Module-level and taking the pair rather than the dict so
+    ``history.py``'s snapshot walker calls THIS instead of keeping its
+    own copy.  It kept one, and the copy had already drifted: it omitted
+    the ``.strip()``, so a whitespace-only symbol classified as "ignore"
+    in one walker and fell through to the action lookup in the other.
     """
-    sym = (txn.get("symbol", "") or "").strip()
+    sym = (sym or "").strip()
     if not sym or sym == "USD":
         return "ignore"
-    return BASIS_EFFECTS.get(txn.get("action", ""), "unknown")
+    return BASIS_EFFECTS.get(action or "", "unknown")
+
+
+def _basis_effect(txn: dict) -> str:
+    """Dict-shaped wrapper over :func:`basis_effect_for`."""
+    return basis_effect_for(txn.get("symbol", ""), txn.get("action", ""))
 
 
 def _basis_dollars(txn: dict) -> float:
@@ -901,6 +912,78 @@ def _push_carried_lots(state: dict, method: str, key: tuple, carried: list[dict]
     return total
 
 
+def reserved_for(disposal_lots: dict | None, sym_families: dict,
+                 acct: str, date: str, sym: str) -> dict[str, float] | None:
+    """Acquired-date reservation for UNDIRECTED lot consumption.
+
+    The lots this account's broker report disposes after ``date`` within
+    ``sym``'s wrap family — held back so a HIFO fallback cannot destroy a
+    flavor the broker's inventory is keeping for a later sale.  See
+    ``broker_lots.reserved_future_demand``.
+
+    Module-level because ``history.py``'s snapshot walker needs the same
+    rule; it used to carry a verbatim copy whose docstring said "mirrors
+    basis._walk's _reserved_for", which is the hand-maintained mirror
+    this repo keeps paying for.
+    """
+    from .broker_lots import reserved_future_demand
+    return reserved_future_demand(disposal_lots, acct, date,
+                                  symbols=sym_families.get(sym, {sym}))
+
+
+def wrap_carry_lots(group: dict, acct: str, date: str, *,
+                    wrap_demand: dict, wrap_until: dict,
+                    consume, reserved, allow_hints: bool = True):
+    """Consume a wrap group's SOURCE lots and return
+    ``(basis_consumed, lots_for_destination)``.
+
+    The basis-carrying half of a wrap / unwrap: no realized gain, the
+    whole source basis travels, rescaled to the destination quantity with
+    acquired dates preserved (so a later report hint naming a 2021
+    acquisition still finds the lot under the destination symbol).
+
+    Source consumption is directed by the DESTINATION symbol's future
+    report disposals rather than by same-day sells: the report's later
+    sales of the destination name the acquired dates the broker's engine
+    actually relieved, and dates survive the wrap.  Same-day-hints-only
+    left any wrap not followed by a same-day sale on plain method order,
+    which was the source of per-year realized timing drift against the
+    broker report.  The demand pool's budget is independent of the sales'
+    own hint budget.
+
+    ``consume(key, qty, hints, reserved) -> (basis, carried)`` is supplied
+    by the caller because the two walkers hold lot state differently —
+    ``basis._walk`` also supports ``avg``, whose "lots" are not lots.
+    Everything ABOVE that line is one rule, and it lived in both walkers
+    verbatim; CLAUDE.md names wrap basis-carrying as one of the two
+    changes that shipped to `basis.py` only.
+    """
+    from .broker_lots import take_wrap_demand
+    hints = take_wrap_demand(wrap_demand, acct, group["dst"], date,
+                             group["q_in"], group["q_out"],
+                             until=wrap_until.get(
+                                 (acct, group["dst"], date or "")))
+    basis, carried = consume((acct, group["src"]), group["q_out"],
+                             hints if (hints and allow_hints) else None,
+                             reserved)
+    return basis, _rescale_lots(carried, group["q_in"])
+
+
+def wrap_kind(action: str) -> str:
+    """``"unwrap"`` or ``"wrap"`` — which half of a basis-carrying
+    conversion a leg belongs to.  Both walkers group wrap legs by
+    ``(account, date, kind)``, so they must agree on ``kind``."""
+    return "unwrap" if "Unwrap" in (action or "") else "wrap"
+
+
+def zero_basis_origin(txn: dict) -> str:
+    """Provenance tag for a ``zero_basis`` lot: ``"reconstructed"`` when
+    the broker recorded a price (so FMV is real data), ``"fmv"`` when fin
+    had to estimate.  Rendered as the "src" badge in the Holdings lot
+    table, and duplicated in both walkers before this."""
+    return "reconstructed" if float(txn.get("price", 0) or 0) > 0 else "fmv"
+
+
 def _walk(txns: list[dict], method: str, *, annotate: bool,
           account_methods: dict[str, str] | None = None,
           disposal_lots: dict | None = None) -> dict:
@@ -935,11 +1018,8 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
 
     def _reserved_for(acct: str, date: str,
                       sym: str) -> dict[str, float] | None:
-        """Acquired-date reservation for undirected consumption — the
-        lots this account's report disposes after ``date`` in ``sym``'s
-        wrap family (see broker_lots.reserved_future_demand)."""
-        return reserved_future_demand(disposal_lots, acct, date,
-                                      symbols=_sym_families.get(sym, {sym}))
+        """Bound alias for the module-level rule (shared with history)."""
+        return reserved_for(disposal_lots, _sym_families, acct, date, sym)
 
     def _method_for(acct: str) -> str:
         if not account_methods:
@@ -1074,11 +1154,9 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             # Rewards / spinoffs / mergers: FMV-at-receipt if price known,
             # else zero.  A user Cost Basis override wins (e.g. a free
             # share's grant-FMV basis that exists only on the 1099).
-            price = float(t.get("price", 0) or 0)
             basis = fmv_basis(t, qty)
             _push_txn_lots(state, method, key, t, qty, basis,
-                           t.get("date", ""),
-                           origin="reconstructed" if price > 0 else "fmv")
+                           t.get("date", ""), origin=zero_basis_origin(t))
             if qty > 0:
                 cost_basis_value = basis
 
@@ -1200,7 +1278,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             # subtract, in legs add) so the txn-level reconstruction
             # (derive_basis_by_key_from_txns) and the refresh path stay in
             # sync with the lot queue.
-            kind = "unwrap" if "Unwrap" in (t.get("action", "") or "") else "wrap"
+            kind = wrap_kind(t.get("action", ""))
             gkey = (acct, t.get("date", "") or "", kind)
             if gkey not in wrap_done:
                 wrap_done.add(gkey)
@@ -1218,25 +1296,26 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                     # timing drift vs the broker report.)  The demand
                     # pool's budget is independent of the sales' own
                     # hint budget.
-                    _wh = take_wrap_demand(wrap_demand, acct, g["dst"],
-                                           t.get("date", ""),
-                                           g["q_in"], g["q_out"],
-                                           until=wrap_until.get(
-                                               (acct, g["dst"],
-                                                t.get("date", "") or "")))
+                    _lotwise = (method != "avg"
+                                and _method_for(acct) != "avg")
                     _wrsv = (_reserved_for(acct, t.get("date", ""), g["src"])
-                             if method != "avg" and _method_for(acct) != "avg"
-                             else None)
-                    if _wh and method != "avg" and _method_for(acct) != "avg":
-                        B, carried = _consume_lots_directed(
-                            state["lots"][(acct, g["src"])], g["q_out"],
-                            _method_for(acct), _wh, reserved=_wrsv)
-                    else:
-                        B, carried = _consume_from_key(
-                            state, _method_for(acct), (acct, g["src"]),
-                            g["q_out"], reserved=_wrsv)
-                    _push_carried_lots(state, method, (acct, g["dst"]),
-                                       _rescale_lots(carried, g["q_in"]))
+                             if _lotwise else None)
+
+                    def _wrap_consume(key, qty_, hints_, reserved_):
+                        if hints_:
+                            return _consume_lots_directed(
+                                state["lots"][key], qty_, _method_for(acct),
+                                hints_, reserved=reserved_)
+                        return _consume_from_key(
+                            state, _method_for(acct), key, qty_,
+                            reserved=reserved_)
+
+                    B, _dest = wrap_carry_lots(
+                        g, acct, t.get("date", ""),
+                        wrap_demand=wrap_demand, wrap_until=wrap_until,
+                        consume=_wrap_consume, reserved=_wrsv,
+                        allow_hints=_lotwise)
+                    _push_carried_lots(state, method, (acct, g["dst"]), _dest)
                     for ol in g["out"]:
                         oq = float(ol.get("quantity", 0) or 0)
                         wrap_leg_ann[id(ol)] = (

@@ -147,6 +147,67 @@ class TestTheSharedRulesAreStillShared:
                 f"{name} no longer uses the shared FMV-at-transfer rule"
             )
 
+    def test_both_walkers_use_the_shared_effect_classifier(self):
+        """The symbol-aware `(sym, action) -> effect` rule.  history kept
+        its own copy (`_basis_effect_for_sym`), and the copy had already
+        drifted: it omitted the `.strip()`, so a whitespace-only symbol
+        classified as "ignore" in one walker and fell through to the
+        action lookup in the other."""
+        assert "basis_effect_for" in inspect.getsource(H.compute_history), (
+            "history's walker no longer calls basis.basis_effect_for — the "
+            "effect classifier is duplicated again"
+        )
+        assert not hasattr(H, "_basis_effect_for_sym"), (
+            "history has re-introduced its own effect classifier"
+        )
+
+    def test_both_walkers_use_the_shared_reservation_rule(self):
+        """Which lots a later report disposal is holding, so an
+        undirected consume avoids them.  Verbatim in both walkers before,
+        with history's docstring saying it 'mirrors basis._walk's'."""
+        for fn, name in ((B._walk, "basis._walk"),
+                         (H.compute_history, "history's walker")):
+            assert "reserved_for(" in inspect.getsource(fn), (
+                f"{name} no longer routes lot reservation through the "
+                "shared rule"
+            )
+
+    def test_both_walkers_agree_on_what_a_wrap_leg_is(self):
+        """Both group wrap legs by (account, date, kind), so a
+        disagreement on `kind` splits one atomic group into two."""
+        for fn, name in ((B._walk, "basis._walk"),
+                         (H.compute_history, "history's walker")):
+            src = inspect.getsource(fn)
+            assert "wrap_kind(" in src, (
+                f"{name} no longer uses the shared wrap-kind rule")
+            assert '"Unwrap" in' not in src, (
+                f"{name} has re-inlined the wrap-kind test")
+
+    def test_both_walkers_use_the_shared_zero_basis_origin(self):
+        for fn, name in ((B._walk, "basis._walk"),
+                         (H.compute_history, "history's walker")):
+            src = inspect.getsource(fn)
+            assert "zero_basis_origin(" in src, (
+                f"{name} no longer routes zero-basis provenance through the "
+                "shared rule")
+            assert 'origin="reconstructed" if' not in src, (
+                f"{name} has re-inlined the provenance rule")
+
+    def test_both_walkers_use_the_shared_wrap_carry_rule(self):
+        """The basis-carrying half of a wrap: which source lots go, and
+        how they rescale to the destination.  CLAUDE.md names wrap
+        basis-carrying as one of the two rules that shipped to basis.py
+        only, and until this extraction it was ~25 duplicated lines in
+        each walker."""
+        for fn, name in ((B._walk, "basis._walk"),
+                         (H.compute_history, "history's walker")):
+            src = inspect.getsource(fn)
+            assert "wrap_carry_lots(" in src, (
+                f"{name} no longer routes wrap carry through the shared rule")
+            assert "take_wrap_demand(" not in src, (
+                f"{name} has re-inlined the wrap demand lookup — the "
+                f"direction rule is duplicated again")
+
     def test_both_walkers_use_the_shared_override_rule(self):
         for fn, name in ((B._walk, "basis._walk"),
                          (H.compute_history, "history's walker")):

@@ -79,9 +79,14 @@ checklist is not following it: if the rule can live at module level in
 shared: `_consume_lots`, `_consume_lots_directed`,
 `_consume_lots_reserving`, `_consume_for_rebase`, `_pair_transfers`,
 `_pair_wraps`, `_rescale_lots`, `_rebase_is_move`,
-`_apply_split_to_lots`, `basis_override_or`, `fmv_basis`.
-`test_lot_walker_parity.py` pins the last three as shared, so re-inlining
-one fails.
+`_apply_split_to_lots`, `basis_override_or`, `fmv_basis`, and — since
+2026-08-25 — `basis_effect_for` (the symbol-aware effect classifier),
+`reserved_for` (future-demand lot reservation), `wrap_kind`,
+`zero_basis_origin`, and `wrap_carry_lots` (the whole basis-carrying
+half of a wrap: which source lots go and how they rescale).
+`test_lot_walker_parity.py` pins ALL of these as shared — each has a
+test that fails if a walker re-inlines it, several asserting the inlined
+form is absent rather than just that the call is present.
 
 ```bash
 python -m pytest tests/test_basis_walker.py tests/test_history.py \

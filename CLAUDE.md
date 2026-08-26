@@ -434,7 +434,18 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     every sample date), and basis-rule changes have TWICE landed in
     basis.py without the matching history.py change (wrap
     basis-carrying, FMV transfer-ins) — silently desyncing the
-    Overview Cost Basis line from the Holdings table.  It now reuses
+    Overview Cost Basis line from the Holdings table.  **Every rule
+    they share now lives at module level in `basis.py` and is CALLED by
+    both** — `basis_effect_for` (symbol-aware effect classification),
+    `reserved_for`, `wrap_kind`, `zero_basis_origin`, and
+    `wrap_carry_lots` (the entire basis-carrying half of a wrap) joined
+    the earlier set on 2026-08-25, each pinned by
+    `tests/test_lot_walker_parity.py` with a test that fails if a walker
+    re-inlines it.  What remains duplicated is the DISPATCH — the
+    per-effect branch structure — because `basis._walk` also annotates
+    txns, tracks realized gain, and supports `avg` (whose "lots" are not
+    lots), none of which the snapshot walker needs.  Adding a branch to
+    one still means adding it to the other.  It also reuses
     `basis._consume_lots` / `_pair_wraps` / `_rescale_lots`, honours
     `basis_override`, gives unpaired transfer-ins FMV basis, and takes
     `account_methods` (per-account FIFO/LIFO/HIFO — main.py and the
