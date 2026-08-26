@@ -113,6 +113,33 @@
     }
   }
 
+  // --- Tax: one render per year with activity ------------------------
+  // The tab defaults to the CURRENT year, which on most portfolios has
+  // no realizations yet — so a single render shows an all-zero page and
+  // any relation over it holds trivially.
+  results.tax_years = {};
+  try {
+    const years = ((ANALYTICS.tax || {}).realized_by_year || [])
+      .map(r => String(r.year));
+    for (const y of years.concat(['all'])) {
+      clearNodes();
+      try {
+        setTaxYearFilter(y);
+      } catch (e) {
+        results.console_errors.push('setTaxYearFilter(' + y + '): ' + (e && e.message));
+        continue;
+      }
+      const html = snapshotHtml();
+      results.tax_years[y] = {
+        cards: parseCards(html),
+        tables: parseTables(html),
+        fields: snapshotFields(),
+      };
+    }
+  } catch (e) {
+    results.console_errors.push('tax year sweep: ' + (e && e.message));
+  }
+
   // --- Every tab once, for the figures that are not window-dependent --
   //
   // Not every tab is driven by the lazy router.  Overview's stat cards,

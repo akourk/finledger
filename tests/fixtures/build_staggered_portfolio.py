@@ -45,6 +45,63 @@ def _d(d: date) -> str:
     return d.strftime("%m/%d/%Y")
 
 
+def _dividend_rows() -> list[dict]:
+    """Quarterly dividends from the first full year to the present.
+
+    The Income tab's headline stat cards are summed IN JAVASCRIPT from
+    the annual table's rows, so the relation between them only has teeth
+    when that table spans several years with non-zero amounts.  One
+    dividend, or none, and the sum is trivially right however the code
+    behaves.
+    """
+    rows = []
+    d = date(2022, 3, 15)
+    while d <= date.today():
+        rows.append({
+            "Activity Date": _d(d), "Trans Code": "CDIV",
+            "Instrument": "AAPL", "Description": "AAPL Cash Div",
+            "Amount": "$25.00",
+        })
+        m = d.month + 3
+        d = date(d.year + (m - 1) // 12, (m - 1) % 12 + 1, 15)
+    return rows
+
+
+def _write_apple_savings(path: Path) -> None:
+    """Apple Savings HYSA: one deposit, then monthly interest.
+
+    Written here rather than via `tests.conftest.write_apple_savings_csv`
+    — that writer emits a different Apple export's columns, which this
+    parser does not read.
+    """
+    import csv
+    headers = ["Account", "Date", "Currency", "Symbol", "Action",
+               "Quantity", "unitPrice", "Fee", "Subtotal", "Note"]
+    rows = [{
+        "Account": "Apple Savings", "Date": "2023-01-10", "Currency": "USD",
+        "Symbol": "USD", "Action": "Buy", "Quantity": "5000",
+        "unitPrice": "1", "Fee": "0", "Subtotal": "5000", "Note": "Opening deposit",
+    }]
+    d = date(2023, 2, 28)
+    while d <= date.today():
+        rows.append({
+            "Account": "Apple Savings", "Date": d.strftime("%Y-%m-%d"),
+            "Currency": "USD", "Symbol": "USD", "Action": "Interest",
+            "Quantity": "0", "unitPrice": "0", "Fee": "0",
+            "Subtotal": "18.00", "Note": "Interest paid",
+        })
+        m = d.month + 1
+        y = d.year + (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        # Land on the 28th every month — no month-length special cases.
+        d = date(y, m, 28)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=headers)
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+
+
 def build(tmp: Path) -> None:
     """Write the portfolio into ``tmp/data``."""
     from tests.conftest import write_robinhood_csv, write_voya_csv
@@ -74,7 +131,17 @@ def build(tmp: Path) -> None:
         {"Activity Date": "02/04/2026", "Trans Code": "Buy",
          "Instrument": "AAPL", "Description": "AAPL", "Quantity": "8",
          "Price": "$250.00", "Amount": "($2000.00)"},
-    ])
+        # A SHORT-term round trip.  Every other disposal here is held over
+        # a year, and an ST/LT relation cannot catch a misclassification
+        # while one side is structurally zero — property 3's shape again.
+        # Under HIFO this relieves the $230 lot it just created.
+        {"Activity Date": "09/02/2025", "Trans Code": "Buy",
+         "Instrument": "AAPL", "Description": "AAPL", "Quantity": "10",
+         "Price": "$230.00", "Amount": "($2300.00)"},
+        {"Activity Date": "11/17/2025", "Trans Code": "Sell",
+         "Instrument": "AAPL", "Description": "AAPL", "Quantity": "10",
+         "Price": "$245.00", "Amount": "$2450.00"},
+    ] + _dividend_rows())
 
     # --- Retirement: opens mid-2024, contributes to the present -------
     # Unit price climbs so the position appreciates even though the fund
@@ -97,6 +164,13 @@ def build(tmp: Path) -> None:
         unit *= 1.01
     write_voya_csv(tmp / "data" / "voya-401k-1.csv", rows)
 
+    # --- Savings: a third account group, a third account TYPE, and the
+    # only source of Interest income.  Without it the Income tab's
+    # Interest / Rewards / Lending columns are all structurally zero and
+    # the relation between those columns and their stat cards holds no
+    # matter what the code does — it would only ever exercise Dividends.
+    _write_apple_savings(tmp / "data" / "apple-savings.csv")
+
     with open(tmp / "data" / "metadata.csv", "w",
               newline="", encoding="utf-8") as f:
         f.write("Type,Date,Amount,Symbol,Note\n")
@@ -109,6 +183,15 @@ def build(tmp: Path) -> None:
         # The dashboard has two sources for "Realized" and they are only
         # distinguishable when some account is not on the default.
         f.write("Lot Method,,,Robinhood,HIFO\n")
+        # Tax-tab inputs.  Without a filing status and a salary the
+        # bracket-fill panel has no income to place, so every relation
+        # over it would hold on a row of zeros.
+        f.write("Filing Status,,,,Single\n")
+        f.write("Salary History,2022-01-01,90000,,Base\n")
+        f.write("Salary History,2025-01-01,110000,,Raise\n")
+        f.write("State,,,,WA\n")
+        # Drives the Income tab's expense-coverage card.
+        f.write("Annual Expenses,2024-01-01,48000,,Estimated\n")
 
 
 def dense_prices(symbol_curves: dict[str, tuple[float, float]],

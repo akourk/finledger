@@ -295,10 +295,33 @@ the render site, which is the point: the compute layer was correct in
 both escaped bugs.  It cost about an afternoon, needs no JS test runner
 (node only, skipped when absent — CI installs it explicitly so the suite
 cannot silently stop running), and it re-detects F-031 four different
-ways when the fix is reverted.  Note what it found on first run: the
-fixture it started on had every account opening on the same date, so the
-relation it exists to check was untestable — see the vacuous-fixture
-shapes above, and expect the same on any new relation.
+ways when the fix is reverted, and it has since found two more defects
+(F-032, F-033).  Extended the same day to Holdings, Overview, Income and
+Tax: the probe sweeps the Performance (filter x window) matrix, the three
+Holdings groupings, and one render per tax year with activity.
+
+**Where the relations have teeth is measurable.**  Count each tab
+module's local derivations against its `ANALYTICS.` reads: Performance is
+the outlier (20 vs 4), which is exactly where both escaped bugs lived;
+Options is 0, a pure analytics read, and worth nothing here.  Aim at the
+tabs that still compute.
+
+**Every relation needs inputs that are non-zero, non-empty, AND
+non-degenerate.**  Three vacuities surfaced in one day — accounts all
+starting on the same date; Overview capturing no cards at all; and
+F-033's regression test passing against its own reverted fix because,
+with no `Lot Method` row and a single lot, the annotated walk and pure
+FIFO produce the SAME number.  `require_nontrivial` catches the first two
+shapes.  The third needs knowing what the code chooses between, and is
+the one that will keep slipping through.
+
+**Validate a candidate against real data before believing it.**  A
+relation that passes on the synthetic fixture is a candidate, not a law:
+"dollar and percentage returns agree in sign" passed there and is false —
+Modified Dietz and chain-linked TWR diverge honestly on flow timing —
+which only showed up when it was run against a real portfolio.
+`python -m tools.dashboard_probe exports/transactions.json` is the check,
+and it is cheap.
 
 **5. Property / differential testing.** Generate weird-but-legal
 ledgers; assert the 26 existing `data_health` invariants hold. Finds

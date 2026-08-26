@@ -23,6 +23,8 @@ relations that are true by construction of what the labels claim:
 * a window reaching back past the first snapshot reports lifetime
 * holdings total the same by account, by type and by sector
 * a figure rendered on two tabs is the same figure
+* an Income stat card equals the column it was summed from
+* a Tax year's cards, its table row, and proceeds - basis all agree
 * a filtered view never shows rows predating the filter's own start
 * nothing renders as NaN / undefined / Infinity
 
@@ -463,6 +465,146 @@ class TestFilteredViewsDoNotShowEmptyLeadingYears:
                     f"an all-zero row: {first!r}.  A year the filter did not "
                     f"exist for renders beside a real benchmark percentage."
                 )
+
+
+# ---------------------------------------------------------------------------
+# Relation 4b — Income: the stat cards are summed from the table below
+# ---------------------------------------------------------------------------
+
+class TestIncomeCardsSumTheirTable:
+    """Income's all-time stat cards are produced IN JAVASCRIPT by summing
+    the annual table's columns (`allTimeDiv` and friends in
+    `70-income.js`).  A card and the rows it was summed from are the same
+    arithmetic rendered twice, which makes the discrepancy invisible to
+    anything that stops at `analytics/`.
+    """
+
+    CATEGORIES = ["Dividends", "Interest", "Rewards", "Lending"]
+
+    def _annual_table(self, rendered):
+        for t in rendered["tabs"]["income"]["tables"]:
+            if t["headers"][:2] == ["Year", "Dividends"]:
+                return t
+        return None
+
+    def test_each_category_card_equals_its_column(self, rendered):
+        tbl = self._annual_table(rendered)
+        assert tbl is not None, "Income's annual table is no longer rendered"
+        assert tbl["rows"], "Income's annual table has no rows"
+        cards = rendered["tabs"]["income"]["cards"]
+        checked = []
+        for idx, name in enumerate(self.CATEGORIES, start=1):
+            column = sum((money(r[idx]) or 0) for r in tbl["rows"] if len(r) > idx)
+            card = find_cards({"cards": cards}, r"^" + name + r" \(all-time\)$")
+            if not card:
+                continue
+            shown = money(card[0]["value"])
+            if abs(column) < 0.01 and (shown is None or abs(shown) < 0.01):
+                continue  # structurally absent for this portfolio
+            assert shown == pytest.approx(column, abs=0.02), (
+                f"{name}: the all-time card shows {shown:,.2f} but its "
+                f"column in the annual table sums to {column:,.2f}."
+            )
+            checked.append(name)
+        assert len(checked) >= 2, (
+            f"only {checked} had non-zero amounts — this fixture exercises "
+            f"too few income categories for the relation to mean much"
+        )
+
+    def test_each_row_totals_its_own_categories(self, rendered):
+        tbl = self._annual_table(rendered)
+        assert tbl is not None
+        total_idx = len(self.CATEGORIES) + 1
+        for row in tbl["rows"]:
+            if len(row) <= total_idx:
+                continue
+            parts = sum((money(row[i]) or 0) for i in range(1, total_idx))
+            total = money(row[total_idx])
+            if total is None:
+                continue
+            assert total == pytest.approx(parts, abs=0.02), (
+                f"income row {row[0]}: categories sum to {parts:,.2f} but "
+                f"the Total column shows {total:,.2f}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Relation 4c — Tax: the year's cards, its table row, and its arithmetic
+# ---------------------------------------------------------------------------
+
+class TestTaxYearFiguresAgree:
+    """The Tax tab renders each year's realizations twice — as headline
+    cards and as a row in Realized Gains by Year — and the row carries
+    proceeds and basis, whose difference IS the gain.
+
+    Both checks need a year that actually realized something in BOTH
+    directions; the tab defaults to the current year, which usually has
+    neither, so the probe sweeps every year with activity.
+    """
+
+    def _year_row(self, view, year):
+        for t in view["tables"]:
+            if t["headers"] and t["headers"][0].startswith("Year"):
+                for row in t["rows"]:
+                    if row and row[0] == year:
+                        return row
+        return None
+
+    def test_cards_match_the_by_year_row(self, rendered):
+        years = rendered.get("tax_years", {})
+        assert years, "probe captured no tax years"
+        checked = 0
+        for year, view in years.items():
+            if year == "all":
+                continue
+            st = find_cards(view, r"^Short-term Gain$")
+            lt = find_cards(view, r"^Long-term Gain$")
+            row = self._year_row(view, year)
+            if not (st and lt and row and len(row) >= 6):
+                continue
+            cst, clt = money(st[0]["value"]), money(lt[0]["value"])
+            rst, rlt = money(row[4]), money(row[5])
+            if cst is None or clt is None or rst is None or rlt is None:
+                continue
+            assert cst == pytest.approx(rst, abs=0.02), (
+                f"{year}: Short-term card {cst:+,.2f} vs table {rst:+,.2f}")
+            assert clt == pytest.approx(rlt, abs=0.02), (
+                f"{year}: Long-term card {clt:+,.2f} vs table {rlt:+,.2f}")
+            checked += 1
+        assert checked >= 1, "no tax year rendered both cards and its row"
+
+    def test_proceeds_minus_basis_is_the_gain(self, rendered):
+        checked = 0
+        for year, view in rendered.get("tax_years", {}).items():
+            if year == "all":
+                continue
+            row = self._year_row(view, year)
+            if not row or len(row) < 6:
+                continue
+            proceeds, basis = money(row[2]), money(row[3])
+            st, lt = money(row[4]), money(row[5])
+            if None in (proceeds, basis, st, lt):
+                continue
+            require_nontrivial(proceeds=proceeds, basis=basis)
+            assert (proceeds - basis) == pytest.approx(st + lt, abs=0.05), (
+                f"{year}: proceeds {proceeds:,.2f} - basis {basis:,.2f} = "
+                f"{proceeds - basis:+,.2f}, but short-term {st:+,.2f} + "
+                f"long-term {lt:+,.2f} = {st + lt:+,.2f}"
+            )
+            checked += 1
+        assert checked >= 1, "no tax year carried proceeds and basis"
+
+    def test_fixture_realizes_in_both_terms(self, rendered):
+        """An ST/LT relation cannot catch a misclassification while one
+        side is structurally zero."""
+        d = rendered["_export"]
+        by_year = (d["analytics"].get("tax") or {}).get("realized_by_year") or []
+        st = sum(r.get("st") or 0 for r in by_year)
+        lt = sum(r.get("lt") or 0 for r in by_year)
+        assert abs(st) > 0.01 and abs(lt) > 0.01, (
+            f"fixture realizes short-term {st:,.2f} and long-term {lt:,.2f} "
+            f"— it needs both to exercise the split"
+        )
 
 
 # ---------------------------------------------------------------------------
