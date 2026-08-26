@@ -1057,7 +1057,13 @@ function renderPerformance() {
   // by anything.  Always shows the same numbers as the Top bar and
   // Overview tab, giving the user a fixed reference point above the
   // toggles.
-  const _whole_realized = txns.reduce((s, t) => s + (t.realized_gain || 0), 0);
+  // Same authoritative source as the Overview's Realized card — the
+  // annotated walker's own accumulator, not a re-sum of the cent-rounded
+  // per-txn annotations.  Two cards showing one quantity should read one
+  // field; they used to derive it independently and disagreed (F-033).
+  const _whole_realized = basisTotals.realized_gain != null
+    ? basisTotals.realized_gain
+    : txns.reduce((s, t) => s + (t.realized_gain || 0), 0);
   const _whole_unrealized = holdingsByAccount.reduce(
     (s, h) => s + (h.unrealized_gain || 0), 0);
   // Value / net contributed / total return come precomputed from

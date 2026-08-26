@@ -399,10 +399,12 @@ def _refresh_prices_only(args) -> None:
                                  basis_methods=basis_methods,
                                  fifo_state=fifo_state)
 
+    from .pipeline_stages import build_annotated_basis_totals
     export_json(txns, output_path, holdings=holdings,
                 holdings_by_account=holdings_by_account,
                 history=history,
                 basis_methods=basis_methods,
+                basis_totals=build_annotated_basis_totals(holdings, fifo_state),
                 cash_summary=cash,
                 retirement_meta=retirement_meta,
                 analytics=analytics,
@@ -892,38 +894,13 @@ def main():
                                     if value is not None else None)
         # Sum only the positions that have a known value; count the ones
         # we couldn't price so the dashboard can note it.
-        totals_by_type: dict[str, dict] = {}
-        for r in rows:
-            t = totals_by_type.setdefault(r["account_type"], {
-                "cost_basis": 0.0, "value": 0.0, "unrealized_gain": 0.0,
-                "unpriced_count": 0,
-            })
-            t["cost_basis"] += r["cost_basis"]
-            if r["value"] is None:
-                t["unpriced_count"] += 1
-            else:
-                t["value"] += r["value"]
-                if r["unrealized_gain"] is not None:
-                    t["unrealized_gain"] += r["unrealized_gain"]
-        totals_all = {
-            "cost_basis":      round(sum(r["cost_basis"] for r in rows), 2),
-            "value":           round(sum((r["value"] or 0) for r in rows), 2),
-            "unrealized_gain": round(sum((r["unrealized_gain"] or 0) for r in rows), 2),
-            "realized_gain":   round(st["realized_total"], 2),
-            "unpriced_count":  sum(1 for r in rows if r["value"] is None),
-        }
-        totals_by_type_out = {}
-        for k, t in totals_by_type.items():
-            totals_by_type_out[k] = {
-                "cost_basis":      round(t["cost_basis"], 2),
-                "value":           round(t["value"], 2),
-                "unrealized_gain": round(t["unrealized_gain"], 2),
-                "unpriced_count":  t["unpriced_count"],
-            }
+        from .pipeline_stages import (
+            totals_by_type_from_rows, totals_from_rows,
+        )
         basis_methods[m] = {
             "holdings":        rows,
-            "totals":          totals_all,
-            "totals_by_type":  totals_by_type_out,
+            "totals":          totals_from_rows(rows, st["realized_total"]),
+            "totals_by_type":  totals_by_type_from_rows(rows),
         }
 
     # Fold cash holdings (Apple Savings USD) into every method's
@@ -991,10 +968,12 @@ def main():
     output_path = args.output or (EXPORT_DIR / "transactions.json")
     from pathlib import Path
     output_path = Path(output_path)
+    from .pipeline_stages import build_annotated_basis_totals
     export_json(txns, output_path, holdings=holdings,
                 holdings_by_account=holdings_by_account,
                 history=history,
                 basis_methods=basis_methods,
+                basis_totals=build_annotated_basis_totals(holdings, fifo_state),
                 cash_summary=cash,
                 retirement_meta=retirement_meta,
                 analytics=analytics,

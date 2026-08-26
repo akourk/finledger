@@ -419,6 +419,83 @@ def fold_cash_into_basis_methods(
 # Stage 7: build basis-methods totals from rows + cash fold
 # ---------------------------------------------------------------------------
 
+def totals_from_rows(rows: list[dict], realized_gain: float) -> dict:
+    """Roll per-holding rows up into the totals dict the dashboard reads.
+
+    One implementation, three callers: the two places that build the
+    lot-method comparison table (``main.main`` and
+    ``build_basis_methods_totals``), and the ANNOTATED walk's own totals.
+    A third hand-rolled copy of this arithmetic is exactly the
+    duplicated-logic drift that keeps producing defects here.
+
+    ``rows`` must already carry ``value`` / ``unrealized_gain`` from the
+    current prices.  An unpriceable row contributes to neither sum and is
+    counted instead, so a coverage gap reads as a gap rather than a zero.
+    """
+    return {
+        "cost_basis": round(sum(r.get("cost_basis") or 0 for r in rows), 2),
+        "value": round(sum((r.get("value") or 0) for r in rows), 2),
+        "unrealized_gain": round(
+            sum((r.get("unrealized_gain") or 0) for r in rows), 2),
+        "realized_gain": round(realized_gain, 2),
+        "unpriced_count": sum(1 for r in rows if r.get("value") is None),
+    }
+
+
+def totals_by_type_from_rows(rows: list[dict]) -> dict:
+    """Per-``account_type`` slice of :func:`totals_from_rows`."""
+    out: dict[str, dict] = {}
+    for r in rows:
+        t = out.setdefault(r.get("account_type", "Taxable"), {
+            "cost_basis": 0.0, "value": 0.0, "unrealized_gain": 0.0,
+            "unpriced_count": 0,
+        })
+        t["cost_basis"] += r.get("cost_basis") or 0
+        if r.get("value") is None:
+            t["unpriced_count"] += 1
+        else:
+            t["value"] += r["value"]
+            if r.get("unrealized_gain") is not None:
+                t["unrealized_gain"] += r["unrealized_gain"]
+    return {
+        k: {
+            "cost_basis": round(t["cost_basis"], 2),
+            "value": round(t["value"], 2),
+            "unrealized_gain": round(t["unrealized_gain"], 2),
+            "unpriced_count": t["unpriced_count"],
+        } for k, t in out.items()
+    }
+
+
+def build_annotated_basis_totals(holdings: list[dict],
+                                 fifo_state: dict | None) -> dict:
+    """The portfolio's REAL totals, from the annotated basis walk.
+
+    ``basis_methods`` holds four PURE single-method what-if walks, for
+    the Lot Method Comparison table.  The actual portfolio uses whatever
+    method each broker applies (``Lot Method`` rows in metadata.csv), and
+    that annotated walk is what produces ``holdings`` and every per-txn
+    ``realized_gain``.  Publishing a figure off ``basis_methods`` instead
+    put the Overview's Realized roughly 19% away from the same quantity
+    on Performance — see AUDIT.md F-033.  This is the one dict a consumer
+    should read for "what did this portfolio actually do".
+
+    Realized comes from the walker's own accumulator rather than a sum of
+    the per-txn annotations: those are rounded to cents for readability,
+    so re-adding thousands of them drifts.  Same reason the basis figures
+    come from lot state.
+
+    NOTE the cash asymmetry.  ``basis_methods`` rows come from
+    ``state_to_holdings``, which skips USD, so those totals need
+    :func:`fold_cash_into_basis_methods` afterwards.  ``holdings`` ALREADY
+    carries the Savings USD row, so folding here would double-count it.
+    """
+    realized = float((fifo_state or {}).get("realized_total") or 0.0)
+    totals = totals_from_rows(holdings or [], realized)
+    totals["method"] = "annotated"
+    return totals
+
+
 def build_basis_methods_totals(
     basis_methods: dict,
     holdings_by_account: list[dict],
@@ -436,34 +513,7 @@ def build_basis_methods_totals(
     for m, block in basis_methods.items():
         rows = block.get("holdings", [])
         realized_gain = block.get("totals", {}).get("realized_gain", 0.0)
-
-        totals_by_type: dict[str, dict] = {}
-        for r in rows:
-            t = totals_by_type.setdefault(r.get("account_type", "Taxable"), {
-                "cost_basis": 0.0, "value": 0.0, "unrealized_gain": 0.0,
-                "unpriced_count": 0,
-            })
-            t["cost_basis"] += r.get("cost_basis", 0)
-            if r.get("value") is None:
-                t["unpriced_count"] += 1
-            else:
-                t["value"] += r["value"]
-                if r.get("unrealized_gain") is not None:
-                    t["unrealized_gain"] += r["unrealized_gain"]
-        block["totals"] = {
-            "cost_basis":      round(sum(r.get("cost_basis", 0) for r in rows), 2),
-            "value":           round(sum((r.get("value") or 0) for r in rows), 2),
-            "unrealized_gain": round(sum((r.get("unrealized_gain") or 0) for r in rows), 2),
-            "realized_gain":   realized_gain,
-            "unpriced_count":  sum(1 for r in rows if r.get("value") is None),
-        }
-        block["totals_by_type"] = {
-            k: {
-                "cost_basis":      round(t["cost_basis"], 2),
-                "value":           round(t["value"], 2),
-                "unrealized_gain": round(t["unrealized_gain"], 2),
-                "unpriced_count":  t["unpriced_count"],
-            } for k, t in totals_by_type.items()
-        }
+        block["totals"] = totals_from_rows(rows, realized_gain)
+        block["totals_by_type"] = totals_by_type_from_rows(rows)
 
     fold_cash_into_basis_methods(basis_methods, holdings_by_account)

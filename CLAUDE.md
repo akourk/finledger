@@ -1365,6 +1365,27 @@ process.
   front, the same way `main()` does.  Pinned by
   `test_pipeline_path_parity.py` — its fixture carries sub-cent
   fractional fills specifically so that test isn't vacuous.
+- **`basis_totals` is the export's authoritative portfolio-level
+  figure; `basis_methods` is NOT.**  `basis_methods` holds four PURE
+  single-method what-if walks for the Lot Method Comparison table.  The
+  real portfolio uses whatever method each broker applies (`Lot Method`
+  metadata), which is the ANNOTATED walk — the one that produces
+  `holdings` and every per-txn `realized_gain`.  Publishing off
+  `basis_methods.fifo` put the Overview's Realized ~19% away from the
+  same quantity on Performance (AUDIT.md F-033); the two tabs then
+  re-summed the cent-rounded annotations instead, which the rule above
+  forbids.  Both now read `DATA.basis_totals`, built once by
+  `pipeline_stages.build_annotated_basis_totals(holdings, fifo_state)`
+  from `holdings` plus the walker's own `realized_total` accumulator,
+  and emitted by BOTH pipeline paths.  **Read `basis_totals` for any
+  displayed figure; touch `basis_methods` only for the comparison
+  table.**  Note the cash asymmetry: `basis_methods` rows come from
+  `state_to_holdings`, which skips USD, so they need
+  `fold_cash_into_basis_methods`; `holdings` already carries the
+  Savings USD row, so `basis_totals` must NOT fold again.  The
+  per-holding rollup arithmetic is single-sourced in
+  `pipeline_stages.totals_from_rows` / `totals_by_type_from_rows` —
+  three callers, one implementation.
 - **Symbol-aware classifier**: `basis._basis_effect` returns `"ignore"`
   for any txn where symbol is `USD` or empty, regardless of action. Cash
   events belong in `cash_summary`, not the lot queue. All other

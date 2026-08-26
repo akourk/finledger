@@ -68,6 +68,7 @@ def export_json(txns: list[dict], output_path: Path, *,
                 holdings_by_account: list[dict] | None = None,
                 history: list[dict] | None = None,
                 basis_methods: dict | None = None,
+                basis_totals: dict | None = None,
                 cash_summary: dict | None = None,
                 retirement_meta: dict | None = None,
                 analytics: dict | None = None,
@@ -118,7 +119,12 @@ def export_json(txns: list[dict], output_path: Path, *,
         "holdings": holdings or [],
         "holdings_by_account": holdings_by_account or [],
         "history": history or [],
+        # The lot-method COMPARISON table (four pure what-if walks).
         "basis_methods": basis_methods or {},
+        # The portfolio's REAL totals, from the annotated walk.  Read
+        # this, not basis_methods, for any published figure — see
+        # pipeline_stages.build_annotated_basis_totals and AUDIT.md F-033.
+        "basis_totals": basis_totals or {},
         "cash_summary": cash_summary or {},
         "retirement_meta": retirement_meta or {},
         "analytics": analytics or {},

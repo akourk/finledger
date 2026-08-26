@@ -37,11 +37,14 @@ function renderStats() {
     unrealized = +(totalValue - costBasis).toFixed(2);
     netContrib = (snap && snap.net_contributed) || 0;
   }
-  // Realized has no lot-state total in the export, so this is the same
-  // annotation sum the Performance tab's anchor card uses.  Agreeing
-  // with the rest of the app on METHOD is worth far more than the cent
-  // of drift CLAUDE.md warns about when summing rounded annotations.
-  const realized = txns.reduce((s, t) => s + (t.realized_gain || 0), 0);
+  // From the walker's own accumulator.  The per-txn `realized_gain`
+  // annotations are rounded to cents for readability, so re-adding
+  // thousands of them drifts — the reason CLAUDE.md says a published
+  // basis figure never comes from re-summing them.  That sum is the
+  // fallback for a JSON exported before `basis_totals` existed.
+  const realized = basisTotals.realized_gain != null
+    ? basisTotals.realized_gain
+    : txns.reduce((s, t) => s + (t.realized_gain || 0), 0);
   const income = cashSummary.income || 0;
 
   const unrealPct = costBasis > 0 ? (unrealized / costBasis) * 100 : null;

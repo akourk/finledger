@@ -232,6 +232,28 @@ class TestTheHarnessActuallyRan:
             f"`Lot Method` override and at least two lots to relieve."
         )
 
+    def test_basis_totals_is_the_annotated_walk_not_the_comparison_table(
+            self, rendered):
+        """`basis_totals` exists so a published figure never has to pick
+        between four what-if walks.  Its realized figure must be the
+        annotated one — which, on a fixture with a `Lot Method` override,
+        is a visibly different number from pure FIFO."""
+        d = rendered["_export"]
+        bt = d.get("basis_totals") or {}
+        assert bt, "export carries no basis_totals"
+        assert bt.get("method") == "annotated"
+        annotated = sum(t.get("realized_gain") or 0 for t in d["transactions"])
+        pure_fifo = d["basis_methods"]["fifo"]["totals"]["realized_gain"]
+        # Matches the annotated walk (to the cent-rounding of the
+        # annotations it is deliberately NOT re-summing) ...
+        assert bt["realized_gain"] == pytest.approx(annotated, abs=0.05)
+        # ... and is NOT the comparison table's pure-FIFO column.
+        assert abs(bt["realized_gain"] - pure_fifo) > 1.0, (
+            f"basis_totals realized ({bt['realized_gain']:,.2f}) equals pure "
+            f"FIFO ({pure_fifo:,.2f}) — this fixture cannot tell the "
+            f"annotated walk from the comparison table"
+        )
+
     def test_fixture_has_staggered_account_starts(self, rendered):
         """The relation F-031 broke is invisible unless some filter's
         natural window is shorter than the portfolio's."""

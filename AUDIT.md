@@ -2043,12 +2043,31 @@ label, disagreeing with every other tab.
 
 Fixed by sourcing Cost Basis and Unrealized from the holdings rollup
 (which comes from the annotated walk's lot state) and Realized from the
-same annotation sum the Performance anchor card uses.  Realized still has
-no lot-state total in the export, so both tabs re-sum rounded annotations
-— the cent-scale drift CLAUDE.md warns about.  Agreeing on METHOD is
-worth four orders of magnitude more than that, but exporting the
-annotated walk's own totals would close both and is the better long-term
-shape.
+same annotation sum the Performance anchor card uses.
+
+**Closed properly the same day.**  The first fix left both tabs
+re-summing cent-rounded annotations for Realized — the drift CLAUDE.md
+explicitly forbids — because the export carried no lot-state realized
+total.  It now does: `basis_totals`, built once by
+`pipeline_stages.build_annotated_basis_totals` from `holdings` plus the
+walker's own `realized_total` accumulator, emitted by both pipeline
+paths, and read by both tabs.  `basis_methods` is now unambiguously the
+comparison table and nothing else.  Extracting the rollup arithmetic
+into `totals_from_rows` / `totals_by_type_from_rows` also removed a
+pre-existing verbatim duplicate between `main.main` and
+`pipeline_stages.build_basis_methods_totals` — taxonomy (1), sitting
+there unremarked, and adding a third copy for the new totals is exactly
+how it would have spread.
+
+Two things worth keeping from doing it.  The path-parity test for the
+new field was written too strict and failed on `value` /
+`unrealized_gain`: re-pricing is the refresh path's whole purpose, so
+those are MEANT to move, while `cost_basis` and `realized_gain` come
+from lot state and must not.  The sibling parity tests already drew that
+line; the new one now draws it explicitly rather than by omission.  And
+the JS keeps the annotation-sum fallback for a JSON exported before the
+field existed — verified against one, which renders clean and still
+agrees across tabs.
 
 **The regression test passed against the reverted fix.**  Recorded
 because it is the third vacuity in one day and the first that the new

@@ -296,6 +296,32 @@ class TestAccountMetadataParity:
         assert set(f.values()) - {"Taxable"}, \
             "fixture lost its non-Taxable accounts — this test would be vacuous"
 
+    def test_basis_totals_match(self, both_paths):
+        """`basis_totals` is the one dict a published figure reads, so
+        the two pipeline paths must agree on it exactly.  It is built
+        from `holdings` plus the walker's realized accumulator, and the
+        refresh path rebuilds both — precisely the shape that has
+        diverged here before."""
+        r = both_paths.refresh.get("basis_totals")
+        f = both_paths.full.get("basis_totals")
+        assert r, "refresh path emitted no basis_totals"
+        assert f, "full path emitted no basis_totals"
+        # Only the price-INDEPENDENT fields.  Re-pricing is the refresh
+        # path's entire purpose, so `value` and `unrealized_gain` are
+        # meant to move; `cost_basis` and `realized_gain` come from lot
+        # state and must not.  Same split the sibling parity tests use.
+        for key in ("cost_basis", "realized_gain", "method", "unpriced_count"):
+            assert r.get(key) == f.get(key), (
+                f"basis_totals[{key!r}] differs: refresh={r.get(key)!r} "
+                f"full={f.get(key)!r}"
+            )
+        assert r["value"] == pytest.approx(
+            r["cost_basis"] + r["unrealized_gain"], abs=0.02), (
+            "basis_totals is internally inconsistent on the refresh path")
+        assert f["value"] == pytest.approx(
+            f["cost_basis"] + f["unrealized_gain"], abs=0.02), (
+            "basis_totals is internally inconsistent on the full path")
+
     def test_holdings_cost_basis_matches(self, both_paths):
         f = {k: h.get("cost_basis") for k, h in self._by_key(both_paths.full).items()}
         r = {k: h.get("cost_basis") for k, h in self._by_key(both_paths.refresh).items()}
