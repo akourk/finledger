@@ -74,6 +74,7 @@ CANONICAL_PREFIXES = {
     "voya_401k": "voya-401k",
     "usaa": "usaa-roth-ira",
     "apple_savings": "apple-savings",
+    "sfcu": "state-farm-fcu",
 }
 
 # Files that should never be renamed

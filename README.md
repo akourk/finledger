@@ -22,7 +22,7 @@ All screenshots are rendered from the bundled **fictional** sample portfolio
 
 1. **Scans** `data/` for broker CSV exports and auto-detects each one
    (Robinhood, Coinbase, Coinbase Pro / GDAX, Schwab, Vanguard 401K,
-   Voya 401K, USAA Victory Capital, Apple Savings).
+   Voya 401K, USAA Victory Capital, Apple Savings, State Farm FCU).
 2. **Renames** them to a consistent scheme (`robinhood-1.csv`,
    `schwab-roth-ira.csv`, …).
 3. **Parses** each into a common transaction schema.
@@ -135,6 +135,7 @@ side.  Use this to move your portfolio between machines without copying
 | Voya 401K            | Retirement          | filename contains `voya401k`                        |
 | USAA Victory Capital | Retirement (Roth)   | filename contains `usaavictorycapital`              |
 | Apple Savings        | Savings             | filename contains `apple-savings`                   |
+| State Farm FCU       | Savings             | `Posting Date` + `Posting Status` headers           |
 
 You can also drop a `manual-adjustments.csv` for corrections that aren't in
 any broker export (see `src/parsers/manual.py` for the column format).
@@ -277,7 +278,7 @@ fin/
 │   │   ├── __init__.py    #   Dispatch + parse_all_files
 │   │   ├── _helpers.py    #   Shared _txn / date / _num helpers + rename layer
 │   │   ├── robinhood.py   #   (also apple_savings, coinbase, manual,
-│   │   ├── schwab.py      #    usaa, vanguard, voya)
+│   │   ├── schwab.py      #    sfcu, usaa, vanguard, voya)
 │   │   └── ...
 │   ├── normalize.py       # Raw action → canonical action vocabulary
 │   ├── reorgs.py          # Corp-action helpers (CIL/MRGS/CONV/LIQ pairing)

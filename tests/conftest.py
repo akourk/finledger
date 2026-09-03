@@ -107,6 +107,7 @@ def isolated_workdir(tmp_path, monkeypatch):
         "USAA Roth IRA": "Roth IRA",
         "USAA Victory Capital Roth IRA": "Roth IRA",
         "Apple Savings": "Apple Savings",
+        "State Farm FCU Savings": "State Farm FCU Savings",
     })
     ACCOUNT_TYPES.update({
         "Robinhood": "Taxable",
@@ -115,6 +116,7 @@ def isolated_workdir(tmp_path, monkeypatch):
         "Roth IRA": "Retirement",
         "401K": "Retirement",
         "Apple Savings": "Savings",
+        "State Farm FCU Savings": "Savings",
     })
 
     yield tmp_path
@@ -262,6 +264,25 @@ def write_apple_savings_csv(path: Path, rows: list[dict]) -> None:
     """Write an Apple Savings-format CSV."""
     headers = ["Transaction Date", "Clearing Date", "Description", "Merchant",
                "Category", "Type", "Amount (USD)", "Balance (USD)"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=headers)
+        w.writeheader()
+        for r in rows:
+            w.writerow({h: r.get(h, "") for h in headers})
+
+
+def write_sfcu_csv(path: Path, rows: list[dict]) -> None:
+    """Write a State Farm FCU-format CSV.
+
+    The real export is newest-first with a running ``Balance`` column, so
+    tests that exercise the balance-continuity check must pass rows in
+    that order.
+    """
+    headers = ["Transaction ID", "Posting Date", "Effective Date",
+               "Transaction Type", "Posting Status", "Amount",
+               "Check Number", "Reference Number", "Description",
+               "Transaction Category", "Type", "Balance", "Memo",
+               "Extended Description"]
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=headers)
         w.writeheader()

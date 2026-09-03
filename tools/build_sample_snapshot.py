@@ -134,6 +134,23 @@ def _w_apple_savings(path: Path, rows: list[dict]) -> None:
             w.writerow({h: r.get(h, "") for h in headers})
 
 
+def _w_sfcu(path: Path, rows: list[dict]) -> None:
+    """State Farm FCU exports a generic ``ExportedTransactions.csv``
+    from its online-banking platform — no account column, rows
+    newest-first, and a running ``Balance`` the parser checks itself
+    against.  ``Transaction Type`` (Credit/Debit) carries direction."""
+    headers = ["Transaction ID", "Posting Date", "Effective Date",
+               "Transaction Type", "Posting Status", "Amount",
+               "Check Number", "Reference Number", "Description",
+               "Transaction Category", "Type", "Balance", "Memo",
+               "Extended Description"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=headers)
+        w.writeheader()
+        for r in rows:
+            w.writerow({h: r.get(h, "") for h in headers})
+
+
 def _w_coinbase(path: Path, rows: list[dict]) -> None:
     """Coinbase has a multi-line preamble.  Headers per parser:
     ID, Timestamp, Transaction Type, Asset, Quantity Transacted,
@@ -657,6 +674,29 @@ def _build(tmp: Path) -> None:
          "Subtotal": "19.10", "Note": "Monthly interest"},
     ])
 
+    # State Farm FCU share savings — credit-union "dividends" (which
+    # are economically interest, reported on a 1099-INT), an ACH
+    # deposit, and a fee debit.  Newest-first with a running balance,
+    # exactly as the platform exports it.
+    _w_sfcu(tmp / "ExportedTransactions.csv", [
+        {"Transaction ID": "20260731 000004", "Posting Date": _mdy(_recent(8)),
+         "Transaction Type": "Credit", "Posting Status": "Posted",
+         "Amount": "10.20000", "Description": "Dividend Deposit",
+         "Type": "Dividends", "Balance": "2985.20000"},
+        {"Transaction ID": "20260731 000003", "Posting Date": _mdy(_recent(20)),
+         "Transaction Type": "Debit", "Posting Status": "Posted",
+         "Amount": "25.00000", "Description": "Returned item charge",
+         "Type": "NSF Fee", "Balance": "2975.00000"},
+        {"Transaction ID": "20260731 000002", "Posting Date": _mdy(_recent(40)),
+         "Transaction Type": "Credit", "Posting Status": "Posted",
+         "Amount": "1000.00000", "Description": "ACH Deposit PAYROLL",
+         "Type": "ACH", "Balance": "3000.00000"},
+        {"Transaction ID": "20260731 000001", "Posting Date": _mdy(_recent(70)),
+         "Transaction Type": "Credit", "Posting Status": "Posted",
+         "Amount": "2000.00000", "Description": "ACH Deposit OPENING",
+         "Type": "ACH", "Balance": "2000.00000"},
+    ])
+
     # Manual adjustments — illustrative no-op (CSV with a sample
     # comment-only entry so the parser is exercised but no txns added).
     _w_manual(tmp / "manual-adjustments.csv", [])
@@ -798,6 +838,17 @@ def _build(tmp: Path) -> None:
         ["Account Type",  "", "", "Rollover IRA",  "Retirement"],
         ["Account Type",  "", "", "401K",          "Retirement"],
         ["Account Type",  "", "", "Apple Savings", "Savings"],
+        ["Account Group", "", "", "State Farm FCU Savings",
+         "State Farm FCU Savings"],
+        # Load-bearing: USD balances are tracked only for Savings-type
+        # accounts (see pipeline_stages.walk_balances).  Without this row
+        # the group defaults to Taxable and the cash vanishes.
+        ["Account Type",  "", "", "State Farm FCU Savings", "Savings"],
+        # Savings APR — effective-dated rate driving the Income tab's
+        # 12-month forecast (rate x current cash balance).  Forecast
+        # only; real Interest txns remain the authority for history.
+        ["Savings APR", "2026-01-01", "0.04", "State Farm FCU Savings",
+         "Declared APY - add a new dated row when it changes"],
     ])
 
 

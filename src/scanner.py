@@ -40,6 +40,8 @@ def detect_broker(filepath: Path) -> str:
     # Filename pattern matching
     if "apple-savings" in name or "apple_savings" in name:
         return "apple_savings"
+    if "state-farm-fcu" in name or name.startswith("sfcu"):
+        return "sfcu"
     if "vanguard401k" in name or name.startswith("vanguard-401k"):
         return "vanguard_401k"
     if "voya401k" in name or name.startswith("voya-401k"):
@@ -101,6 +103,14 @@ def _detect_by_headers(filepath: Path) -> str:
     for header in lines:
         if not header:
             continue
+
+        # State Farm FCU (and other credit unions on the same online-
+        # banking platform): the export is named generically
+        # ("ExportedTransactions.csv"), so the header IS the detection.
+        # "posting date" + "posting status" is the distinctive pair —
+        # "transaction type" alone is shared with Coinbase.
+        if "posting date" in header and "posting status" in header:
+            return "sfcu"
 
         # Robinhood: "Activity Date", "Trans Code", "Instrument", etc.
         if "activity date" in header and "trans code" in header:

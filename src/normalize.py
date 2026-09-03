@@ -198,6 +198,20 @@ RULES = [
     # `Balance Anchor` metadata row, but accept a hand-entered row too.
     {"account_group": "Apple Savings", "action": "Cash Back",               "normalized": "Cash Back"},
     {"account_group": "Apple Savings", "action": "Daily Cash",              "normalized": "Cash Back"},
+
+    # -- State Farm FCU share savings ------------------------------------
+    # The parser emits a bounded four-action vocabulary from an
+    # open-ended broker `Type` column (see parsers/sfcu.py).  Scoped to
+    # the account name the parser stamps, which is also the fallback
+    # account_group when metadata.csv carries no `Account Group` row.
+    #
+    # A credit union pays "dividends" on a share account, but they are
+    # economically INTEREST and the CU reports them on a 1099-INT — so
+    # they belong in the interest income bucket, not dividends.
+    {"account_group": "State Farm FCU Savings", "action": "Dividend",   "normalized": "Interest"},
+    {"account_group": "State Farm FCU Savings", "action": "Deposit",    "normalized": "Deposit"},
+    {"account_group": "State Farm FCU Savings", "action": "Withdrawal", "normalized": "Withdrawal"},
+    {"account_group": "State Farm FCU Savings", "action": "Fee",        "normalized": "Fee"},
 ]
 
 

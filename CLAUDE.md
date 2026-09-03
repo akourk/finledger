@@ -640,6 +640,29 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   asset was acquired off-platform / pre-Coinbase, fin's basis can be lower
   than the broker's "customer-provided" basis (an inherent data limit, not
   this code).
+- **Credit-union "dividends" are INTEREST.**  A share savings account
+  pays dividends, not interest, in the credit union's own vocabulary —
+  but they are economically interest and the CU reports them on a
+  **1099-INT**, so `State Farm FCU Savings` normalizes its `Dividends`
+  rows to `Interest` (the interest income bucket), not `Dividend`.
+  The normalize rules are scoped to the account name
+  `parsers.sfcu.ACCOUNT` stamps, which is deliberately identical to the
+  fallback `account_group` — rename one without the other and every
+  action falls through to the title-cased default, silently
+  re-bucketing this income as dividends.  Pinned by
+  `tests/test_sfcu_parser.py`.
+- **The State Farm FCU export carries no account identifier.**  Its
+  filename is generic (`ExportedTransactions.csv`, detected by the
+  `Posting Date` + `Posting Status` header pair) and every account at
+  the credit union — Share Savings, IRA Savings, E-Shares — exports in
+  the identical shape.  A second account would therefore be parsed into
+  the FIRST one's balances.  Supporting more than one needs a per-file
+  account hint before a second export lands in `data/`.  Direction comes
+  from the `Transaction Type` (Credit/Debit) label, with a negative
+  `Amount` overriding it; `parse_sfcu` re-walks the export's own
+  `Balance` column and warns loudly when the two disagree, which is the
+  only independent check on a convention only ever observed set to
+  `Credit`.
 - **USAA "Dividend" rows are reclassified to a USD cash event** — USAA
   records both the dividend share-payout *and* a matching Buy reinvestment,
   so crediting shares from the Dividend row would double-count.
@@ -1269,7 +1292,7 @@ threads through every consumer.
   `robinhood.py`, `robinhood_apex.py` (hand-entered 2017-18 Apex-era
   trades transcribed from old 1099 PDFs; covered CONV migration
   rows are neutralized by `main._reconcile_apex_conversions`),
-  `coinbase.py`, `schwab.py`, `vanguard.py`,
+  `coinbase.py`, `schwab.py`, `sfcu.py`, `vanguard.py`,
   `voya.py`, `usaa.py`, `apple_savings.py`, `manual.py`.  Adding a
   new broker is a new file + one line in `__init__.py`.
 - **`src/analytics/`** — package directory.  `_shared.py` has

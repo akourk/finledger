@@ -27,6 +27,7 @@ from .manual import parse_manual
 from .robinhood import parse_robinhood
 from .robinhood_apex import parse_robinhood_apex
 from .schwab import parse_schwab
+from .sfcu import parse_sfcu
 from .usaa import parse_usaa
 from .vanguard import parse_vanguard_401k
 from .voya import parse_voya_401k
@@ -36,7 +37,7 @@ __all__ = [
     "parse_all_files",
     "parse_apple_savings", "parse_coinbase", "parse_coinbase_pro",
     "parse_manual", "parse_robinhood", "parse_robinhood_apex",
-    "parse_schwab", "parse_usaa",
+    "parse_schwab", "parse_sfcu", "parse_usaa",
     "parse_vanguard_401k", "parse_voya_401k",
 ]
 
@@ -52,6 +53,7 @@ _PARSERS = {
     "voya_401k": parse_voya_401k,
     "usaa": parse_usaa,
     "apple_savings": parse_apple_savings,
+    "sfcu": parse_sfcu,
     "manual": parse_manual,
 }
 
