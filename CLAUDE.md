@@ -640,6 +640,34 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   asset was acquired off-platform / pre-Coinbase, fin's basis can be lower
   than the broker's "customer-provided" basis (an inherent data limit, not
   this code).
+- **Return of capital REDUCES basis; the excess is realized gain.**  A
+  nondividend distribution (Robinhood `ROC`) hands back the investor's
+  own capital — not income (1099-DIV box 3, never box 1a, so it must
+  stay off the Income tab and out of AGI/MAGI) and not taxed on
+  receipt.  Under IRS Pub 550 it lowers cost basis; once basis hits
+  zero the excess is a capital gain in the year received, at the lot's
+  own holding period.  Two shared module-level rules in `basis.py`,
+  called by BOTH walkers: `apply_roc_to_lots` (pro-rata by share count,
+  floored per-LOT — pooling would move gain between holding periods —
+  emitting a `lot_breakdown` so `_classify_realized` splits ST/LT with
+  no special-casing) and `pair_roc_events` (nets a distribution against
+  its reversal; the broker pays, reverses back-dated to the row it
+  reverses, then re-pays, so three ledger rows are ONE event and
+  applying each independently halves the basis twice).  An unmatched
+  reversal carries forward against later distributions rather than
+  restoring basis — the lots it came off may already be consumed, and
+  inventing basis overstates a future loss.  A distribution paid after
+  the position closed has no basis left and is entirely gain.
+  **Why this is worth reading rather than just obeying**: `ROC` was
+  `basis="ignore"` for years, on the explicit grounds that fin doesn't
+  track taxable-account cash so moving basis alone would book a phantom
+  loss.  `cash_bridge.py` later put Robinhood in `BRIDGED_GROUPS` with
+  `Return of Capital` in `_RH_CASH_IN`, which made that premise false —
+  and nothing connected the two, so the cash half of the event updated
+  and the basis half didn't.  No parity check could catch it: both
+  walkers agreed, because `ignore` made both do nothing.  See AUDIT.md
+  F-034.  When you write a conditional exemption, the condition needs a
+  test, not a comment.
 - **Credit-union "dividends" are INTEREST.**  A share savings account
   pays dividends, not interest, in the credit union's own vocabulary —
   but they are economically interest and the CU reports them on a

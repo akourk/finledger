@@ -121,6 +121,7 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-034 | **high** | *(fixed)* `Return of Capital` was catalogued `basis="ignore"` on the grounds that the payout was untracked; the cash bridge later started tracking it, leaving the basis half of the event unapplied — understated per-position return, basis diverging from the 1099-B, and a realized gain never booked |
 | F-033 | **high** | *(fixed)* The Overview's Cost Basis, Unrealized and Realized read the pure-FIFO what-if table instead of the annotated walk, so they disagreed with the rest of the app whenever an account overrides the default lot method |
 | F-032 | **high** | *(fixed)* A Performance window reaching back past the first snapshot double-counted the founding deposit — a 5y view of a younger portfolio printed a dollar LOSS beside a large positive cumulative return; found by the new render-relation harness |
 | F-031 | **high** | *(fixed)* The Performance tab paired a filtered account's return with a SPY return measured over a different, much longer window — user-reported |
@@ -2086,6 +2087,97 @@ disagreeing.** Only the third requires knowing what the code chooses
 between, which is why it keeps being the one that slips through.  It is
 the same lesson as this audit's own "a fixture must contain the thing the
 code chooses between" table, arriving from a new direction.
+
+### F-034: half an event, applied (2026-09-03)
+
+Found from a user question, not a sweep: a Robinhood position showed a
+small single-digit percent return on the Holdings tab despite having
+paid a return-of-capital distribution larger than the entire position
+cost.  The question was the right one — should a ROC affect the asset's
+performance at all?
+
+A nondividend distribution is the company handing back the investor's
+own capital.  It is not income and not taxed on receipt; under IRS
+Pub 550 it REDUCES cost basis, and once basis reaches zero the excess
+is a capital gain in the year received, at the lot's holding period.
+
+`Return of Capital` was catalogued `basis="ignore"`, and the catalog
+row said why:
+
+> Strictly it lowers cost basis, but we leave basis untouched,
+> consistent with the app's deliberate non-tracking of taxable-account
+> cash: sell proceeds and cash dividends aren't tracked either.
+
+That was a sound symmetry argument when written.  If the payout is
+invisible, moving the basis without it books a phantom loss.  But
+`cash_bridge.py` landed later and put Robinhood in `BRIDGED_GROUPS`,
+and `_RH_CASH_IN` lists `Return of Capital` explicitly — the payout has
+been tracked, as reconstructed brokerage cash, ever since.  The
+premise the exemption rested on had become false, and nothing
+connected the two: the cash half of the event updated, the basis half
+did not.
+
+**This is the failure mode worth naming.** Not a rule implemented
+wrongly, and not a rule missed — a rule whose written justification
+was quietly invalidated by a change elsewhere, while both halves
+individually kept passing every check.  No parity test could catch it:
+both walkers agreed, because both did nothing.  `basis="ignore"` makes
+lot-queue parity, history-holdings parity and the structural
+dispatch check all trivially true.  A conditional exemption is only as
+durable as the condition, and the condition was recorded in prose in
+one file while the thing it depended on lived in another.
+
+Symptoms, in increasing order of consequence:
+
+1. **Per-position return understated.** The payout was credited to the
+   Robinhood cash bridge rather than to the position that produced it,
+   so the asset's own percent return omitted the largest thing that
+   ever happened to it.
+2. **Basis diverging from the broker's.** The 1099-B will report the
+   post-distribution basis; fin reported the original purchase.  A
+   later sale would have understated the gain by the full original
+   cost.
+3. **A realized gain missing entirely.** The portion of the
+   distribution exceeding basis is taxable in the year received.  fin
+   booked nothing, in a year the broker will report it.
+
+Portfolio-level totals were never wrong.  `total_return` is
+`value − net_contributed`, and ROC is correctly `cash_flow="neutral"`,
+so the cash arriving with no external inflow already registered as
+return.  The market took the distribution out of the share price the
+same day.  What was wrong was the *attribution* — which asset earned
+it, and which year it was taxable in.
+
+Fixed by giving the catalog a real `roc` basis effect and two shared
+module-level rules in `basis.py`, called by both walkers:
+
+- `apply_roc_to_lots` reduces basis pro-rata by share count, floors
+  each lot at zero, and returns the excess as gain with a
+  `lot_breakdown` so `_classify_realized` splits it ST/LT per lot with
+  no special-casing.  Exhaustion is per-lot rather than pooled;
+  pooling is tidier arithmetic and moves gain between holding periods.
+- `pair_roc_events` nets a distribution against its reversal.  The
+  broker pays, reverses (back-dated to the row it reverses), then
+  re-pays — three ledger rows for one economic event, which applied
+  independently would cut basis by twice the distribution.  An
+  unmatched reversal carries forward against later distributions
+  rather than restoring basis: the lots it came off may already be
+  consumed, and inventing basis is the direction that overstates a
+  future loss.
+
+A distribution paid after the position closed has no basis to reduce
+and is entirely gain — the correct treatment, and a real case in the
+ledger, so `apply_roc_to_lots` must not assume a non-empty lot list.
+
+One deliberate consequence: a position whose basis is now zero renders
+a blank percent return rather than a number.  Every such division is
+guarded on `basis > 0`, so nothing leaks `Infinity`, and return on a
+zero basis is genuinely undefined.  Showing nothing is more honest than
+showing a figure computed against a basis the position no longer has —
+but "total gain in dollars" remains the meaningful readout for these,
+and if a percent is ever wanted, the denominator would have to be
+original cost, which is a change to what `pct_return` means everywhere.
+
 
 ## Improvement opportunities
 

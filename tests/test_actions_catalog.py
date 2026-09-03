@@ -72,7 +72,9 @@ def test_robinhood_roc_futswp_misc_classification():
     - FUTSWP → Event Contract Transfer: fully inert (neutral/ignore/
       ignore) so prediction-markets activity is excluded from every
       performance metric and net_contributed.
-    - ROC → Return of Capital: no share/cash-flow effect, not income.
+    - ROC → Return of Capital: no share or cash-flow effect and not
+      income, but basis="roc" — a nondividend distribution reduces
+      cost basis (IRS Pub 550) rather than being taxed on receipt.
     - MISC → Reward: counts as reward income.
     """
     from src.normalize import normalize_action
@@ -95,12 +97,31 @@ def test_robinhood_roc_futswp_misc_classification():
 
     roc = ACTIONS[norm("ROC")]
     assert (roc.name, roc.balance, roc.basis, roc.cash_flow) == \
-        ("Return of Capital", "neutral", "ignore", "neutral")
+        ("Return of Capital", "neutral", "roc", "neutral")
     assert roc.name not in INCOME_ACTION_KINDS, "ROC is not income"
     assert roc.name not in CASH_ADD_ACTIONS and roc.name not in CASH_SUB_ACTIONS
 
     assert norm("MISC") == "Reward"
     assert INCOME_ACTION_KINDS.get("Reward") == "rewards"
+
+
+def test_every_roc_action_is_classified_as_credit_or_reversal():
+    """``basis.ROC_REVERSAL_ACTIONS`` recovers the SIGN of a return-of-
+    capital row from its action name, because amounts are non-negative
+    after parsing and the catalog carries no sign field.
+
+    That only holds while every roc-effect action is accounted for, so
+    pin the set.  A third one added to the catalog without a decision
+    about its direction would net as a CREDIT by default and silently
+    reduce the position's basis twice.
+    """
+    from src.actions import names_with_basis_effect
+    from src.basis import ROC_REVERSAL_ACTIONS
+
+    roc_actions = set(names_with_basis_effect("roc"))
+    assert roc_actions == {"Return of Capital", "Return of Capital Reversal"}
+    assert ROC_REVERSAL_ACTIONS <= roc_actions
+    assert roc_actions - ROC_REVERSAL_ACTIONS == {"Return of Capital"}
 
 
 def test_robinhood_directional_codes_split_by_sign():
@@ -115,9 +136,10 @@ def test_robinhood_directional_codes_split_by_sign():
     would then read as credits and cash_bridge would over-report the
     balance by twice the outbound amount.
 
-    Both directions stay fully inert for balance / basis /
-    net_contributed; only the cash reconstruction cares which way the
-    money went.
+    Both directions stay inert for balance and net_contributed.  They
+    are NOT inert for basis — both carry effect "roc", and
+    ``basis.pair_roc_events`` nets the reversal against the credit it
+    reverses, so the distribution reduces basis exactly once.
     """
     from src.normalize import normalize_action
     from src.actions import ACTIONS, CASH_ADD_ACTIONS, CASH_SUB_ACTIONS
@@ -129,7 +151,8 @@ def test_robinhood_directional_codes_split_by_sign():
             {"action": raw, "account_group": "Robinhood", "symbol": "USD"})
         assert got == canonical, f"{raw} → {got}"
         act = ACTIONS[canonical]
-        assert (act.balance, act.basis) == ("neutral", "ignore")
+        expect_basis = "roc" if "Return of Capital" in canonical else "ignore"
+        assert (act.balance, act.basis) == ("neutral", expect_basis)
         # Never external cash flow — inert for net_contributed / TWR.
         assert canonical not in CASH_ADD_ACTIONS
         assert canonical not in CASH_SUB_ACTIONS

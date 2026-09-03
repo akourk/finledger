@@ -673,3 +673,194 @@ class TestAverageCostFullLiquidation:
             f"re-entry basis is {basis_left!r}, not the 200.0 just paid — "
             "the previous exit left basis in the pool"
         )
+
+
+class TestReturnOfCapital:
+    """A nondividend distribution (Robinhood ROC) returns the investor's
+    own capital, so it is not taxed on receipt — it REDUCES cost basis
+    (IRS Pub 550).  Basis floors at zero and the excess becomes capital
+    gain in the year received, at the lot's own holding period.
+
+    All figures here are synthetic round numbers.
+    """
+
+    def test_roc_reduces_basis_without_realizing_gain(self, isolated_workdir):
+        """Buy 10 @ $20 ($200 basis), then a $50 return of capital.
+        Basis drops to $150; nothing is realized and no shares move."""
+        from src.basis import compute_basis_default, state_to_holdings
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "ACME", "Buy", 10, 20.0, 200.0),
+            ("2025-06-01", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 50.0),
+        )
+        st = compute_basis_default(txns)
+        rows = {r["symbol"]: r for r in state_to_holdings(st, "fifo")}
+        assert rows["ACME"]["cost_basis"] == pytest.approx(150.0)
+        assert rows["ACME"]["quantity"] == pytest.approx(10.0)
+        assert st["realized_total"] == pytest.approx(0.0)
+        assert txns[1]["basis_effect"] == "roc"
+        assert txns[1]["cost_basis"] == pytest.approx(50.0)
+
+    def test_roc_exceeding_basis_realizes_the_excess(self, isolated_workdir):
+        """The case that motivated this: a distribution larger than the
+        position's basis.  Buy 10 @ $5 ($50), then a $100 ROC.  Basis
+        floors at $0 and the other $50 is a realized capital gain."""
+        from src.basis import compute_basis_default, state_to_holdings
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "ACME", "Buy", 10, 5.0, 50.0),
+            ("2025-06-01", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 100.0),
+        )
+        st = compute_basis_default(txns)
+        rows = {r["symbol"]: r for r in state_to_holdings(st, "fifo")}
+        assert rows["ACME"]["cost_basis"] == pytest.approx(0.0)
+        assert rows["ACME"]["quantity"] == pytest.approx(10.0)
+        assert st["realized_total"] == pytest.approx(50.0)
+        assert txns[1]["realized_gain"] == pytest.approx(50.0)
+        # Basis never goes negative — the floor is per-lot, not a
+        # post-hoc clamp on the total.
+        assert rows["ACME"]["cost_basis"] >= 0.0
+
+    def test_a_later_sale_realizes_against_the_reduced_basis(
+            self, isolated_workdir):
+        """The consequence that matters for tax: after a ROC, a sale
+        realizes MORE gain, because the basis it relieves is smaller.
+        Buy 10 @ $20, $50 ROC, sell all 10 for $250 → $250 - $150."""
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "ACME", "Buy", 10, 20.0, 200.0),
+            ("2025-06-01", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 50.0),
+            ("2025-09-01", "Robinhood", "ACME", "Sell", 10, 25.0, 250.0),
+        )
+        st = compute_basis_default(txns)
+        assert st["realized_total"] == pytest.approx(100.0)
+        assert txns[2]["cost_basis"] == pytest.approx(150.0)
+
+    def test_a_reversed_and_repaid_roc_is_applied_once(self, isolated_workdir):
+        """Robinhood pays, reverses (back-dated to the original row),
+        then re-pays.  Three ledger rows, ONE economic distribution.
+        Applying each credit on its own would cut basis by twice the
+        amount — the bug pair_roc_events exists to prevent."""
+        from src.basis import compute_basis_default, state_to_holdings
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "ACME", "Buy", 10, 20.0, 200.0),
+            ("2025-04-28", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 50.0),
+            ("2025-04-28", "Robinhood", "ACME",
+             "Return of Capital Reversal", 0, 0.0, 50.0),
+            ("2025-05-04", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 50.0),
+        )
+        st = compute_basis_default(txns)
+        rows = {r["symbol"]: r for r in state_to_holdings(st, "fifo")}
+        # $50 net, not $100.
+        assert rows["ACME"]["cost_basis"] == pytest.approx(150.0)
+        # The netted-away pair contributes nothing to the reconstruction.
+        netted = [t for t in txns if t.get("basis_effect") == "roc_noop"]
+        assert len(netted) == 2
+
+    def test_an_unmatched_reversal_carries_forward_instead_of_adding_basis(
+            self, isolated_workdir):
+        """A reversal fin sees without the credit it reverses (paid
+        before the CSV window opens) must not INVENT basis — it offsets
+        the next distribution instead."""
+        from src.basis import compute_basis_default, state_to_holdings
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "ACME", "Buy", 10, 20.0, 200.0),
+            ("2025-04-28", "Robinhood", "ACME",
+             "Return of Capital Reversal", 0, 0.0, 30.0),
+            ("2025-05-04", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 50.0),
+        )
+        st = compute_basis_default(txns)
+        rows = {r["symbol"]: r for r in state_to_holdings(st, "fifo")}
+        # Basis never rose above the purchase price; the carried -$30
+        # offsets the later $50, so only $20 comes off.
+        assert rows["ACME"]["cost_basis"] == pytest.approx(180.0)
+
+    def test_roc_after_the_position_closed_is_all_gain(self, isolated_workdir):
+        """A record date while held, paid after the sale.  No basis is
+        left to reduce, so the whole distribution is gain."""
+        from src.basis import compute_basis_default
+        txns = _txns(
+            ("2025-04-23", "Robinhood", "ACME", "Buy",  5, 100.0, 500.0),
+            ("2025-05-18", "Robinhood", "ACME", "Sell", 5, 100.0, 500.0),
+            ("2025-06-01", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 5.0),
+        )
+        st = compute_basis_default(txns)
+        assert txns[2]["realized_gain"] == pytest.approx(5.0)
+        assert st["realized_total"] == pytest.approx(5.0)
+
+    def test_allocation_is_pro_rata_and_exhaustion_is_per_lot(
+            self, isolated_workdir):
+        """Two lots of equal size, one cheap and one dear.  A $100 ROC
+        splits $50/$50 by SHARE COUNT, not by basis.  The cheap lot has
+        only $20 of basis, so it absorbs $20 and realizes $30; the dear
+        lot absorbs its full $50.  Pooling the basis instead would
+        absorb the whole $100 and realize nothing — moving gain out of
+        the year it was actually received."""
+        from src.basis import compute_basis_default, state_to_holdings
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "ACME", "Buy", 10,  2.0,  20.0),
+            ("2024-02-01", "Robinhood", "ACME", "Buy", 10, 40.0, 400.0),
+            ("2025-06-01", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 100.0),
+        )
+        st = compute_basis_default(txns)
+        rows = {r["symbol"]: r for r in state_to_holdings(st, "fifo")}
+        # 20 - 20 = 0 on the cheap lot, 400 - 50 = 350 on the dear one.
+        assert rows["ACME"]["cost_basis"] == pytest.approx(350.0)
+        assert st["realized_total"] == pytest.approx(30.0)
+
+    def test_the_lot_breakdown_lets_tax_split_the_gain_by_holding_period(
+            self, isolated_workdir):
+        """The excess takes each LOT's holding period, so a ROC across a
+        long-held and a freshly-bought lot splits LT/ST rather than
+        landing wholly in one bucket."""
+        from src.basis import compute_basis_default
+        from src.analytics.tax import _classify_realized
+        txns = _txns(
+            ("2020-01-01", "Robinhood", "ACME", "Buy", 10, 1.0, 10.0),
+            ("2025-05-15", "Robinhood", "ACME", "Buy", 10, 1.0, 10.0),
+            ("2025-06-01", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 100.0),
+        )
+        compute_basis_default(txns)
+        roc = txns[2]
+        assert roc["lot_breakdown"], "ROC must emit a per-lot breakdown"
+        split = _classify_realized(roc)
+        # $50 to each lot, $10 of basis each → $40 of gain each side.
+        assert split["lt"] == pytest.approx(40.0)
+        assert split["st"] == pytest.approx(40.0)
+
+    def test_roc_leaves_the_balance_untouched(self, isolated_workdir):
+        """basis↔balance parity: a ROC moves no shares, so the lot-queue
+        quantity must equal what the balance walker computes."""
+        from src.basis import compute_basis_default, state_to_holdings
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "ACME", "Buy", 10, 20.0, 200.0),
+            ("2025-06-01", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 500.0),
+        )
+        st = compute_basis_default(txns)
+        rows = {r["symbol"]: r for r in state_to_holdings(st, "fifo")}
+        assert rows["ACME"]["quantity"] == pytest.approx(10.0)
+
+    @pytest.mark.parametrize("method", ["fifo", "lifo", "hifo", "avg"])
+    def test_every_method_reduces_basis_and_floors_at_zero(
+            self, method, isolated_workdir):
+        """The rule is method-independent: a ROC touches every open lot
+        pro-rata, so all four walks land on the same basis and gain."""
+        from src.basis import compute_basis_all_methods, state_to_holdings
+        txns = _txns(
+            ("2024-01-01", "Robinhood", "ACME", "Buy", 10, 5.0, 50.0),
+            ("2025-06-01", "Robinhood", "ACME",
+             "Return of Capital", 0, 0.0, 100.0),
+        )
+        st = compute_basis_all_methods(txns)[method]
+        rows = {r["symbol"]: r for r in state_to_holdings(st, method)}
+        assert rows["ACME"]["cost_basis"] == pytest.approx(0.0)
+        assert rows["ACME"]["quantity"] == pytest.approx(10.0)
+        assert st["realized_total"] == pytest.approx(50.0)

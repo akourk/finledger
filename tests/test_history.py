@@ -519,3 +519,92 @@ def test_drawdown_daily_resolution_catches_intra_sample_dip(stub_prices):
     out2 = compute_drawdown(history, None)
     assert out2["resolution"] == "snapshot"
     assert out2["max_drawdown"] == 0.0
+
+
+def _walker_basis(txns):
+    """``{(account_group, symbol): cost_basis}`` per basis.py's walker —
+    the view history.py's inline walker has to match."""
+    from src.basis import compute_basis_default, state_to_holdings
+    return {(h["account_group"], h["symbol"]): h["cost_basis"]
+            for h in state_to_holdings(compute_basis_default(txns), "fifo")}
+
+
+def test_history_roc_reduces_snapshot_basis(stub_prices):
+    """A return of capital reduces basis in the SNAPSHOT walker too.
+
+    This is the mirror the fin-lot-walker-sync checklist exists for: the
+    rule lives in basis.py's walker and history.py's inline one, and the
+    two documented misses in this repo both shipped the basis.py half
+    only.  Buy 10 @ $20, then a $50 ROC → $150 of basis in both views.
+    """
+    from src.history import compute_history
+
+    stub_prices.set("ACME", {"2025-06-30": 20.0})
+    _populate_cache(stub_prices, {"ACME": ["2025-06-30"]})
+    txns = [
+        _txn("2024-01-05", "Robinhood", "Taxable", "ACME", "Buy", 10.0,
+             amount=200.0, price=20.0),
+        _txn("2025-06-01", "Robinhood", "Taxable", "ACME",
+             "Return of Capital", 0.0, amount=50.0),
+    ]
+    history = compute_history(txns, {"ACME": "Technology"})
+    last = history[-1]
+    acme = [p for p in last["positions"] if p["symbol"] == "ACME"]
+    assert len(acme) == 1
+    assert acme[0]["cost_basis"] == pytest.approx(150.0)
+    assert acme[0]["quantity"] == pytest.approx(10.0)
+
+    # And it agrees with the basis walker's view exactly.  Compared
+    # per POSITION, not against total_cost_basis: Robinhood is a bridged
+    # group, so the reconstructed cash balance (which the ROC credits)
+    # carries its own basis into the portfolio total.
+    assert acme[0]["cost_basis"] == pytest.approx(
+        _walker_basis(txns)[("Robinhood", "ACME")], abs=0.02)
+
+
+def test_history_roc_floors_basis_at_zero(stub_prices):
+    """A distribution exceeding basis drives the snapshot position to $0
+    basis — never negative — matching the basis walker."""
+    from src.history import compute_history
+
+    stub_prices.set("ACME", {"2025-06-30": 6.0})
+    _populate_cache(stub_prices, {"ACME": ["2025-06-30"]})
+    txns = [
+        _txn("2024-01-05", "Robinhood", "Taxable", "ACME", "Buy", 10.0,
+             amount=50.0, price=5.0),
+        _txn("2025-06-01", "Robinhood", "Taxable", "ACME",
+             "Return of Capital", 0.0, amount=100.0),
+    ]
+    history = compute_history(txns, {"ACME": "Technology"})
+    last = history[-1]
+    acme = [p for p in last["positions"] if p["symbol"] == "ACME"][0]
+    assert acme["cost_basis"] == pytest.approx(0.0)
+    assert acme["cost_basis"] >= 0.0
+    assert acme["cost_basis"] == pytest.approx(
+        _walker_basis(txns)[("Robinhood", "ACME")], abs=0.02)
+
+
+def test_history_nets_a_reversed_roc_like_the_basis_walker(stub_prices):
+    """Pay, reverse, re-pay — one distribution.  Both walkers must net
+    it the same way or the snapshot basis line drifts from the Holdings
+    table by the reversed amount."""
+    from src.history import compute_history
+
+    stub_prices.set("ACME", {"2025-06-30": 20.0})
+    _populate_cache(stub_prices, {"ACME": ["2025-06-30"]})
+    txns = [
+        _txn("2024-01-05", "Robinhood", "Taxable", "ACME", "Buy", 10.0,
+             amount=200.0, price=20.0),
+        _txn("2025-04-28", "Robinhood", "Taxable", "ACME",
+             "Return of Capital", 0.0, amount=50.0),
+        _txn("2025-04-28", "Robinhood", "Taxable", "ACME",
+             "Return of Capital Reversal", 0.0, amount=50.0),
+        _txn("2025-05-04", "Robinhood", "Taxable", "ACME",
+             "Return of Capital", 0.0, amount=50.0),
+    ]
+    history = compute_history(txns, {"ACME": "Technology"})
+    last = history[-1]
+    acme = [p for p in last["positions"] if p["symbol"] == "ACME"][0]
+    assert acme["cost_basis"] == pytest.approx(150.0)
+    assert acme["cost_basis"] == pytest.approx(
+        _walker_basis(txns)[("Robinhood", "ACME")], abs=0.02)

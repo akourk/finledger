@@ -23,7 +23,7 @@ from .basis import (
     _consume_for_rebase, _consume_lots, _consume_lots_directed,
     _consume_lots_reserving, _pair_transfers, _pair_wraps, _rebase_is_move,
     _sort_key as _basis_sort_key,
-    basis_override_or, fmv_basis,
+    apply_roc_to_lots, basis_override_or, fmv_basis, pair_roc_events,
 )
 from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
                           wrap_next_dates, wrap_symbol_families)
@@ -290,6 +290,11 @@ def compute_history(txns: list[dict],
                 rebase_pairs[id(_tout)] = (_t, _tout)
     rebase_done: set[int] = set()
 
+    # Return-of-capital rows netted against their reversals — the same
+    # shared rule basis._walk uses, so a reversed-then-re-paid
+    # distribution reduces basis once in both walkers.
+    roc_net = pair_roc_events(txns_sorted)
+
     # Wrap/unwrap groups — basis-carrying conversions processed
     # atomically the first time any leg is met, exactly like basis.py.
     wrap_groups = _pair_wraps(txns_sorted)
@@ -505,6 +510,15 @@ def compute_history(txns: list[dict],
                 # was a verbatim copy and F-015 is exactly that: the rule
                 # existed twice and NEITHER copy was executed by a test.
                 _apply_split_to_lots(lq, sum(lot["qty"] for lot in lq), qty)
+            elif effect == "roc":
+                # Return of capital — reduce basis pro-rata, excess is
+                # gain (which this walker doesn't track; it only needs
+                # the lot state).  Mirrors basis._walk's roc branch via
+                # the same two shared rules.
+                net = roc_net.get(id(t), 0.0)
+                if net > 0:
+                    apply_roc_to_lots(lots[key], _method_for(acct), net,
+                                      t.get("date", ""))
             elif (effect == "ignore" and qty > 0 and sym
                   and sym != "USD" and t.get("basis_override") is not None):
                 # Neutral same-pool conversion with broker-reported

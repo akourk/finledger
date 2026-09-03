@@ -140,7 +140,7 @@ dashboard JS sets (the catalog is serialized into the export under
 | Raw | Canonical | balance / basis / cash_flow | Why |
 |-----|-----------|-----------------------------|-----|
 | Robinhood `FUTSWP` | `Event Contract Transfer` | neutral / ignore / ignore | Inter-entity cash shuffle to the prediction-markets entity — the user's own money, no positions imported, so fully excluded from every metric. |
-| Robinhood `ROC` | `Return of Capital` | neutral / ignore / neutral | Non-dividend distribution; shares unchanged, not income, not a contribution. Basis left untouched (consistent with the app not tracking taxable cash). |
+| Robinhood `ROC` | `Return of Capital` | neutral / **roc** / neutral | Non-dividend distribution; shares unchanged, not income, not a contribution — but it REDUCES cost basis (IRS Pub 550), with any excess over basis realized as gain. Was `ignore`, justified by the app not tracking taxable cash; `cash_bridge.py` later made that premise false and left the basis half unapplied (AUDIT.md F-034) — a reminder that a conditional exemption is only as durable as its condition, which lived in another file. |
 | Robinhood `MISC` | `Reward` (existing) | add / zero_basis / neutral | "Cash reward" promo — reused an existing income action rather than adding one; USD symbol auto-routes basis to ignore. |
 
 ## Done when

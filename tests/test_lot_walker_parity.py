@@ -208,6 +208,27 @@ class TestTheSharedRulesAreStillShared:
                 f"{name} has re-inlined the wrap demand lookup — the "
                 f"direction rule is duplicated again")
 
+    def test_both_walkers_use_the_shared_roc_rules(self):
+        """Return of capital: the netting of a reversal against the
+        credit it reverses, and the pro-rata basis reduction itself.
+
+        Both are pure lot-state rules that each walker needs, so both
+        live at module level in basis.py.  Re-inlining either is how a
+        reversed distribution ends up applied twice in one walker and
+        once in the other.
+        """
+        for fn, name in ((B._walk, "basis._walk"),
+                         (H.compute_history, "history's walker")):
+            src = inspect.getsource(fn)
+            assert "pair_roc_events(" in src, (
+                f"{name} no longer nets ROC reversals through the shared rule")
+            assert "apply_roc_to_lots(" in src, (
+                f"{name} no longer applies ROC through the shared rule")
+            assert "ROC_REVERSAL_ACTIONS" not in src, (
+                f"{name} has re-inlined the ROC sign lookup — the netting "
+                f"rule is duplicated again")
+
+
     def test_both_walkers_use_the_shared_override_rule(self):
         for fn, name in ((B._walk, "basis._walk"),
                          (H.compute_history, "history's walker")):

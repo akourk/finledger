@@ -612,6 +612,137 @@ def _fmv_at(t: dict, qty: float) -> float:
     return qty * price if price > 0 else 0.0
 
 
+# Which "roc" actions are REVERSALS.  The catalog carries no sign field —
+# direction is encoded in the action NAME, the same convention as
+# Transfer In/Out and Event Contract Transfer/Out.  Pinned by
+# test_actions_catalog.py, which asserts the full set of roc-effect
+# actions so a third one can't be added without being classified here.
+ROC_REVERSAL_ACTIONS = frozenset({"Return of Capital Reversal"})
+
+
+def pair_roc_events(txns_sorted: list[dict]) -> dict[int, float]:
+    """Net return-of-capital rows against their reversals.
+
+    Robinhood reverses a mis-paid distribution with a second ROC row
+    carrying a "REVERT:" description and a negative amount, then
+    re-pays it — three ledger rows for what is economically ONE
+    payment.  The parser splits the negative leg off by sign (amounts
+    are non-negative after parsing), so the sign has to be recovered
+    from the action name here.  Applying each credit to basis on its
+    own would cut basis by twice the distribution.
+
+    Nets signed amounts per ``(account_group, symbol)`` per DATE, and
+    returns ``{id(txn): amount_to_apply}``: the last row of each date
+    group carries that date's net, every other ROC row maps to 0.0.
+    Date-grouping rather than description-matching is deliberate — a
+    broker back-dates a reversal to the row it reverses, and the
+    grouping then holds regardless of how the description is worded.
+
+    A date whose net is NEGATIVE — a reversal fin sees without the
+    credit it reverses, e.g. one paid before the CSV window opens —
+    applies nothing and CARRIES the credit forward against later
+    distributions on the same position.  Restoring basis is not an
+    option: the lots it came off may already have been consumed, and
+    inventing basis is the one direction that overstates a future
+    loss.
+
+    Module-level so ``history.py``'s snapshot walker nets identically
+    rather than keeping its own copy.
+    """
+    buckets: dict[tuple[str, str], dict[str, list[dict]]] = {}
+    for t in txns_sorted:
+        if basis_effect_for(t.get("symbol", ""), t.get("action", "")) != "roc":
+            continue
+        key = (t.get("account_group", "") or "", t.get("symbol", "") or "")
+        # txns_sorted is date-ordered, so dict insertion order is date order.
+        buckets.setdefault(key, {}).setdefault(t.get("date", "") or "",
+                                               []).append(t)
+
+    out: dict[int, float] = {}
+    for by_date in buckets.values():
+        carry = 0.0
+        for rows in by_date.values():
+            net = carry
+            for t in rows:
+                amt = abs(float(t.get("amount", 0) or 0))
+                net += -amt if t.get("action") in ROC_REVERSAL_ACTIONS else amt
+            carry = min(net, 0.0)
+            for t in rows:
+                out[id(t)] = 0.0
+            out[id(rows[-1])] = max(net, 0.0)
+    return out
+
+
+def apply_roc_to_lots(lot_state, method: str, amount: float,
+                      on_date: str) -> tuple[float, float, list[dict]]:
+    """Apply a return-of-capital distribution to one symbol's open lots.
+
+    A nondividend distribution is not income — the company is handing
+    back your own capital — so it is not taxed on receipt.  It REDUCES
+    cost basis (IRS Pub 550).  Basis cannot go below zero: once a lot's
+    basis is exhausted, the remainder of that lot's share of the
+    distribution is a capital gain, realized in the year received and
+    taking that lot's own holding period.
+
+    Allocation is pro-rata by share count — both the general rule and
+    what the broker's own description states ("N shares at $X").
+    Exhaustion is per-LOT rather than pooled: a fully-reduced old lot
+    does NOT spill its excess onto a newer lot that still has basis.
+    Pooling would be arithmetically tidier and would move gain between
+    holding periods, which is exactly the error the per-lot breakdown
+    exists to prevent.
+
+    A distribution arriving when nothing is held (a record date while
+    held, paid after the position was closed) has no basis to reduce,
+    so the whole amount is gain — the correct treatment, and the reason
+    this must not assume a non-empty lot list.
+
+    Returns ``(basis_absorbed, gain, breakdown)``.  ``breakdown`` is
+    shaped like the ``remove`` branch's ``lot_breakdown`` so
+    ``analytics.tax._classify_realized`` splits the gain ST/LT per lot
+    with no special-casing; it is empty when there is nothing to
+    allocate across, and the classifier then falls back to its default.
+
+    Module-level and taking the lot container rather than the walk
+    state so BOTH walkers call this one copy.
+    """
+    if amount <= 0:
+        return 0.0, 0.0, []
+
+    if method == "avg":
+        # avg has no discrete lots: (total_qty, total_basis).  Basis is
+        # a single pool, so per-lot exhaustion has nothing to express
+        # and no acquired dates exist to classify against.
+        absorbed = min(amount, max(lot_state[1], 0.0))
+        lot_state[1] -= absorbed
+        return absorbed, amount - absorbed, []
+
+    total_qty = sum(lot["qty"] for lot in lot_state)
+    if total_qty <= 0:
+        return 0.0, amount, []
+
+    close_d = _safe_date(on_date)
+    absorbed_total = 0.0
+    gain_total = 0.0
+    breakdown: list[dict] = []
+    for lot in lot_state:
+        share = amount * lot["qty"] / total_qty
+        lot_basis = lot["basis_per_share"] * lot["qty"]
+        absorbed = min(share, max(lot_basis, 0.0))
+        lot["basis_per_share"] = max(lot_basis - absorbed, 0.0) / lot["qty"]
+        absorbed_total += absorbed
+        gain_total += share - absorbed
+        lot_d = _safe_date(lot.get("date", ""))
+        breakdown.append({
+            "date_acquired": lot.get("date", "") or "VARIOUS",
+            "qty": lot["qty"],
+            "cost_basis": absorbed,
+            "proceeds": share,
+            "days": (close_d - lot_d).days if (close_d and lot_d) else None,
+        })
+    return absorbed_total, gain_total, breakdown
+
+
 def _apply_split_to_lots(lots: list[dict], old_total_qty: float, added_qty: float):
     """Scale lot quantities by the split ratio; preserve total basis."""
     if old_total_qty <= 0 or added_qty <= 0:
@@ -1055,6 +1186,10 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
 
     # Wrap/unwrap groups (basis-carrying conversions), processed
     # atomically the first time any leg is met.
+    # Return-of-capital rows netted against their reversals (shared with
+    # history.py) — see pair_roc_events.
+    roc_net = pair_roc_events(txns_sorted)
+
     wrap_groups = _pair_wraps(txns_sorted)
     wrap_until = wrap_next_dates(wrap_groups)
     _sym_families = wrap_symbol_families(wrap_groups)
@@ -1356,6 +1491,22 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 old_total = sum(lot["qty"] for lot in lots)
                 _apply_split_to_lots(lots, old_total, qty)
 
+        elif effect == "roc":
+            # Return of capital: reduce basis pro-rata, excess → gain.
+            # `roc_net` carries the whole (account, symbol, date) group's
+            # netted amount on its LAST row; the other legs are no-ops so
+            # a reversed-then-re-paid distribution is applied once.
+            net = roc_net.get(id(t), 0.0)
+            if net > 0:
+                absorbed, gain, breakdown = apply_roc_to_lots(
+                    state["lots"][key], method, net, t.get("date", ""))
+                cost_basis_value = absorbed
+                realized = gain
+                if annotate and breakdown:
+                    t["lot_breakdown"] = breakdown
+            else:
+                final_effect = "roc_noop"
+
         elif (effect == "ignore" and qty > 0 and sym
               and sym not in ("USD",) and t.get("basis_override") is not None):
             # Neutral same-pool conversion carrying a broker-reported
@@ -1504,6 +1655,11 @@ def derive_basis_by_key_from_txns(txns: list[dict]) -> dict[tuple[str, str], flo
     - ``rebase_neutral``       → +cost_basis  (Neutral same-pool conversion rebased at a
                                                broker-reported basis; cb is the NET delta:
                                                override − consumed)
+    - ``roc``                  → -cost_basis  (return of capital: the basis the
+                                               distribution absorbed, floored at the
+                                               lots' remaining basis)
+    - ``roc_noop``             → 0            (a ROC leg netted away by its reversal,
+                                               or a reversal carried forward)
     - ``intra_group_noop``     → 0            (paired same-group transfer; both legs cancel)
     - ``split``                → 0            (qty rebalanced, total basis unchanged)
     - ``ignore``               → 0            (USD or empty symbol; not in lot queue)
@@ -1529,9 +1685,10 @@ def derive_basis_by_key_from_txns(txns: list[dict]) -> dict[tuple[str, str], flo
                   "rebase_neutral"):
             by_key[key] = by_key.get(key, 0.0) + float(cb)
         elif be in ("remove", "transfer_out", "wrap_out", "wrap_out_unpaired",
-                    "rebase_out"):
+                    "rebase_out", "roc"):
             by_key[key] = by_key.get(key, 0.0) - float(cb)
-        # intra_group_noop / split / ignore / wrap_carry_noop: no contribution
+        # intra_group_noop / split / ignore / wrap_carry_noop / roc_noop:
+        # no contribution
     return by_key
 
 

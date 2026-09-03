@@ -14,6 +14,7 @@ Every canonical action has THREE orthogonal effects on the pipeline:
      - "transfer_out" → release lot(s) to a paired "transfer_in"
      - "transfer_in"  → receive lot(s) from a paired "transfer_out"
      - "split"        → adjust qty and basis-per-share by the split ratio
+     - "roc"          → return of capital: reduce basis pro-rata, excess → gain
      - "ignore"       → not a share-level event (cash flows on USD, etc.)
      - "unknown"      → flag for manual review
 
@@ -52,6 +53,14 @@ BasisEffect = Literal[
     # brokers (Coinbase 1099-DA) report wrapping: non-taxable, basis flows
     # through, gain deferred to the eventual real sale.
     "wrap_out", "wrap_in",
+    # Return of capital (nondividend distribution).  Cash paid out of
+    # capital rather than earnings: not income, and NOT taxed on
+    # receipt — it REDUCES the position's cost basis (IRS Pub 550).
+    # Basis floors at zero; a distribution exceeding a lot's remaining
+    # basis realizes the excess as capital gain in the year received,
+    # at that lot's holding period.  Share count is unchanged, so the
+    # balance side stays "neutral".
+    "roc",
 ]
 CashFlowEffect = Literal["in", "out", "neutral", "ignore"]
 
@@ -150,23 +159,31 @@ _ACTIONS: tuple[Action, ...] = (
            "around cash_flow=neutral."),
 
     # ── Corporate actions ──────────────────────────────────────────────────
-    Action("Return of Capital", "neutral", "ignore",  "neutral", "#5eead4",
+    Action("Return of Capital", "neutral", "roc",  "neutral", "#5eead4",
            "Non-dividend distribution (Robinhood ROC) — cash paid out of "
-           "the company's capital, not earnings.  Shares unchanged.  "
-           "Strictly it lowers cost basis, but we leave basis untouched "
-           "(basis='ignore'), consistent with the app's deliberate "
-           "non-tracking of taxable-account cash: sell proceeds and cash "
-           "dividends aren't tracked either.  NOT income — excluded from "
-           "the Income tab.  cash_flow='neutral' keeps it out of "
-           "net_contributed / performance contribution accounting."),
-    Action("Return of Capital Reversal", "neutral", "ignore", "neutral", "#5eead4",
+           "the company's capital, not earnings.  Shares unchanged, so "
+           "balance='neutral'.  NOT income (1099-DIV box 3, not box 1a) "
+           "— excluded from the Income tab and from AGI/MAGI.  "
+           "cash_flow='neutral' keeps it out of net_contributed: the "
+           "cash is already inside the portfolio, it did not arrive "
+           "from outside it.  basis='roc' REDUCES the position's cost "
+           "basis pro-rata across open lots (IRS Pub 550), flooring at "
+           "zero and realizing any excess as capital gain — see "
+           "basis.apply_roc_to_lots.  This was 'ignore' until 2026-09, "
+           "justified by the app not tracking taxable-account cash; "
+           "cash_bridge.py later made that premise false for Robinhood "
+           "(the payout IS tracked, as reconstructed cash), leaving the "
+           "basis half of the same event unapplied."),
+    Action("Return of Capital Reversal", "neutral", "roc", "neutral", "#5eead4",
            "Robinhood reverses a mis-paid return-of-capital with a second "
            "ROC row carrying a 'REVERT:' description and a NEGATIVE amount; "
-           "the parser splits it off by sign.  Same classification as "
-           "Return of Capital — inert for balance, basis, and "
-           "net_contributed — but it debits the brokerage cash balance, so "
-           "the cash_bridge reconstruction must see it as an outflow.  "
-           "Without the split both legs read as credits and the bridge "
+           "the parser splits it off by sign.  Same effects as Return of "
+           "Capital, and the shared basis='roc' branch nets it against "
+           "the credit it reverses (basis.pair_roc_events) — applying "
+           "both legs independently would cut basis by twice the "
+           "distribution.  It debits the brokerage cash balance, so the "
+           "cash_bridge reconstruction sees it as an outflow.  Without "
+           "the split both legs read as credits and the bridge "
            "over-reports cash by twice the reversed amount."),
     Action("Split",          "add",      "split",     "neutral", "#fbbf24",
            "Forward stock split — adds new shares, scales basis-per-share."),
