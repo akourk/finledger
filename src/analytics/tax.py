@@ -966,10 +966,23 @@ def _build_form_8949(realized: list[dict]) -> list[dict]:
         if c["kind"] == "1256":
             term = "1256"
         else:
+            # With no holding period at all this resolves to SHORT.  That
+            # is the deliberate direction: short-term is taxed higher, so
+            # an unknown-character gain over-states rather than under-
+            # states the estimate.  Reachable for a return of capital
+            # paid after the position closed — the character should
+            # follow the disposed shares' holding period, which fin no
+            # longer has once the lots are consumed.
             term = "long" if _is_long_term(None, None, days) else "short"
         qty = float(t.get("quantity", 0) or 0)
+        # A share-less disposal (a return of capital exceeding basis is
+        # reportable gain with no shares sold) would otherwise describe
+        # itself as "0 SYM" — wrong, and confusing on a form a preparer
+        # reads.  Name the event instead.
+        desc = (f"{qty:g} {sym}".strip() if qty
+                else f"{sym} ({(t.get('action') or 'disposal').lower()})".strip())
         rows.append({
-            "description": f"{qty:g} {sym}".strip(),
+            "description": desc,
             "date_acquired": acquired,
             "date_sold": sold,
             "proceeds": round(float(t.get("amount", 0) or 0), 2),

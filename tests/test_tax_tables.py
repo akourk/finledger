@@ -329,3 +329,42 @@ def test_tax_tables_embedded_in_export():
         data = json.loads(out.read_text(encoding="utf-8"))
     assert "tax_tables" in data
     assert "federal_brackets" in data["tax_tables"]
+
+
+def test_form_8949_names_a_shareless_disposal(isolated_workdir):
+    """A return of capital exceeding basis is reportable gain with NO
+    shares sold.  The single-row fallback built its description from the
+    txn quantity, so it read "0 SYM" — wrong on a form a preparer reads.
+
+    Also pins the term default: with no holding period recoverable the
+    row lands SHORT, which over-states rather than under-states the
+    estimate.  All figures synthetic.
+    """
+    from src.analytics.tax import _build_form_8949
+
+    rows = _build_form_8949([{
+        "date": "2025-06-01", "symbol": "ACME", "account_group": "Broker",
+        "account_type": "Taxable", "action": "Return of Capital",
+        "quantity": 0.0, "amount": 25.0,
+        "cost_basis": 0.0, "realized_gain": 25.0,
+    }])
+    assert len(rows) == 1
+    assert rows[0]["description"] == "ACME (return of capital)"
+    assert "0 ACME" not in rows[0]["description"]
+    assert rows[0]["gain"] == 25.0
+    assert rows[0]["term"] == "short"
+    assert rows[0]["date_acquired"] == "VARIOUS"
+
+
+def test_form_8949_still_names_share_disposals_normally(isolated_workdir):
+    """The share-less path must not swallow the ordinary case."""
+    from src.analytics.tax import _build_form_8949
+
+    rows = _build_form_8949([{
+        "date": "2025-06-01", "symbol": "ACME", "account_group": "Broker",
+        "account_type": "Taxable", "action": "Sell",
+        "quantity": 5.0, "amount": 500.0, "holding_days": 400,
+        "cost_basis": 300.0, "realized_gain": 200.0,
+    }])
+    assert rows[0]["description"] == "5 ACME"
+    assert rows[0]["term"] == "long"
