@@ -45,6 +45,14 @@ matter.  Position totals ALWAYS include the folded lots — the
 ``lots_holdings_basis_parity`` data-health check pins
 Σ(lots + micro cost_basis) to the Holdings row's cost basis.
 
+**Position totals sum at full precision and round once**, mirroring
+``basis.state_to_holdings``.  The per-lot ``cost_basis`` / ``qty``
+fields are rounded for DISPLAY; re-adding those drifts roughly a cent
+per hundred lots, which trips the parity check on a pool carrying a
+hundred-odd reward lots.  Same rule the codebase already applies to
+per-txn basis annotations — a published basis figure is never built by
+re-summing rounded ones.
+
 Never emits NaN/Infinity: every division guards its denominator and
 falls back to ``None``.
 """
@@ -159,6 +167,13 @@ def open_lot_rows(fifo_state: dict | None, prices: dict,
                 "lt_eligible_date": lt_iso,
                 "days_to_lt": days_to_lt,
                 "is_long_term": is_lt,
+                # Full-precision aggregation inputs.  Every public
+                # figure above is rounded for display; summing those
+                # across a hundred-lot pool accumulates cents and
+                # drifts from the walker's own total, which sums exact
+                # and rounds once.  Stripped before export.
+                "_qty_exact": qty,
+                "_cost_basis_exact": cost_basis,
             })
     return rows
 
@@ -202,6 +217,14 @@ def compute_open_lots(fifo_state: dict | None,
         folded = [r for r in lots if _is_micro(r)]
         visible.sort(key=lambda r: r["date"] or "9999-99-99")
 
+        # Totals sum at FULL precision and round once — the same way
+        # basis.state_to_holdings builds the Holdings row these anchor
+        # to.  Re-summing the per-lot rounded cents instead drifts by
+        # roughly a cent per hundred lots, which is enough to trip
+        # lots_holdings_basis_parity on a large reward pool.
+        pos_qty = round(sum(r["_qty_exact"] for r in lots), 8)
+        pos_basis = round(sum(r["_cost_basis_exact"] for r in lots), 2)
+
         micro = None
         if folded:
             m_val = sum(r["value"] for r in folded
@@ -210,25 +233,29 @@ def compute_open_lots(fifo_state: dict | None,
             m_origins = {r.get("origin", "reconstructed") for r in folded}
             micro = {
                 "count": len(folded),
-                "qty": round(sum(r["qty"] for r in folded), 8),
-                "cost_basis": round(sum(r["cost_basis"] for r in folded), 2),
+                "qty": round(sum(r["_qty_exact"] for r in folded), 8),
+                "cost_basis": round(sum(r["_cost_basis_exact"]
+                                        for r in folded), 2),
                 "value": round(m_val, 2) if any_val else None,
                 "origin": (m_origins.pop() if len(m_origins) == 1
                            else "mixed"),
             }
 
         # Per-lot rows drop the grouping keys (redundant inside a
-        # position) to keep the export lean.
+        # position) and the private full-precision fields to keep the
+        # export lean.
         for r in visible:
             r.pop("account_group", None)
             r.pop("symbol", None)
+            r.pop("_qty_exact", None)
+            r.pop("_cost_basis_exact", None)
 
         total_lots += len(visible)
         positions.append({
             "account_group": acct,
             "symbol": sym,
-            "quantity": round(sum(r["qty"] for r in lots), 8),
-            "cost_basis": round(sum(r["cost_basis"] for r in lots), 2),
+            "quantity": pos_qty,
+            "cost_basis": pos_basis,
             "lt_relevant": (h.get("account_type") == "Taxable"
                             and not _is_option_symbol(sym)),
             "lots": visible,

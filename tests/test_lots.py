@@ -186,6 +186,37 @@ def test_lots_holdings_parity_check(isolated_workdir):
     assert issues[0]["severity"] == "high"
 
 
+def test_position_totals_sum_at_full_precision(isolated_workdir):
+    """Position totals must sum the lots' EXACT basis and round once,
+    the way basis.state_to_holdings builds the Holdings row they anchor
+    to.  Re-summing the per-lot rounded cents drifts ~a cent per
+    hundred lots — enough to trip lots_holdings_basis_parity on a real
+    reward pool with a hundred-odd lots."""
+    from src.analytics.data_health import _check_lots_holdings_basis_parity
+    from src.analytics.lots import compute_open_lots
+    # Every lot's exact basis carries a sub-cent residual, so the
+    # displayed cents round DOWN and the naive sum drifts low.
+    state = {"lots": {("Broker", "AAA"): (
+        [{"date": "2021-01-01", "qty": 1.0, "basis_per_share": 1.004}] * 30
+        + [{"date": "2021-01-01", "qty": 0.2, "basis_per_share": 1.004}] * 25
+    )}}
+    holdings = [_holding("Broker", "AAA", 2.0, 35.14)]
+    p = compute_open_lots(state, holdings)["positions"][0]
+
+    assert p["cost_basis"] == pytest.approx(35.14)
+    assert p["quantity"] == pytest.approx(35.0)
+    assert p["micro"]["count"] == 25                 # sub-$1 lots folded
+    assert p["micro"]["cost_basis"] == pytest.approx(5.02)
+    # Not vacuous: the displayed per-lot cents really do drift, and by
+    # more than the parity check's tolerance.
+    assert sum(l["cost_basis"] for l in p["lots"]) == pytest.approx(30.0)
+    assert abs((30.0 + 5.0) - 35.14) > 0.05
+    assert _check_lots_holdings_basis_parity(
+        {"lots": {"positions": [p]}}, holdings) == []
+    # Full-precision aggregation inputs stay private to the module.
+    assert not [k for l in p["lots"] for k in l if k.startswith("_")]
+
+
 def test_alerts_long_term_soon_reads_lt_horizon(isolated_workdir):
     from src.analytics.alerts import compute_alerts
     tax = {"lt_horizon": [
