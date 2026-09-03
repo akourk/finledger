@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 
 from ..actions import INCOME_ACTIONS as _INCOME_ACTIONS
 from ..balance_anchor import apr_at
+from ..config import CASH_SYMBOLS
 
 
 def compute_income_calendar(txns: list[dict],
@@ -52,6 +53,12 @@ def compute_income_calendar(txns: list[dict],
     today_iso = today.isoformat()
 
     by_sym_recent = defaultdict(float)   # sym -> sum income last 365 days
+    # Cash income keyed by ACCOUNT GROUP rather than symbol.  Every
+    # savings account's interest lands on symbol "USD", so the
+    # per-symbol tally is a portfolio-wide total — reporting it as one
+    # account's trailing income overstated it, and with two savings
+    # accounts open both rows printed the same figure.
+    by_group_cash_recent = defaultdict(float)
     ttm_total = 0.0
     for t in txns:
         a = t.get("action", "")
@@ -71,6 +78,8 @@ def compute_income_calendar(txns: list[dict],
         # dashboard already groups USD income under the originating
         # account so we don't try to re-attribute.
         by_sym_recent[sym] += amt
+        if sym in CASH_SYMBOLS:
+            by_group_cash_recent[t.get("account_group", "")] += amt
         ttm_total += amt
 
     # Project: held positions whose ticker had income last year get
@@ -127,7 +136,7 @@ def compute_income_calendar(txns: list[dict],
         projected = bal * rate
         forecast.append({
             "symbol":           f"{group} (cash)",
-            "last_12mo_income": round(by_sym_recent.get("USD", 0.0), 2),
+            "last_12mo_income": round(by_group_cash_recent.get(group, 0.0), 2),
             "cost_basis":       round(bal, 2),
             "yield_on_cost":    round(rate * 100, 3),
             "current_yield":    round(rate * 100, 3),

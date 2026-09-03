@@ -150,6 +150,43 @@ def test_income_calendar_expense_coverage():
     assert out2["expense_coverage_pct"] is None
 
 
+def test_savings_rows_report_their_own_trailing_income():
+    """Every savings account's interest lands on symbol ``USD``, so a
+    per-SYMBOL trailing tally is a portfolio-wide total.  Reporting that
+    as one account's own income overstated it, and with two savings
+    accounts open both rows printed the identical figure.  Trailing cash
+    income has to be keyed by account group.
+    """
+    from datetime import datetime, timedelta
+    from src.analytics.income_calendar import compute_income_calendar
+
+    recent = (datetime.now().date() - timedelta(days=30)).isoformat()
+    txns = [
+        {"date": recent, "account_group": "Big Savings", "symbol": "USD",
+         "action": "Interest", "amount": 900.0},
+        {"date": recent, "account_group": "New Savings", "symbol": "USD",
+         "action": "Interest", "amount": 100.0},
+    ]
+    holdings = [
+        {"account_group": "Big Savings", "symbol": "USD",
+         "quantity": 20000.0, "value": 20000.0},
+        {"account_group": "New Savings", "symbol": "USD",
+         "quantity": 2000.0, "value": 2000.0},
+    ]
+    apr = [{"account_group": "Big Savings", "date": "", "rate": 0.04},
+           {"account_group": "New Savings", "date": "", "rate": 0.04}]
+
+    out = compute_income_calendar(txns, holdings, savings_apr=apr)
+    rows = {r["symbol"]: r for r in out["forecast_12mo"]
+            if r.get("is_savings_rate")}
+    assert rows["Big Savings (cash)"]["last_12mo_income"] == pytest.approx(900.0)
+    assert rows["New Savings (cash)"]["last_12mo_income"] == pytest.approx(100.0)
+    # The portfolio-wide total is still the sum of both.
+    assert out["ttm_actual"] == pytest.approx(1000.0)
+    # Projection stays rate x balance, independent of trailing income.
+    assert rows["New Savings (cash)"]["projected_annual"] == pytest.approx(80.0)
+
+
 # --- benchmark dollar delta ---------------------------------------------------
 
 def test_benchmark_delta_in_analytics():
