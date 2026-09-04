@@ -1106,6 +1106,40 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   NOT Section 1256.  To add a broad-based index option, edit the Python
   constant only.
 
+- **Account-class membership (Retirement / Savings / Taxable) is the
+  user's `Account Type` metadata, read at CALL time.**
+  `analytics/_shared.py` exposes `retirement_groups()` /
+  `savings_groups()`; the `RETIREMENT_GROUPS` / `SAVINGS_GROUPS`
+  frozensets are only the FALLBACK for a process that never loaded
+  metadata (`config.ACCOUNT_TYPES` is empty until `main()` applies it,
+  so a module-level snapshot is always just the fallback).  Membership
+  is **additive** — declared groups UNION the fallback — so metadata
+  that types only some accounts can't silently drop a 401K out of the
+  retirement class; fallback names the user doesn't hold are inert
+  (every consumer intersects with the live account list).
+  **Why this matters**: every other "is this a savings account" test in
+  the codebase (`history`, `pipeline_stages`, `balance_anchor`,
+  `_shared._value_at_date`) already read `ACCOUNT_TYPES`, and
+  `_account_filter_sets` was the lone holdout with a literal.  A second
+  savings account was therefore savings to the Holdings table and
+  *investment capital* to the filter builder — putting a HYSA inside
+  the `Investments` filter, which exists precisely to keep HYSA yield
+  out of equity-benchmark comparisons, and inside `Taxable`, whose
+  account set then matched no By-Type row.  `_account_filter_sets` also
+  emits a **`Savings`** combined filter on the same 2+-accounts rule as
+  Retirement / Taxable.
+  **The dashboard is the second consumer and must not re-derive it**:
+  `app/90-performance.js` reads each combined filter's account set from
+  the exported `performance_by_filter[name].filter_groups`
+  (`_filterGroupSet`), falling back to an `ACCOUNT_TYPE_OF` derivation
+  only when Python emitted no such filter.  It used to carry JS
+  literals — a third copy — and they had drifted: the `Taxable` chip
+  resolved to a metadata-derived set while `_analyticsFilterName` sent
+  it to Python's differently-composed `Taxable` entry, so the chip's
+  label and the number under it described different accounts.  Pinned
+  by `tests/test_account_class_membership.py` and two guards in
+  `tests/test_dashboard_bundling.py`.
+
 - **External cash-flow accounting goes through one helper:
   `basis.txn_external_cash_flow(t) -> float`**.  Returns +amount for
   inflows, -amount for outflows, 0 for everything else.  Four

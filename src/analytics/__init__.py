@@ -20,7 +20,11 @@ from __future__ import annotations
 # Re-export everything from _shared so existing imports still work
 # (e.g. `from src.analytics import classify_retirement_contribution`).
 from ._shared import (
+    # The frozensets are DEFAULTS kept for back-compat; the functions are
+    # the live classification (user `Account Type` metadata unioned with
+    # them).  New code should call the functions.
     RETIREMENT_GROUPS, SAVINGS_GROUPS,
+    retirement_groups, savings_groups,
     CASH_ADD_ACTIONS, CASH_SUB_ACTIONS, INCOME_ACTION_KINDS,
     classify_retirement_contribution,
     detect_rollover_bridges,
@@ -98,7 +102,7 @@ def build_analytics(txns: list[dict], history: list[dict],
         # compute_twr_daily_summary for why we skip taxable accounts.
         is_retirement_filter = (
             name == "Retirement"
-            or (filt is not None and set(filt) <= RETIREMENT_GROUPS)
+            or (filt is not None and set(filt) <= retirement_groups())
         )
         if is_retirement_filter:
             daily = compute_twr_daily_summary(txns, history, bridges, filt)
@@ -154,7 +158,7 @@ def build_analytics(txns: list[dict], history: list[dict],
                 last = history[-1] if history else {}
                 ret_value = sum(
                     (last.get("by_account_group") or {}).get(g, 0)
-                    for g in RETIREMENT_GROUPS
+                    for g in retirement_groups()
                 )
 
                 # All-accounts metrics

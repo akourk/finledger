@@ -38,11 +38,67 @@ from ..cash_bridge import (
 # Shared constants / classifiers
 # ---------------------------------------------------------------------------
 
-RETIREMENT_GROUPS = frozenset({"401K", "Roth IRA", "Rollover IRA"})
+# Account-class membership.
+#
+# **Read these through :func:`retirement_groups` / :func:`savings_groups`,
+# not directly.**  The frozensets below are only the FALLBACK for a
+# process that never loaded ``metadata.csv``; the authority is the user's
+# ``Account Type`` rows, which land in ``config.ACCOUNT_TYPES``.
+#
+# The distinction is not academic.  Every other "is this a savings
+# account" test in the codebase already reads ``ACCOUNT_TYPES`` —
+# ``history``, ``pipeline_stages``, ``balance_anchor`` and
+# ``_value_at_date`` all do — and this module's hardcoded literal was the
+# lone holdout.  A second savings account the user had declared in
+# metadata was therefore savings to the Holdings table and to the cash
+# tracker, but *investment capital* to ``_account_filter_sets``.  That
+# put a HYSA inside the "Investments" filter, which exists precisely to
+# keep HYSA yield out of equity-benchmark comparisons, and inside
+# "Taxable", whose account set then matched no By-Type row.
+#
+# Membership is ADDITIVE — the declared groups UNION the fallback —
+# rather than metadata-replaces-default.  A user whose metadata declares
+# types for only some accounts must not have the rest silently
+# reclassified: dropping a 401K out of the retirement class would
+# mis-state contributions, Roth eligibility and the Monte Carlo horizon,
+# which is far worse than the reverse.  Names in the fallback that the
+# user does not actually hold are inert — every consumer either
+# intersects with the live account list or looks the name up.
+_DEFAULT_RETIREMENT_GROUPS = frozenset({"401K", "Roth IRA", "Rollover IRA"})
 # Accounts whose purpose is liquidity / emergency savings, not growth
 # capital.  Excluded from the "Investments" combined filter so TWR
 # comparisons vs. equity benchmarks don't get diluted by HYSA yield.
-SAVINGS_GROUPS    = frozenset({"Apple Savings"})
+_DEFAULT_SAVINGS_GROUPS = frozenset({"Apple Savings"})
+
+# Back-compat aliases.  These are the DEFAULTS, frozen at import time —
+# a caller that wants the user's actual classification must call the
+# functions below, because ``config.ACCOUNT_TYPES`` is empty until
+# ``main()`` applies the parsed metadata (see CLAUDE.md on why calling
+# ``parse_metadata`` alone is not enough).
+RETIREMENT_GROUPS = _DEFAULT_RETIREMENT_GROUPS
+SAVINGS_GROUPS    = _DEFAULT_SAVINGS_GROUPS
+
+
+def _groups_of_type(kind: str, default: frozenset) -> frozenset:
+    """Account groups the user declared as ``kind``, plus ``default``.
+
+    Evaluated per call: ``ACCOUNT_TYPES`` is mutated by ``main()`` after
+    this module is imported, so a module-level snapshot would always be
+    empty.
+    """
+    from ..config import ACCOUNT_TYPES
+    return default | frozenset(g for g, t in ACCOUNT_TYPES.items()
+                               if t == kind)
+
+
+def retirement_groups() -> frozenset:
+    """Account groups holding retirement money (401k / IRA)."""
+    return _groups_of_type("Retirement", _DEFAULT_RETIREMENT_GROUPS)
+
+
+def savings_groups() -> frozenset:
+    """Account groups held for liquidity rather than growth."""
+    return _groups_of_type("Savings", _DEFAULT_SAVINGS_GROUPS)
 
 # Actions that count as inflows/outflows of user cash for the account,
 # and the income classification — all sourced from src/actions.py's
@@ -91,7 +147,7 @@ def classify_retirement_contribution(txn: dict) -> dict:
       moves, not user contributions).
     """
     g = txn.get("account_group", "")
-    if g not in RETIREMENT_GROUPS:
+    if g not in retirement_groups():
         return {"is_contrib": False}
     amount = float(txn.get("amount", 0) or 0)
     if amount <= 0:
@@ -978,16 +1034,23 @@ def _account_filter_sets(holdings_by_account: list[dict]) -> dict:
     accounts = sorted({h.get("account_group", "")
                        for h in holdings_by_account
                        if h.get("account_group")})
+    # The user's declared Account Type rows decide class membership, not
+    # a literal in this module — see the note on `savings_groups`.  A
+    # second savings account used to fall on the investment side here
+    # while the Holdings table called it savings, so the two disagreed
+    # about the same account.
+    savings_g = savings_groups()
+    retirement_g = retirement_groups()
     filters: dict[str, frozenset | None] = {"Total": None}
     # Combined view for everything except liquidity/savings â€” the default
     # "portfolio performance" view you'd compare against an equity
-    # benchmark.  Apple Savings yields dilute SPY comparisons because
+    # benchmark.  Savings yields dilute SPY comparisons because
     # they're measuring different things (liquidity vs growth).
-    investments = set(accounts) - SAVINGS_GROUPS
+    investments = set(accounts) - savings_g
     if investments and investments != set(accounts):
         filters["Investments"] = frozenset(investments)
     # Combined view for all retirement accounts
-    retirement = RETIREMENT_GROUPS & set(accounts)
+    retirement = retirement_g & set(accounts)
     if len(retirement) > 1:
         filters["Retirement"] = frozenset(retirement)
     # Combined view for after-tax investment accounts (Robinhood,
@@ -996,9 +1059,17 @@ def _account_filter_sets(holdings_by_account: list[dict]) -> dict:
     # friction (unlike retirement, which has contribution limits +
     # withdrawal penalties).  Only emitted when there are 2+ taxable
     # accounts — otherwise the single per-account row is enough.
-    taxable = set(accounts) - RETIREMENT_GROUPS - SAVINGS_GROUPS
+    taxable = set(accounts) - retirement_g - savings_g
     if len(taxable) > 1:
         filters["Taxable"] = frozenset(taxable)
+    # ...and the third class, on the same rule.  A savings-only return is
+    # a real question (it is the blended yield), and without this filter
+    # the Holdings tab's Savings row has no set to match: a lone savings
+    # account is covered by its own per-account filter, two or more were
+    # covered by nothing.
+    savings = savings_g & set(accounts)
+    if len(savings) > 1:
+        filters["Savings"] = frozenset(savings)
     # Individual accounts
     for a in accounts:
         filters[a] = frozenset([a])

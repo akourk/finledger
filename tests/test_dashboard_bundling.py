@@ -174,3 +174,45 @@ def test_board_windows_are_independent_toggles():
         "it no longer renders")
     assert "toggleBoardAllWindows" not in js, (
         "the all-windows mode was replaced by independent chips")
+
+
+def test_js_account_classes_come_from_the_exported_filter_sets():
+    """The Performance tab's combined-filter chips must resolve their
+    account sets from `analytics.performance_by_filter[*].filter_groups`,
+    not from JS literals.
+
+    A literal here is a third copy of a classification the user declares
+    in metadata.csv, and it had already drifted: the "Taxable" chip
+    resolved to a metadata-derived set while the figure beneath it came
+    from Python's differently-composed `Taxable` entry, and
+    "Investments" subtracted a hardcoded savings set that missed any
+    savings account not literally named "Apple Savings" — defeating the
+    one thing that filter exists to do.  Same failure class as F-038.
+    """
+    from src.dashboard import _read_app_js
+    js = _read_app_js()
+    assert "_filterGroupSet" in js, (
+        "combined-filter sets must be read from the export")
+    # The specific literals that drifted.  A fallback derived from
+    # ACCOUNT_TYPE_OF is fine; naming accounts in code is not.
+    assert "new Set(['Apple Savings'])" not in js
+    assert "new Set(['401K', 'Roth IRA', 'Rollover IRA'])" not in js
+    assert "_groupsOfType" in js, "the fallback must derive from account types"
+
+
+def test_python_account_classes_are_not_hardcoded_literals():
+    """Membership is the user's `Account Type` metadata unioned with a
+    fallback, read at CALL time — `config.ACCOUNT_TYPES` is empty until
+    main() applies the parsed metadata, so a module-level snapshot would
+    always be the bare fallback."""
+    src = Path("src/analytics/_shared.py").read_text(encoding="utf-8")
+    assert "def savings_groups()" in src
+    assert "def retirement_groups()" in src
+    # The filter builder is the site that actually decides the classes.
+    assert "savings_groups()" in src and "retirement_groups()" in src
+    for line in src.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("investments =") or stripped.startswith("taxable ="):
+            assert "SAVINGS_GROUPS" not in stripped, (
+                "the filter builder must use the live classification, "
+                "not the frozen default")

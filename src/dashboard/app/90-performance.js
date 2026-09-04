@@ -14,30 +14,48 @@
 //                   '__investments__'       → everything EXCEPT Savings groups
 // Returns rows with start/end value, net contribution, $ return, % return,
 // and SPY market return for the same period.
-const RETIREMENT_GROUP_SET = new Set(['401K', 'Roth IRA', 'Rollover IRA']);
-const SAVINGS_GROUP_SET = new Set(['Apple Savings']);
+// Account-class membership crosses the language boundary as DATA.
+// `analytics.performance_by_filter` names the exact account-group set
+// behind every combined filter Python precomputed, and reading that is
+// what keeps a chip's LABEL and the figure underneath it describing the
+// same accounts.
+//
+// These used to be JS literals — a third copy of a classification the
+// user actually declares in metadata.csv — and they had already
+// drifted apart from each other and from Python.  The "Taxable" chip
+// resolved to a metadata-derived set while `_analyticsFilterName` sent
+// it to Python's `Taxable` entry, which was composed differently; and
+// "Investments", whose entire purpose is to keep savings yield out of
+// equity-benchmark comparisons, subtracted a hardcoded savings set that
+// missed any savings account not literally named "Apple Savings".
+// Same failure as AUDIT.md F-038: a JS copy of a Python rule, silently
+// disagreeing.
+//
+// The fallback (a fresh derivation from ACCOUNT_TYPE_OF) covers the
+// case where Python emitted no combined filter at all — it only emits
+// one when the class has 2+ accounts, since a lone account is already
+// covered by its own per-account filter.
+function _groupsOfType(type) {
+  return Object.entries(ACCOUNT_TYPE_OF)
+    .filter(([, t]) => t === type)
+    .map(([g]) => g);
+}
+function _filterGroupSet(name, fallback) {
+  const fg = (ANALYTICS_PERF[name] || {}).filter_groups;
+  return new Set(Array.isArray(fg) && fg.length ? fg : fallback);
+}
 
-// Derived from ACCOUNT_TYPE_OF at page load: every group whose
-// account_type is "Taxable".  Symmetric with RETIREMENT_GROUP_SET.
-// Apple Savings is account_type='Savings' (not 'Taxable') so it
-// stays out — Savings is its own bucket in fin's classification.
-const TAXABLE_GROUP_SET = new Set(
-  Object.entries(ACCOUNT_TYPE_OF)
-    .filter(([, type]) => type === 'Taxable')
-    .map(([g]) => g)
-);
-
-// Derived from ACCOUNT_TYPE_OF at page load: everything except Savings.
-// Rebuilt here (rather than filtering ACCOUNT_TYPE_OF) so it's stable
-// even if historical account_groups are present.
-const INVESTMENTS_GROUP_SET = new Set(
-  [...Object.keys(ACCOUNT_TYPE_OF)].filter(g => !SAVINGS_GROUP_SET.has(g))
-);
+const RETIREMENT_GROUP_SET = _filterGroupSet('Retirement', _groupsOfType('Retirement'));
+const SAVINGS_GROUP_SET = _filterGroupSet('Savings', _groupsOfType('Savings'));
+const TAXABLE_GROUP_SET = _filterGroupSet('Taxable', _groupsOfType('Taxable'));
+const INVESTMENTS_GROUP_SET = _filterGroupSet('Investments',
+  Object.keys(ACCOUNT_TYPE_OF).filter(g => !SAVINGS_GROUP_SET.has(g)));
 
 function _resolveAccountFilter(f) {
   if (f == null) return null;
   if (f === '__retirement__') return RETIREMENT_GROUP_SET;
   if (f === '__taxable__') return TAXABLE_GROUP_SET;
+  if (f === '__savings__') return SAVINGS_GROUP_SET;
   if (f === '__investments__') return INVESTMENTS_GROUP_SET;
   if (f instanceof Set) return f;
   return new Set([f]);   // single string → set of one
@@ -54,6 +72,7 @@ function _analyticsFilterName(accountFilter) {
   if (accountFilter == null) return 'Total';
   if (accountFilter === '__retirement__') return 'Retirement';
   if (accountFilter === '__taxable__') return 'Taxable';
+  if (accountFilter === '__savings__') return 'Savings';
   if (accountFilter === '__investments__') return 'Investments';
   return accountFilter;
 }
@@ -1060,8 +1079,10 @@ function renderPerformance() {
   const _retirementActive = performanceAccountFilter === '__retirement__';
   const _taxableActive = performanceAccountFilter === '__taxable__';
   const _investmentsActive = performanceAccountFilter === '__investments__';
+  const _savingsActive = performanceAccountFilter === '__savings__';
   const _hasSavingsAccount = availableAccounts.some(a => SAVINGS_GROUP_SET.has(a));
   const _taxableCount = availableAccounts.filter(a => TAXABLE_GROUP_SET.has(a)).length;
+  const _savingsCount = availableAccounts.filter(a => SAVINGS_GROUP_SET.has(a)).length;
   // Aggregate chips ("Investments", "Taxable", "Retirement") use a
   // colored text style sourced from TYPE_COLORS for consistency with
   // individual account chips below.  Active state still uses the
@@ -1083,6 +1104,13 @@ function renderPerformance() {
     ] : []),
     _aggChip('__retirement__', 'Retirement', _retirementActive,
       TYPE_COLORS.Retirement || '#a78bfa'),
+    // Same 2+ rule as Taxable, and the same rule Python emits on: a lone
+    // savings account is already covered by its own chip.
+    ...(_savingsCount > 1 ? [
+      _aggChip('__savings__', 'Savings', _savingsActive,
+        TYPE_COLORS.Savings || '#38bdf8',
+        'Combined view of the liquidity accounts.  Their return is a blended cash yield, which is why they are held out of the Investments view rather than compared against an equity benchmark.'),
+    ] : []),
     ...availableAccounts.map(a => {
       const escaped = a.replace(/'/g, "\\'");
       return _renderAccountChip(a, performanceAccountFilter === a,

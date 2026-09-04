@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 
 from ._shared import (
     # Constants
-    RETIREMENT_GROUPS, SAVINGS_GROUPS,
     CASH_ADD_ACTIONS, CASH_SUB_ACTIONS, INCOME_ACTION_KINDS,
     # Helpers
     _parse_iso, _year,
