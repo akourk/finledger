@@ -45,6 +45,7 @@ from .lots import compute_open_lots
 from .monthly_pnl import compute_monthly_pnl
 from .monte_carlo import compute_monte_carlo
 from .options import compute_options_analytics
+from .position_pnl import compute_position_pnl
 from .positions import compute_position_returns
 from .rebalancing import compute_rebalancing
 from .reconcile import compute_reconciliation
@@ -316,6 +317,12 @@ def build_analytics(txns: list[dict], history: list[dict],
         # tax.lt_horizon is a filtered view of the same rows.
         "lots": compute_open_lots(fifo_state, holdings_by_account),
         "positions": compute_position_returns(txns, holdings),
+        # Per-position trailing-window P&L for the Holdings board.
+        # Reads the same open-lot inventory as `lots` above, so the
+        # board and the expandable lot detail cannot disagree.
+        "position_pnl": compute_position_pnl(
+            fifo_state, holdings_by_account, txns,
+            as_of=(history[-1].get("date") if history else None)),
         "header_summary": compute_header_summary(txns, history, bridges,
                                                  cash_summary=cash_summary),
         # New (this pass)
