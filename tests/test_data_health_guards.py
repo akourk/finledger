@@ -529,3 +529,54 @@ class TestHeldSymbolPriceHealth:
         (cache / "price_cache_meta.json").write_text('{"symbols":',
                                                      encoding="utf-8")
         assert D._check_held_symbol_price_health(self._held(), cache) == []
+
+
+class TestValueQtyPriceChecksNegativeQuantities:
+    """The check gated on ``qty > 0``, exempting every negative row.
+
+    Those are reachable: an orphan OEXP / OEXCS whose opening BTO
+    predates the CSV window pushes a contract balance below zero, and
+    ``is_dust`` drops only the UNPRICED ones — a priced negative
+    position reaches the holdings table.  So the exemption covered the
+    rows most likely to be mis-signed, which is how a check ends up
+    passing over the thing it exists to find (AUDIT.md F-035, same
+    shape as the ``symbol == "USD"`` skip next door).
+
+    Synthetic round numbers only.
+    """
+
+    OPT = "ACME 12/18/2026 Call $100.00"
+
+    def test_a_mis_signed_negative_position_is_flagged(self):
+        """value carries the wrong SIGN — qty is -2 contracts but the
+        row values them as if long.  Exactly what a dropped minus in a
+        valuation site produces, and previously invisible."""
+        issues = D._check_value_qty_price_consistency(
+            [_h(symbol=self.OPT, quantity=-2.0, price=3.0, value=600.0)])
+        assert issues, "a negative-quantity row with the wrong sign must flag"
+        assert issues[0]["kind"] == "value_qty_price_mismatch"
+        assert issues[0]["severity"] == "high"
+
+    def test_a_correctly_valued_negative_position_is_clean(self):
+        """-2 contracts × $3.00 premium × 100 = -$600.  The check must
+        not simply flag everything negative — that would be the same
+        blindness with the opposite default."""
+        assert D._check_value_qty_price_consistency(
+            [_h(symbol=self.OPT, quantity=-2.0, price=3.0, value=-600.0)]) == []
+
+    def test_a_plain_negative_share_position_is_checked_too(self):
+        """Not an options-only rule — the ×100 multiplier is what
+        differs, not whether the row gets looked at.  -10 × $4 = -$40."""
+        assert D._check_value_qty_price_consistency(
+            [_h(quantity=-10.0, price=4.0, value=-400.0)]), (
+            "a negative share position with a 10x value error must flag")
+        assert D._check_value_qty_price_consistency(
+            [_h(quantity=-10.0, price=4.0, value=-40.0)]) == []
+
+    def test_the_relative_tolerance_is_not_negative_for_a_short(self):
+        """`expected * 0.001` on a negative expectation is a NEGATIVE
+        bound; passed to max() it is inert, but a later reorder would
+        make every short row flag.  abs() pins the intent."""
+        # A drift just inside the relative band on a large short.
+        assert D._check_value_qty_price_consistency(
+            [_h(quantity=-10_000.0, price=100.0, value=-1_000_000.0 - 50.0)]) == []

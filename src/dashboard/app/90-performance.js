@@ -1094,6 +1094,27 @@ function renderPerformance() {
   const _aggMatchesHolding = _aggFilterSet
     ? (h) => _aggFilterSet.has(h.account_group)
     : (_h) => true;
+  // Lifetime + unfiltered: every dollar figure in this row then
+  // describes EXACTLY the quantity its twin in the anchor row above
+  // describes.  So it reads the anchor's field rather than deriving
+  // the same number a second way.
+  //
+  // Deriving it twice is not free.  The per-txn `realized_gain` /
+  // `cash_flow` annotations are rounded to cents for readability, so
+  // re-adding thousands of them lands a cent or two off the walker's
+  // own accumulator — which is why CLAUDE.md says a published basis
+  // figure never comes from the re-sum, and why the Transactions and
+  // Crypto tabs read `basis_totals` with the re-sum kept only as a
+  // legacy fallback.  This row was the last place still re-summing as
+  // its primary path, and it put two adjacent cards under one label a
+  // cent apart.  The drift scales with fill count, so it does not stay
+  // a cent.
+  //
+  // Real windows still have to sum the annotations — "realized within
+  // 3mo" is not recoverable from a lifetime accumulator.  The point is
+  // only that the all-time case must not.
+  const _isWholeLifetime = performanceWindow === 'lifetime'
+    && performanceAccountFilter === null;
   // Window bounds — same logic as everywhere else on the tab.
   const _winRefIso = history.length ? history[history.length - 1].date : '';
   let _winLowerIso = '', _winUpperIso = _winRefIso;
@@ -1137,7 +1158,7 @@ function renderPerformance() {
   // where date is within (_winAnchorIso, _winUpperIso].  A close at
   // the very start of the window doesn't count toward window-period
   // realized — it was banked before the window opened.
-  const totalRealized = txns.reduce((s, t) => {
+  const totalRealized = _isWholeLifetime ? _whole_realized : txns.reduce((s, t) => {
     if (!_aggMatchesTxn(t)) return s;
     const d = t.date || '';
     if (_winAnchorIso && d <= _winAnchorIso) return s;
@@ -1170,7 +1191,7 @@ function renderPerformance() {
     && Math.abs(rolloverRealized) >= Math.abs(totalRealized) * 0.5;
   // Net contributed in window: sum per-txn cash_flow over the same
   // filter+window.
-  const netContrib = txns.reduce((s, t) => {
+  const netContrib = _isWholeLifetime ? _whole_netContrib : txns.reduce((s, t) => {
     if (!_aggMatchesTxn(t)) return s;
     const d = t.date || '';
     if (_winAnchorIso && d <= _winAnchorIso) return s;
@@ -1182,7 +1203,7 @@ function renderPerformance() {
   // values; for lifetime, use live holdings_by_account so the figure
   // matches the rest of the dashboard exactly.
   let totalUnrealized = 0, totalValue = 0;
-  if (performanceWindow === 'lifetime' && performanceAccountFilter === null) {
+  if (_isWholeLifetime) {
     totalUnrealized = _whole_unrealized;
     totalValue = _whole_value;
   } else {
@@ -1217,7 +1238,9 @@ function renderPerformance() {
       }
     }
   }
-  const totalReturn = totalValue - _winStartValue - netContrib;
+  const totalReturn = _isWholeLifetime
+    ? _whole_totalReturn
+    : (totalValue - _winStartValue - netContrib);
   // Pct of net_contrib only meaningful when net_contrib > 0
   const totalReturnPct = netContrib > 0
     ? (totalReturn / netContrib) * 100 : null;
@@ -1317,7 +1340,11 @@ function renderPerformance() {
   // side by side.
   const _winLabel = performanceWindow;
   const totalReturnCls = totalReturn >= 0 ? 'positive' : (totalReturn < 0 ? 'negative' : '');
-  const filteredLabel = performanceAccountFilter === null ? '' : ` <span class="sub">${performanceAccountFilter === '__investments__' ? 'investments' : performanceAccountFilter === '__retirement__' ? 'retirement' : performanceAccountFilter === '__taxable__' ? 'taxable' : performanceAccountFilter.toLowerCase()}</span>`;
+  const _filterWord = performanceAccountFilter === null ? ''
+    : (performanceAccountFilter === '__investments__' ? 'investments'
+      : performanceAccountFilter === '__retirement__' ? 'retirement'
+        : performanceAccountFilter === '__taxable__' ? 'taxable'
+          : performanceAccountFilter.toLowerCase());
   // Every card in this row is measured over the SAME anchored span.
   // Saying so on each of them is what lets a reader check that the
   // dollar figures and the return figures describe one period.
@@ -1349,10 +1376,21 @@ ${_rowSpan}`
           : '')
     },
     {
-      label: `Unrealized <span class="sub">${_winLabel}</span>`,
+      // The one card in this row that is a LEVEL, not a flow — so it
+      // is labelled with the date it is measured AT, never with the
+      // window.  Every trailing window ends on the same day, so the
+      // figure is identical across lifetime / 5y / 3mo and only the
+      // account filter (or a custom end date) moves it.  Labelled
+      // `3mo` it read as "unrealized accrued over three months" and
+      // invited the reasonable question of why it never changed.
+      // Same reason the Options tab keeps Open Contracts out of its
+      // windowed row.
+      label: `Unrealized <span class="sub">${_filterWord ? _filterWord + ' · ' : ''}as of ${_winUpperIso}</span>`,
       value: fmtSigned(totalUnrealized),
       cls: totalUnrealized >= 0 ? 'positive' : (totalUnrealized < 0 ? 'negative' : ''),
-      title: `Unrealized P&L on positions held at window end (filtered).  For lifetime view, this is current unrealized; for shorter windows, it's the as-of-window-end snapshot.  Window: ${performanceWindow}.`
+      title: `Unrealized P&L on positions still held on ${_winUpperIso}${_filterWord ? ', ' + _filterWord + ' only' : ''}.
+
+This is a LEVEL measured at one date, not a gain accrued over the window — so unlike its neighbours it does NOT move when you change the window.  Every trailing window ends today; only a custom window with an earlier end date, or the account filter, changes it.`
     },
     {
       label: `Net Contributed <span class="sub">${_winLabel}</span>`,

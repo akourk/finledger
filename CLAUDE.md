@@ -554,7 +554,21 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     - **Performance** — anchor stat cards (Total Return, Realized,
       Unrealized, Net Contributed, **Fees Paid**), account + window
       selectors, filtered/windowed cards (incl. Sharpe/Sortino/Calmar/
-      MaxDD), then a **Returns ↔ Risk sub-toggle** (`setPerfView`;
+      MaxDD), then a **Returns ↔ Risk sub-toggle**.
+      **Two rows, one quantity each.**  The anchor row is whole-
+      portfolio / all-time / never filtered; the windowed row is
+      filtered + windowed.  At filter=Total + window=lifetime every
+      windowed card describes exactly its anchor twin's quantity, so it
+      READS the anchor's field (`_isWholeLifetime`) rather than deriving
+      it again — re-summing the cent-rounded per-txn annotations put
+      adjacent cards a cent or two apart (AUDIT.md F-036; the same rule
+      as `basis_totals` below).  Real windows still sum the annotations;
+      only the all-time case is short-circuited.  **Unrealized is the
+      one LEVEL in that row** and is labelled with the as-of DATE, never
+      the window: every trailing window ends today, so it cannot react
+      to one, and labelling it `3mo` is what made a correct figure read
+      as a bug (F-035).  Adding a card to the windowed row means asking
+      whether it is a flow or a level (`setPerfView`;
       both views render into the DOM, switching is a pure display
       toggle).  Returns view: Your Portfolio vs SPY/BND/VXUS/60-40
       multi-benchmark chart, By-Account TWR section (Mod-Dietz +

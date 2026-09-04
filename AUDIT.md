@@ -121,6 +121,7 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-036 | medium | *(fixed)* Follow-up scan of F-035's bug class: the Performance tab's windowed row re-derived four figures the anchor row above it already publishes, so adjacent cards under one label disagreed by the annotations' cent rounding; and `value_qty_price_consistency` gated on `qty > 0`, exempting the negative rows most likely to be mis-signed |
 | F-035 | **high** | *(fixed)* The two cost-basis walkers used different conventions for a Savings cash position — principal in the holdings table, face value in every history snapshot — and the parity check that should have caught it exempted `USD`; surfaced as a Performance card that changed when only the time window changed; user-reported |
 | F-034 | **high** | *(fixed)* `Return of Capital` was catalogued `basis="ignore"` on the grounds that the payout was untracked; the cash bridge later started tracking it, leaving the basis half of the event unapplied — understated per-position return, basis diverging from the 1099-B, and a realized gain never booked |
 | F-033 | **high** | *(fixed)* The Overview's Cost Basis, Unrealized and Realized read the pure-FIFO what-if table instead of the annotated walk, so they disagreed with the rest of the app whenever an account overrides the default lot method |
@@ -2277,6 +2278,93 @@ disagreement is flagged) and a structural guard in
 `test_lot_walker_parity.py` that fails if `history.py` re-inlines
 face-value cash basis.  Each was verified to fail against the
 pre-fix code before being kept.
+
+
+### F-036: what else looks like F-035? (2026-09-04)
+
+F-035 was one quantity computed two ways, with the guard that would
+have caught it carved out.  The user asked the right follow-up — does
+that shape appear elsewhere — so this is the scan, not a new report.
+
+**Two live instances, both fixed.**
+
+*One quantity, two routes, side by side.*  The Performance tab renders
+two rows of dollar cards: an anchor row (whole portfolio, all-time,
+never filtered) and a windowed row (filtered + windowed).  At
+filter=Total / window=lifetime every card in the second row describes
+exactly the quantity its twin in the first row describes — and derived
+it independently:
+
+| card | anchor | windowed | delta |
+|---|---|---|---|
+| Realized | `basis_totals.realized_gain` | re-sum of per-txn `realized_gain` | 1¢ |
+| Net Contributed | `header_summary.net_contributed` | re-sum of per-txn `cash_flow` | 1¢ |
+| Total Return | `header_summary.total_return` | value − re-summed contrib | 2¢ |
+| Value | `header_summary.value` | sum of holdings rows | 3¢ |
+
+The Realized one is the sharpest: CLAUDE.md states that a published
+basis figure never comes from re-summing the per-txn annotations —
+they are rounded to cents for readability — and F-033 is these same two
+cards disagreeing for that reason at ~19%.  The Transactions and Crypto
+tabs had already been fixed to read the accumulator with the re-sum
+demoted to a legacy fallback; the Performance windowed row was the last
+place still re-summing as its primary path.  A genuine window must sum
+the annotations ("realized within 3mo" is not recoverable from a
+lifetime accumulator); the all-time case must not, and now reads the
+anchor's field via a single `_isWholeLifetime` condition shared by all
+four figures.
+
+Cents are not the point.  The drift scales with fill count, and two
+figures that agree by arithmetic accident will stop agreeing without
+anyone changing either one.
+
+*A check exempting the class most likely to be wrong.*
+`_check_value_qty_price_consistency` gated on `if qty > 0`, so no
+negative-quantity holding was ever checked.  Those are reachable and
+documented: an orphan `OEXP` / `OEXCS` whose opening `BTO` predates the
+CSV window pushes a contract balance below zero, and `is_dust` drops
+only the UNPRICED ones.  So the rows whose valuation is most likely to
+carry a sign error were the rows the check declined to look at — the
+same shape as F-035's `symbol == "USD"` skip, found by grepping for it.
+No live instance today; the fix is `qty != 0` plus `abs()` on the
+relative tolerance, which was silently negative for a short.
+
+**One label fix.**  The card that started this — windowed Unrealized —
+is a LEVEL in a row of flows, so it now carries the date it is measured
+at rather than the window it cannot react to.  It is not redundant with
+the anchor card despite showing the same value in the default view: the
+anchor is never filtered, so this one is the only per-account
+unrealized on the tab, and a custom window with an earlier end date
+moves it.  The Options tab had already met this problem and solved it
+the other way, moving Open Contracts up into its anchor row.
+
+**Recorded, not fixed:** the inverse mislabel.  On the Options tab only
+"Options P&L" carries the window label, while Win Rate, Trades, Avg
+Hold Days and Biggest Winner/Loser are all window-filtered and
+unlabelled — on a 3mo view they read as lifetime.  Performance's
+By-Account TWR card is the same.  Harmless where the reader knows the
+window is on, misleading where they do not.
+
+**Checked and sound:** `_check_lot_queue_parity`'s `symbol == "USD"`
+skip is legitimate — it compares against a reconstruction from per-txn
+`basis_effect` annotations, and cash is `"ignore"` on that side, so
+there is no cash figure to compare against.  It now says so in a
+comment, because after F-035 a bare USD skip reads as a bug.
+`_check_per_position_basis_sanity`'s `<$1k` filter is a reasoned
+threshold on magnitude, not an exemption of a class.
+
+**A note on the guard.** The render-relation test for the anchor twins
+states the law correctly and fails against the pre-fix code on real
+data — and passes on the synthetic fixture, whose quantities are round
+enough that both routes agree exactly.  Reverting the fix left 28 of 29
+tests green.  That is this file's own fixture-quality warning running
+in the other direction: a relation that passes on synthetic data is not
+thereby guarded.  Rather than tune a fixture to manufacture rounding
+noise, the regression is pinned structurally
+(`TestTheWindowedRowDoesNotRederiveTheAnchorFigures`), which cannot go
+vacuous on any data.  **Check which of your new tests actually fails
+against the bug; on a synthetic fixture, assume none of them do until
+you have seen it.**
 
 
 ## Improvement opportunities

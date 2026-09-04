@@ -426,27 +426,78 @@ class TestAWindowLongerThanHistoryEqualsLifetime:
             checked += 1
         assert checked >= 3, f"only {checked} filters compared"
 
-    def test_lifetime_dollar_return_matches_the_anchor_card(self, rendered):
-        """The Performance tab renders Total Return twice: once as an
-        always-lifetime anchor above the toggles (straight from
-        `analytics.header_summary`) and once as the windowed figure below.
-        At filter=Total / window=lifetime they are the same quantity by
-        two routes, and the code comment says so — which makes it exactly
-        the kind of claim that stops being true without anyone noticing.
+    # Every dollar card in the windowed row has a twin in the
+    # always-lifetime anchor row above the toggles.  At filter=Total /
+    # window=lifetime each pair is one quantity, so the two must agree
+    # to the displayed cent.
+    ANCHOR_TWINS = ["Total Return", "Realized", "Unrealized",
+                    "Net Contributed"]
+
+    @pytest.mark.parametrize("metric", ANCHOR_TWINS)
+    def test_lifetime_card_matches_its_anchor_card(self, rendered, metric):
+        """The same quantity by two routes, side by side on one screen.
+
+        The tolerance here used to be 2 cents, and that slack was load-
+        bearing: the windowed row re-summed the per-txn `realized_gain`
+        / `cash_flow` annotations — each rounded to cents for display —
+        while the anchor read the walker's own accumulator.  Realized
+        and Net Contributed rendered a cent apart, Total Return two.
+        CLAUDE.md forbids exactly that ("a published basis figure never
+        comes from re-summing the annotations"), and F-033 is these two
+        cards disagreeing for the same reason at ~19%.
+
+        A cent is not the point — the drift scales with fill count, and
+        an approximate assertion cannot tell "rounding" from "wrong".
+        The all-time case now READS the anchor's field, so this is exact.
         """
         v = next((x for x in rendered["performance"]
                   if x["filter"] == "Total" and x["window"] == "lifetime"), None)
         assert v is not None, "no Total/lifetime view rendered"
-        cards = find_cards(v, r"^Total Return")
-        assert len(cards) >= 2, (
-            f"expected an anchor and a windowed Total Return card, got "
+        # Select by label shape, not position: the metric can appear a
+        # third time further down the tab (Net Contributed also labels a
+        # bar in the benchmark comparison), and an index would silently
+        # start comparing the wrong pair.  The anchor's label is exactly
+        # the metric; the windowed one carries a suffix (the window, or
+        # for Unrealized the as-of date).
+        cards = find_cards(v, rf"^{metric}(?:\s|$)")
+        anchor_c = next((c for c in cards if c["label"].strip() == metric), None)
+        windowed_c = next((c for c in cards if c["label"].strip() != metric), None)
+        assert anchor_c and windowed_c, (
+            f"expected an anchor and a windowed {metric} card, got "
             f"{[c['label'] for c in cards]}"
         )
-        anchor, windowed = self._money(cards[0]["value"]), self._money(cards[-1]["value"])
-        assert anchor is not None and windowed is not None
-        assert windowed == pytest.approx(anchor, abs=0.02), (
-            f"anchor Total Return {anchor:+,.2f} vs windowed {windowed:+,.2f} "
+        anchor, windowed = self._money(anchor_c["value"]), self._money(windowed_c["value"])
+        assert anchor is not None and windowed is not None, (
+            f"could not parse {metric}: {[c['value'] for c in cards]}")
+        assert windowed == pytest.approx(anchor, abs=0.005), (
+            f"anchor {metric} {anchor:+,.2f} vs windowed {windowed:+,.2f} "
             f"— the same figure by two routes has drifted."
+        )
+
+    def test_the_unrealized_card_is_labelled_by_date_not_window(self, rendered):
+        """Unrealized is the one LEVEL in a row of flows.
+
+        Every trailing window ends on the same day, so the figure is
+        identical across lifetime / 5y / 3mo — which read as a bug when
+        the card was labelled `3mo`, and was the user report that found
+        F-035.  Labelling it with the as-of date instead is what makes
+        the unchanging value legible rather than suspicious.
+        """
+        views = [x for x in rendered["performance"] if x["filter"] == "Total"]
+        assert views, "no Total views rendered"
+        seen = set()
+        for v in views:
+            windowed = find_cards(v, r"^Unrealized")[-1]
+            assert "as of" in windowed["label"], (
+                f"[{v['window']}] windowed Unrealized is labelled "
+                f"{windowed['label']!r} — a level must not carry a window "
+                f"label it does not react to"
+            )
+            seen.add(self._money(windowed["value"]))
+        assert len(seen) == 1, (
+            f"Unrealized differs across trailing windows: {sorted(seen)}.  "
+            f"Every preset window ends at the latest snapshot, so this is "
+            f"one figure — if it moved, the two sources have diverged again."
         )
 
     # NOT asserted, deliberately: that the dollar return and the
@@ -748,3 +799,61 @@ class TestNoNonNumbersReachTheReader:
                     if any(bad.search(cell) for cell in row):
                         offenders.append(f"[{name} table] {row!r}")
         assert not offenders, "non-numbers rendered:\n" + "\n".join(offenders[:20])
+
+
+# ---------------------------------------------------------------------------
+# Structural guard — the relation tests above cannot catch this alone
+# ---------------------------------------------------------------------------
+
+class TestTheWindowedRowDoesNotRederiveTheAnchorFigures:
+    """A source-level guard, because the render relation goes vacuous.
+
+    `test_lifetime_card_matches_its_anchor_card` states the right law,
+    and on a real portfolio it fails against the pre-fix code by a cent
+    or two.  On the synthetic fixture it does NOT: every quantity here
+    is round, so the cent-rounded per-txn annotations re-sum to exactly
+    the walker's accumulator and both routes agree by arithmetic
+    accident.  Verified by reverting the fix — 28 of 29 still passed.
+
+    That is the fixture-quality trap this file's own docstring warns
+    about, in its other direction: a relation that PASSES on synthetic
+    data is not thereby guarded.  Tuning the fixture to manufacture
+    rounding noise would be tuning a test to fail, so the regression is
+    pinned structurally instead — this cannot go quiet on any data.
+    """
+
+    @staticmethod
+    def _perf_src() -> str:
+        return (Path(__file__).resolve().parents[1]
+                / "src" / "dashboard" / "app" / "90-performance.js").read_text(
+                    encoding="utf-8")
+
+    def test_the_all_time_case_reads_the_anchor_fields(self):
+        src = self._perf_src()
+        assert "_isWholeLifetime" in src, (
+            "the windowed row no longer distinguishes the all-time case — "
+            "it is re-deriving figures the anchor row already publishes"
+        )
+        for expr, what in (
+            ("_isWholeLifetime ? _whole_realized", "Realized"),
+            ("_isWholeLifetime ? _whole_netContrib", "Net Contributed"),
+            ("_isWholeLifetime\n    ? _whole_totalReturn", "Total Return"),
+            ("if (_isWholeLifetime) {\n    totalUnrealized = _whole_unrealized;",
+             "Unrealized / Value"),
+        ):
+            assert expr in src, (
+                f"the windowed {what} card no longer reads the anchor's "
+                f"field at lifetime/no-filter — the two cards will drift "
+                f"by the annotations' cent rounding again"
+            )
+
+    def test_the_unrealized_card_carries_no_window_label(self):
+        """Unrealized is a level; every trailing window ends today."""
+        src = self._perf_src()
+        assert 'label: `Unrealized <span class="sub">${_winLabel}</span>`' not in src, (
+            "the Unrealized card is labelled with the window again — it "
+            "cannot react to one, which is what made it read as a bug"
+        )
+        assert "as of ${_winUpperIso}" in src, (
+            "the Unrealized card no longer states the date it is measured at"
+        )

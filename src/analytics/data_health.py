@@ -411,6 +411,17 @@ def _check_value_qty_price_consistency(holdings_by_account: list[dict]) -> list[
     Option rows value at qty × price × 100 (quantity is CONTRACTS,
     price the per-share premium — config.contract_multiplier), so the
     expectation is scaled the same way the holdings builder scales it.
+
+    NEGATIVE quantities are checked too.  This gated on ``qty > 0``,
+    which silently exempted every short/negative row — and those are
+    reachable: an orphan OEXP / OEXCS whose opening BTO predates the
+    CSV window pushes a contract balance below zero.  ``is_dust`` drops
+    only the UNPRICED ones, so a priced negative position reached the
+    holdings table with nothing checking its valuation.  Exempting the
+    one class of row most likely to be mis-signed is how a check ends
+    up passing over the bug it exists to find (see AUDIT.md F-035, same
+    shape).  The tolerance takes ``abs(expected)`` so a negative
+    expectation can't produce a negative relative bound.
     """
     from ..config import contract_multiplier
     bad = []
@@ -418,12 +429,12 @@ def _check_value_qty_price_consistency(holdings_by_account: list[dict]) -> list[
         qty = h.get("quantity", 0) or 0
         val = h.get("value", 0) or 0
         pr = h.get("price", 0) or 0
-        if qty > 0 and pr > 0:
+        if qty != 0 and pr > 0:
             mult = contract_multiplier(h.get("symbol", ""))
             expected = qty * pr * mult
             # 0.5¢/share rounding × qty (×100 for contracts) + 1‰
             # relative + 10¢ floor.
-            tolerance = max(0.10, expected * 0.001, abs(qty) * 0.006 * mult)
+            tolerance = max(0.10, abs(expected) * 0.001, abs(qty) * 0.006 * mult)
             if abs(val - expected) > tolerance:
                 bad.append((h.get("account_group", ""), h.get("symbol", ""),
                             qty, pr, val, expected))
@@ -457,6 +468,14 @@ def _check_lot_queue_parity(txns: list[dict],
     for h in holdings_by_account:
         sym = h.get("symbol", "")
         if not sym or sym == "USD":
+            # Deliberate, unlike the identical-looking skip that used to
+            # sit in _check_history_holdings_basis_parity (F-035): this
+            # check compares against derive_basis_by_key_from_txns, a
+            # reconstruction from per-txn basis_effect annotations, and
+            # every cash row is classified "ignore" — there is no cash
+            # figure on the other side to compare to.  Savings cash
+            # basis is covered by the history/holdings parity check,
+            # where both sides genuinely compute it.
             continue
         if abs(h.get("quantity", 0) or 0) < 1e-9:
             continue
