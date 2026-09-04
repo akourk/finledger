@@ -8,15 +8,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AAPL": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ABCL": {
       "covered_end": "2026-05-18",
@@ -29,22 +29,22 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ACB": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ACHR": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ADA-USD": {
       "covered_end": "2026-03-31",
@@ -56,15 +56,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AEP": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AKRO": {
       "failure_count": 2,
@@ -82,15 +82,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AMD": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AMKBY": {
       "covered_end": "2026-03-31",
@@ -102,29 +102,29 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AMZN": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ANET": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "APLD": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AQB": {
       "covered_end": "2026-05-18",
@@ -137,8 +137,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ARCC": {
       "covered_end": "2026-03-31",
@@ -150,50 +150,50 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ASTS": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ASX": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AUR": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AVGO": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AVR": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AXP": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "AZN": {
       "covered_end": "2026-03-31",
@@ -205,8 +205,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "BABA": {
       "covered_end": "2026-03-31",
@@ -224,29 +224,29 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "BBAI": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "BE": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "BIRD": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "BLK": {
       "covered_end": "2026-03-31",
@@ -258,15 +258,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "BND": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "BOBA-USD": {
       "covered_end": "2026-03-31",
@@ -278,8 +278,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "BTC-USD": {
       "covered_end": "2026-06-25",
@@ -312,8 +312,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "CHGG": {
       "covered_end": "2026-03-31",
@@ -325,15 +325,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "CLSK": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "CMG": {
       "covered_end": "2026-03-31",
@@ -358,71 +358,71 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "COST": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "CRDO": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "CRWD": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "CSCO": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "CTSH": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "CVNA": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "CZMWY": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "DAL": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "DELL": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "DHT": {
       "covered_end": "2026-03-31",
@@ -434,43 +434,43 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "DJT": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "DNLI": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "DRAM": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "DRTS": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ENVX": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ENVXW": {
       "covered_end": "2026-03-31",
@@ -488,15 +488,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
+      "last_fetch": "2026-09-04T13:43:39",
       "settled_through": "2026-09-03"
     },
     "EWTX": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "EWY": {
       "covered_end": "2026-06-25",
@@ -515,15 +515,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "FISV": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "FLR-USD": {
       "covered_end": "2026-03-31",
@@ -535,15 +535,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "FPS": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "FREQ": {
       "failure_count": 2,
@@ -568,8 +568,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "GBTC": {
       "covered_end": "2026-06-02",
@@ -582,22 +582,22 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "GLW": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "GME": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "GME+": {
       "failure_count": 3,
@@ -609,8 +609,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "GSM": {
       "covered_end": "2026-05-18",
@@ -623,43 +623,43 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "HIMX": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "HIVE": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "HOOD": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "HOVR": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "HPE": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "HSAI": {
       "covered_end": "2026-03-31",
@@ -678,78 +678,78 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ILMN": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "INCY": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "INFQ": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "INTC": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "IONQ": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "IREN": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "JOBY": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "KBH": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "KEEL": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "KOPN": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "KRRO": {
       "covered_end": "2026-05-18",
@@ -762,22 +762,22 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "LCID": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "LEU": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "LIPO": {
       "covered_end": "2026-05-18",
@@ -790,8 +790,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "LK": {
       "failure_count": 2,
@@ -809,8 +809,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "LUMN": {
       "covered_end": "2026-06-15",
@@ -841,22 +841,22 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "META": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "MGM": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "MPT": {
       "covered_end": "2021-11-08",
@@ -873,15 +873,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "MSFT": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "MSTR": {
       "covered_end": "2026-05-18",
@@ -901,22 +901,22 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "MUFG": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "NBIS": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "NDXP": {
       "failure_count": 2,
@@ -934,8 +934,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "NLR": {
       "covered_end": "2026-06-11",
@@ -948,8 +948,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "NODE": {
       "covered_end": "2026-06-25",
@@ -962,36 +962,36 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "NOW": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "NUS": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "NVDA": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "OKLO": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "OMG-USD": {
       "covered_end": "2026-03-31",
@@ -1003,15 +1003,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "ONTO": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "OP-USD": {
       "covered_end": "2026-03-31",
@@ -1023,8 +1023,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "OPENL": {
       "covered_end": "2026-03-31",
@@ -1055,50 +1055,50 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "PCT": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "PLTR": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "PLUG": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "POET": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "PYPL": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "QBTS": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "QLD": {
       "covered_end": "2026-06-18",
@@ -1111,29 +1111,29 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "QTUM": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "QUBT": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "RDDT": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "REP-USD": {
       "covered_end": "2026-03-31",
@@ -1145,36 +1145,36 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "RIOT": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "RIVN": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "RKLB": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "RNA": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "RNAM": {
       "covered_end": "2026-03-31",
@@ -1186,22 +1186,22 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "RVI": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "RVII": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "S": {
       "covered_end": "2026-03-31",
@@ -1225,8 +1225,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SGMO": {
       "failure_count": 4,
@@ -1238,85 +1238,85 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SLS": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SMCI": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SMH": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SMHX": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SMMT": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SMR": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SMX": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SNAP": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SNDK": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SOC": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SOUN": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SOXL": {
       "covered_end": "2026-06-25",
@@ -1336,15 +1336,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SPRY": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "SPXW": {
       "failure_count": 2,
@@ -1356,15 +1356,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "STM": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "STRC": {
       "covered_end": "2026-05-18",
@@ -1384,22 +1384,22 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "TE": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "TEM": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "TLRY": {
       "covered_end": "2026-05-18",
@@ -1412,8 +1412,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "TM": {
       "covered_end": "2026-06-02",
@@ -1426,8 +1426,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "TPTX": {
       "failure_count": 2,
@@ -1446,8 +1446,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "TSLQ": {
       "covered_end": "2026-03-31",
@@ -1459,8 +1459,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "TWTR": {
       "failure_count": 2,
@@ -1479,15 +1479,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "USAR": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "USAUX": {
       "covered_end": "2026-09-04",
@@ -1500,7 +1500,7 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
+      "last_fetch": "2026-09-04T13:43:39",
       "settled_through": "2026-09-03"
     },
     "USNQX": {
@@ -1521,8 +1521,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "V": {
       "covered_end": "2026-03-31",
@@ -1534,8 +1534,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "VFFVX": {
       "covered_end": "2026-09-04",
@@ -1555,22 +1555,22 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "VICR": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "VISN": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "VIVLX": {
       "covered_end": "2026-03-31",
@@ -1584,8 +1584,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "VRNA": {
       "failure_count": 2,
@@ -1597,8 +1597,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "VST": {
       "covered_end": "2026-06-16",
@@ -1632,15 +1632,15 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "WDC": {
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "WEN": {
       "covered_end": "2026-07-10",
@@ -1660,8 +1660,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "XLE": {
       "covered_end": "2026-06-02",
@@ -1686,8 +1686,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     },
     "XPON": {
       "covered_end": "2026-05-18",
@@ -1724,8 +1724,8 @@
       "covered_end": "2026-09-04",
       "covered_start": "2017-05-23",
       "failure_count": 0,
-      "last_fetch": "2026-09-04T12:58:59",
-      "settled_through": "2026-09-03"
+      "last_fetch": "2026-09-04T13:43:39",
+      "settled_through": "2026-09-04"
     }
   },
   "version": 1

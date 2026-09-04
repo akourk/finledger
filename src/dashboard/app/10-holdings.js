@@ -393,7 +393,11 @@ function groupByBasisAware(rows, key) {
   const out = {};
   for (const row of rows) {
     const k = row[key] || 'Unknown';
-    if (!out[k]) out[k] = { [key]: k, value: 0, cost_basis: 0, unrealized_gain: 0, _anyBasis: false };
+    if (!out[k]) out[k] = { [key]: k, value: 0, cost_basis: 0, unrealized_gain: 0, _anyBasis: false, _groups: new Set() };
+    // Which account groups this row is made of.  A precomputed TWR
+    // filter covers a SET of account groups, so this is what lets a
+    // grouped row find its own return without recomputing one.
+    if (row.account_group) out[k]._groups.add(row.account_group);
     if (typeof row.value === 'number') out[k].value += row.value;
     if (typeof row.cost_basis === 'number') {
       out[k].cost_basis += row.cost_basis;
@@ -409,6 +413,84 @@ function groupByBasisAware(rows, key) {
   });
 }
 
+// ---------------------------------------------------------------------
+// Performance figures for a grouped holdings row.
+//
+// `analytics.performance_by_filter` already carries a TWR summary and an
+// XIRR for every account filter it precomputed — Total, Investments,
+// Retirement, Taxable, and each individual account.  Each entry names
+// the SET of account groups it covers, so a grouped row finds its own
+// return by matching that set rather than deriving a second one.  A row
+// whose set no filter covers (every sector row; a multi-account type
+// with no combined filter) simply has no return, and says so.
+// ---------------------------------------------------------------------
+const PERF_BY_GROUPSET = (() => {
+  const m = {};
+  for (const [name, entry] of Object.entries(ANALYTICS_PERF)) {
+    const fg = entry && entry.filter_groups;
+    if (!Array.isArray(fg) || !fg.length) continue;   // Total has none
+    const key = [...fg].sort().join(' ');
+    // First writer wins: individual accounts are registered last in
+    // build_analytics, so a combined filter (Retirement, Taxable) keeps
+    // the name a reader would expect when the sets coincide.
+    if (!(key in m)) m[key] = { name, entry };
+  }
+  return m;
+})();
+
+function perfForGroups(groups) {
+  if (!groups || !groups.size) return null;
+  return PERF_BY_GROUPSET[[...groups].sort().join(' ')] || null;
+}
+
+// Attach the performance columns to a grouped row.  `unrealized %` is
+// always available (it is just this row's own gain over its own basis);
+// the TWR / XIRR pair only when a precomputed filter covers exactly
+// this row's accounts.
+function withPerformance(rows) {
+  return rows.map(r => {
+    const cb = r.cost_basis;
+    r.unrealized_pct = (typeof cb === 'number' && cb > 0
+                        && typeof r.unrealized_gain === 'number')
+      ? +((r.unrealized_gain / cb) * 100).toFixed(2) : null;
+    const hit = perfForGroups(r._groups);
+    const sum = hit && hit.entry.summary;
+    const mw = hit && hit.entry.money_weighted;
+    r.twr_cum = sum && sum.cumulative != null ? +(sum.cumulative * 100).toFixed(2) : null;
+    r.twr_ann = sum && sum.annualized != null ? +(sum.annualized * 100).toFixed(2) : null;
+    r.xirr    = mw && mw.annualized != null ? +(mw.annualized * 100).toFixed(2) : null;
+    // Every filter's window is its OWN — a 401K opened years into the
+    // ledger is measured over a much shorter span than Robinhood.  The
+    // span travels with the figure rather than being left implicit.
+    r._perfSpan = sum ? `${sum.start_date} → ${sum.end_date} (${sum.years}y)` : '';
+    delete r._groups;
+    return r;
+  });
+}
+
+// Display labels for the holdings table's performance columns.  The
+// original columns keep their raw field names (that is the existing
+// convention in this table); only the additions get prose.
+const HOLDINGS_COL_LABEL = {
+  unrealized_pct: 'unrealized %',
+  twr_cum: 'twr cum %',
+  twr_ann: 'twr ann %',
+  xirr: 'xirr %',
+};
+// Four different questions, which is the whole reason to show all four.
+const HOLDINGS_COL_TIP = {
+  unrealized_pct: 'Gain on what you hold right now, over its cost basis. '
+    + 'Says nothing about money already realized or withdrawn.',
+  twr_cum: 'Time-weighted return over this group&#39;s own life, compounded. '
+    + 'Contribution timing removed — it measures the investments, not the saving.',
+  twr_ann: 'The same time-weighted return, per year. Hover a value for the span '
+    + 'it was measured over — each group&#39;s window is its own.',
+  xirr: 'Money-weighted (XIRR): what your actual dollars earned, contribution '
+    + 'timing included. The gap against TWR is the behaviour gap.',
+};
+const HOLDINGS_PCT_COLS = new Set(['unrealized_pct', 'twr_cum', 'twr_ann', 'xirr']);
+const HOLDINGS_SPAN_COLS = new Set(['twr_cum', 'twr_ann', 'xirr']);
+
 function renderHoldings() {
   // By Account: one row per account_group total.
   // By Type:    one row per account_type total (Taxable/Retirement/Savings).
@@ -420,26 +502,28 @@ function renderHoldings() {
   const byAssetSrc = asOfHoldingsByAsset();
 
   let data, cols, numCols;
-  if (holdingsView === 'account') {
-    data = groupByBasisAware(byAccountSrc, 'account_group');
-    cols = ['account_group', 'value', 'cost_basis', 'unrealized_gain'];
-    numCols = new Set(['value', 'cost_basis', 'unrealized_gain']);
-  } else if (holdingsView === 'type') {
-    data = groupByBasisAware(byAccountSrc, 'account_type');
-    cols = ['account_type', 'value', 'cost_basis', 'unrealized_gain'];
-    numCols = new Set(['value', 'cost_basis', 'unrealized_gain']);
-  } else if (holdingsView === 'sector') {
-    data = groupByBasisAware(byAssetSrc, 'sector');
-    cols = ['sector', 'value', 'cost_basis', 'unrealized_gain'];
-    numCols = new Set(['value', 'cost_basis', 'unrealized_gain']);
-  }
+  const keyCol = holdingsView === 'account' ? 'account_group'
+    : (holdingsView === 'type' ? 'account_type' : 'sector');
+  // Sector rows come from the by-ASSET list, which carries no account
+  // group — so a sector legitimately has no time-weighted return, and
+  // the TWR/XIRR columns drop out below rather than rendering a
+  // column of dashes.
+  data = withPerformance(groupByBasisAware(
+    holdingsView === 'sector' ? byAssetSrc : byAccountSrc, keyCol));
+  const anyPerf = data.some(r => r.twr_ann != null || r.xirr != null);
+  cols = [keyCol, 'value', 'cost_basis', 'unrealized_gain', 'unrealized_pct'];
+  if (anyPerf) cols.push('twr_cum', 'twr_ann', 'xirr');
+  numCols = new Set(['value', 'cost_basis', 'unrealized_gain',
+    'unrealized_pct', 'twr_cum', 'twr_ann', 'xirr']);
 
   // Header
   const hRow = document.getElementById('holdingsHeaderRow');
   hRow.innerHTML = cols.map(col => {
     const cls = numCols.has(col) ? ' class="num"' : '';
     const arrow = holdingsSortCol === col ? (holdingsSortAsc ? ' ▲' : ' ▼') : '';
-    return `<th${cls} data-hcol="${col}">${col}<span class="arrow">${arrow}</span></th>`;
+    const label = HOLDINGS_COL_LABEL[col] || col;
+    const tip = HOLDINGS_COL_TIP[col] ? ` title="${HOLDINGS_COL_TIP[col]}"` : '';
+    return `<th${cls} data-hcol="${col}"${tip}>${label}<span class="arrow">${arrow}</span></th>`;
   }).join('');
 
   // Sort
@@ -471,9 +555,14 @@ function renderHoldings() {
         else {
           const fmt = col === 'quantity'
             ? n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })
-            : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+              + (HOLDINGS_PCT_COLS.has(col) ? '%' : '');
           const c = n < 0 ? 'negative' : (n > 0 ? 'positive' : '');
-          html = `<span class="${c}">${fmt}</span>`;
+          // A return is only meaningful with the span it was measured
+          // over, and each filter's span is its own.
+          const t = (HOLDINGS_SPAN_COLS.has(col) && row._perfSpan)
+            ? ` title="Measured ${row._perfSpan}"` : '';
+          html = `<span class="${c}"${t}>${fmt}</span>`;
         }
       } else if (col === 'symbol') {
         html = symLabel(val);

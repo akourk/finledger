@@ -2978,13 +2978,16 @@
   }
 
   /* Each pane scrolls independently so a long value-ranked list never
-     pushes the movers rail off the page. */
+     pushes the movers rail off the page.  The stacked pair is sized so
+     the two of them plus their headers come out level with the main
+     pane — all three hold the same rows, just sorted differently, so a
+     ranking that ran out of room would be the one thing to avoid. */
   .board-scroll {
-    max-height: 620px;
+    max-height: 1250px;
     overflow: auto;
   }
 
-  .board-col-side .board-scroll { max-height: 300px; }
+  .board-col-side .board-scroll { max-height: 590px; }
 
   .board-scroll table {
     border-collapse: collapse;
@@ -3047,7 +3050,10 @@
 
   .board-note { align-items: center; display: flex; gap: 10px; }
 
-  .board-allcol { border-left: 1px solid var(--border); }
+  /* Left rule at each window's first column, so several active
+     windows read as groups rather than one undifferentiated run of
+     numbers. */
+  .board-wstart { border-left: 1px solid var(--border); }
 
   @media (max-width: 1100px) {
     .board-grid-2,

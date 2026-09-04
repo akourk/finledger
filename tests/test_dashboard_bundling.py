@@ -136,3 +136,41 @@ def test_board_module_is_bundled_and_reads_precomputed_figures():
     tpl = (Path("src/dashboard/template.html")).read_text(encoding="utf-8")
     assert 'id="boardBody"' in tpl, "board needs a render target"
     assert "setBoardLayout('board')" in tpl, "board needs a way in"
+
+
+def test_holdings_table_reads_precomputed_returns():
+    """The Holdings table's TWR / XIRR columns must come from
+    `analytics.performance_by_filter`, matched by the SET of account
+    groups a grouped row covers.
+
+    Deriving a return in JS is the failure this codebase keeps
+    re-learning, and a return is especially easy to get wrong: each
+    filter's window is its own (a 401K opened years into the ledger
+    spans nothing like a taxable account), so a locally-computed figure
+    would silently measure the wrong period.  Matching on the exported
+    `filter_groups` set also means a row no filter covers renders
+    nothing rather than a number measured over some other group.
+    """
+    from src.dashboard import _read_app_js
+    js = _read_app_js()
+    assert "ANALYTICS_PERF" in js
+    assert "PERF_BY_GROUPSET" in js, (
+        "grouped rows must match a precomputed filter by account-group set")
+    assert "filter_groups" in js, "the match key is the exported set"
+    # The span travels with the figure — a return next to no window is
+    # the thing AUDIT.md F-031 was about.
+    assert "_perfSpan" in js
+
+
+def test_board_windows_are_independent_toggles():
+    """Window chips select any COMBINATION, each contributing its own
+    sortable column pair — so there is no separate "all windows" mode
+    whose columns cannot be sorted."""
+    from src.dashboard import _read_app_js
+    js = _read_app_js()
+    assert "toggleBoardPaneWindow" in js
+    assert "boardValidSort" in js, (
+        "switching a window off must not leave a pane sorting by a column "
+        "it no longer renders")
+    assert "toggleBoardAllWindows" not in js, (
+        "the all-windows mode was replaced by independent chips")

@@ -516,7 +516,17 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       recent 8 transactions (+ view-all link), allocation donut (by
       account / type / sector).  Concentration moved to Holdings;
       Year-by-Year moved to Planning.
-    - **Holdings** — holdings table (by asset/account/type/sector),
+    - **Holdings** — holdings table (by asset/account/type/sector;
+      carries `unrealized %` always, plus `twr cum %` / `twr ann %` /
+      `xirr %` **read from `analytics.performance_by_filter`** — a
+      grouped row matches a precomputed filter by the SET of account
+      groups it covers (`PERF_BY_GROUPSET` in `app/10-holdings.js`),
+      never by deriving its own return.  A row no filter covers (every
+      sector row; a multi-account type with no combined filter) shows
+      nothing, and the three columns drop out entirely when no row
+      resolves.  Per-value tooltips carry the measured span, because
+      each filter's window is its own — see the
+      `performance_by_filter` note above and AUDIT.md F-031),
       Target vs Actual, concentration grid (positions/sectors/
       accounts; one global HHI on the positions card only), and the
       lot-method comparison table (collapsed `<details>` — the
@@ -526,12 +536,19 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       unrealized, days-held, ST/LT term — from `analytics.lots`.
       The Holdings-by-Asset section also has a **Table ↔ Board**
       layout toggle (`app/15-board.js`).  Board mode is a broker-style
-      monitoring view: symbol / qty / mkt val / mark / window open P&L
-      $ and % / all-time open P&L $ and %, in one to three
+      monitoring view: symbol / qty / mkt val / mark / a $ and % pair
+      per active window / all-time open P&L $ and %, in one to three
       independently-sorted panes (the 3-pane default puts the
       value-ranked list beside a stacked gainers-over-losers rail).
-      Each pane picks its own window chip; "All windows" appends one
-      column per window to compare timeframes.  Every figure is READ
+      **All panes render the same rows** — they differ only in sort, so
+      a position is never missing from one of them.  Window chips are
+      INDEPENDENT toggles, not a radio group: any combination may be
+      active, each contributing a sortable column pair rendered in
+      canonical window order (not click order), and zero active is the
+      legitimate levels-only view.  Switching off the window a pane is
+      sorted by falls the sort back to `value` (`boardValidSort`) —
+      otherwise the pane would sort by a column no row displays.
+      Every figure is READ
       from `analytics.position_pnl` + the same `holdings_by_account`
       rows the table renders — **the board derives nothing**, which is
       why the two layouts cannot disagree.  Board mode is
