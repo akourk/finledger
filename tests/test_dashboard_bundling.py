@@ -216,3 +216,22 @@ def test_python_account_classes_are_not_hardcoded_literals():
             assert "SAVINGS_GROUPS" not in stripped, (
                 "the filter builder must use the live classification, "
                 "not the frozen default")
+
+
+def test_board_controls_redraw_when_their_own_state_changes():
+    """A setter that changes a value the CONTROLS BAR displays must
+    redraw the controls bar, not just the panes.
+
+    The board renders in two independent regions so that typing in the
+    search box does not rebuild the input under the cursor.  The cost of
+    that split is this failure: `setBoardPaneCount` redrew only the
+    panes, so the 1/2/3 buttons kept whatever active state they had at
+    first render — the layout changed, the highlight did not.
+    """
+    src = Path("src/dashboard/app/15-board.js").read_text(encoding="utf-8")
+    for fn in ("setBoardPaneCount", "setBoardGroupBy"):
+        start = src.index(f"function {fn}(")
+        body = src[start:src.index(chr(10) + "}", start)]
+        assert "renderBoardControls()" in body, (
+            f"{fn} changes a value the controls bar renders, so it must "
+            f"redraw the controls bar")

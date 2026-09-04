@@ -339,6 +339,11 @@ function setBoardLayout(mode) {
 function setBoardPaneCount(n) {
   boardPaneCount = n;
   boardSaveState();
+  // The pane-count buttons live in the controls bar, not in a pane, so
+  // redrawing only the panes left their active state frozen at whatever
+  // it was on first render.  Anything that changes a value the controls
+  // bar DISPLAYS has to redraw the controls bar too.
+  renderBoardControls();
   renderBoardPanes();
 }
 
