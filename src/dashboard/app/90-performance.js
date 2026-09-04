@@ -248,60 +248,97 @@ function setPerfTwrEnd(d) {
 // Sourced from the action catalog (DATA.action_catalog) — adding a
 // new contribution-/withdrawal-style action in src/actions.py
 // automatically picks it up here.
-const _TWR_ADD_ACTIONS = _actionsWith('cash_flow', 'in');
-const _TWR_SUB_ACTIONS = _actionsWith('cash_flow', 'out');
-
+// External cash flow per txn is ALREADY DECIDED, once, in Python:
+// `basis.txn_external_cash_flow` is the documented single source of
+// truth for "did this txn move money in or out of the user's pocket",
+// and every txn carries its verdict in the exported `cash_flow` field.
+// So read it.  Do not re-derive it here.
+//
+// This function used to re-derive it, from the catalog's cash_flow
+// column plus two hand-written special cases — a THIRD implementation
+// of a rule CLAUDE.md says must have exactly one.  It had drifted, in
+// the direction that flatters the portfolio.  Measured on real data it
+// saw $35.6k LESS external money arrive than Python did, because it was
+// missing two of the classifier's carve-outs entirely:
+//
+//   * Coinbase bank-funded Buys — a buy settled straight from a bank
+//     account with no separate ACH row is new capital entering
+//     (basis.py documents both CSV formats this appears in)
+//   * transfers CROSSING fin's measurement boundary — crypto sent to
+//     self-custody is economically a withdrawal, an inbound receive a
+//     contribution, keyed on the RAW action
+//
+// Under-counting money IN is not a neutral error: the value it buys has
+// to be attributed to something, and a Modified-Dietz numerator with no
+// flow to net out books it as market return.  Lifetime TWR read +418%
+// against the Python summary's +332% on the same span, and the two
+// engines sat one chip-click apart on the same screen — 'lifetime'
+// reads Python's summary, every other window ran this walk.  Reading
+// the annotation moves it to +328%, i.e. onto the summary, and deletes
+// the third implementation rather than repairing it.
+//
+// The remaining consumers of the catalog sets are gone with it; if you
+// need "is this external money", the answer is `t.cash_flow`.
 function _netFlowBetween(prevDate, currDate, filterSet) {
   let net = 0;
   for (const t of txns) {
     if (!t.date || t.date <= prevDate || t.date > currDate) continue;
     if (filterSet && !filterSet.has(t.account_group)) continue;
-    const amt = t.amount || 0;
-    if (amt <= 0) continue;
-    if (_TWR_ADD_ACTIONS.has(t.action)) { net += amt; continue; }
-    if (_TWR_SUB_ACTIONS.has(t.action)) {
-      // Distribution from Roth IRA / Rollover IRA is typically a
-      // custodian rollover — skip to match the Transfer In skip on
-      // the other side.  (See computeAnnualReturns for details.)
-      if (t.action === 'Distribution'
-        && (t.account_group === 'Roth IRA' || t.account_group === 'Rollover IRA')) {
-        continue;
-      }
-      net -= amt;
-      continue;
-    }
-    // USAA Roth IRA style: a "Buy" row with a contribution marker in
-    // the description is actually cash flowing INTO the account.
-    // retirementContribInfo handles these already; reuse so TWR and
-    // the contribution-by-year table agree on what counts.
-    if (retirementContribInfo(t).isContrib) net += amt;
+    net += t.cash_flow || 0;
   }
   return net;
 }
 
+// Mirrors `analytics/_shared.py::_chain_link_return` + `_period_return`.
+// Same guards, same order, same carry — a second implementation of one
+// rule, which exists only because a user-chosen custom range has bounds
+// Python never saw.  Every PRESET window runs this too, while
+// 'lifetime' reads Python's precomputed summary, so a divergence here
+// shows up as one chip-click changing a figure that should not move.
+// If you change a guard in either, change both.
 function _twrWalk(startIdx, endIdx, valueFn, filterSet) {
   let cumulative = 1;
   let anyPeriod = false;
+  let peakSoFar = 0;
+  let pendingFlow = 0;   // unabsorbed external flow from skipped periods
   for (let i = startIdx + 1; i <= endIdx; i++) {
     const prev = history[i - 1], curr = history[i];
     const sv = valueFn(prev), ev = valueFn(curr);
-    const net = _netFlowBetween(prev.date, curr.date, filterSet);
-    // Modified Dietz denominator: average capital during the period
-    const denom = sv + net / 2;
-    if (denom <= 0) continue;                // account effectively empty
-    // Skip periods where the cash flow dwarfs the share value on both
-    // sides.  Happens early in a brokerage account's life when user
-    // ACH-deposits cash that sits uninvested — the share-only balance
-    // we track via `by_account_group` doesn't move, but `net_flow`
-    // records the full deposit, producing nonsense returns.  (Main.py
-    // skips USD balance tracking in non-Savings accounts on purpose
-    // because broker CSVs underreport sell proceeds; rebuilding full
-    // account-level cash balances is a bigger architectural change.)
+
+    // Small-base filter on the TRAILING peak, not the window's global
+    // max: an all-time peak skips every early period — when the
+    // portfolio was small but was the user's entire capital at the
+    // time — which silently drops the early years and makes lifetime
+    // TWR disagree with the per-year table.  This skip deliberately
+    // does NOT carry its flow, matching Python.
+    if (sv > peakSoFar) peakSoFar = sv;
+    if (sv < peakSoFar * 0.01) continue;
+
+    // Flow carried from earlier skipped periods is treated as if it
+    // landed in this one, so the value it becomes is netted out rather
+    // than booked as gain.
+    const net = _netFlowBetween(prev.date, curr.date, filterSet) + pendingFlow;
+    const denom = sv + net / 2;          // Modified Dietz: average capital
     const maxBalance = Math.max(sv, ev);
-    if (maxBalance > 0 && Math.abs(net) > maxBalance * 0.8) continue;
-    if (denom < 100) continue;               // too small for stable return
-    const r = (ev - sv - net) / denom;
-    if (r <= -1) continue;                   // pinning guard
+    const r =
+      denom <= 0 ? null                                   // effectively empty
+        : (maxBalance > 0 && Math.abs(net) > maxBalance * 0.8) ? null
+          : denom < 100 ? null                            // too small to be stable
+            : (ev - sv - net) / denom;
+
+    if (r === null || r <= -1) {         // r <= -1 is the pinning guard
+      // Carry the part of (this period's flow + prior pending) that did
+      // NOT show up in the ending value — contributed cash still in
+      // flight to the visible asset universe.  One-sided, deposits
+      // only: the sell-then-withdraw mirror books offsetting phantom
+      // legs that roughly cancel, but a dropped deposit's gain leg has
+      // no offsetting loss leg.  Python's copy records the symptom this
+      // prevents: a +175% phantom month that pushed a losing year's
+      // chained TWR to +94%.
+      pendingFlow = Math.max(0, net - Math.max(0, ev - sv));
+      continue;
+    }
+    pendingFlow = 0;
     cumulative *= (1 + r);
     anyPeriod = true;
   }

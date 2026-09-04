@@ -570,7 +570,19 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       as a bug (F-035).  Adding a card to the windowed row means asking
       whether it is a flow or a level (`setPerfView`;
       both views render into the DOM, switching is a pure display
-      toggle).  Returns view: Your Portfolio vs SPY/BND/VXUS/60-40
+      toggle).
+      **TWO RETURN ENGINES, one chip-click apart**: `lifetime` renders
+      Python's precomputed `summary`; every other window — presets and
+      custom alike — runs `_twrWalk`, the JS chain-link, because a
+      user-chosen range has bounds Python never saw.  `_twrWalk` mirrors
+      `analytics/_shared.py::_chain_link_return` + `_period_return`
+      (same guards, trailing-peak small-base filter, unabsorbed-flow
+      carry); change a guard in one, change the other.  Pinned by
+      `TestTheTwoReturnEnginesAgree` — a full-range custom window must
+      equal lifetime — plus a structural guard, because whether a
+      fixture can EXERCISE the divergence depends on it holding the
+      exact txn shapes involved.
+      Returns view: Your Portfolio vs SPY/BND/VXUS/60-40
       multi-benchmark chart, By-Account TWR section (Mod-Dietz +
       daily TWR for retirement filters + **Money-Weighted XIRR** with
       behavior-gap tooltip), Annual Returns table, Top 10 Winners /
@@ -1087,7 +1099,18 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   basis is its external cash flow — see the cash-basis invariant
   above).  All five call this helper —
   if you find yourself duplicating cash-flow classification, route
-  it through here instead.  Pinned by
+  it through here instead.
+
+  **The DASHBOARD is a sixth consumer, and reaches the same verdict a
+  different way**: the helper's per-txn result is exported on every txn
+  as `cash_flow`, and `90-performance.js`'s `_netFlowBetween` sums that
+  field.  It must NOT re-derive the classification from the action
+  catalog — it did, and the copy was missing the Coinbase bank-funded
+  Buy rule and the measurement-boundary transfer rule, so the JS TWR
+  walk saw tens of thousands of dollars less external money arrive than
+  Python did and booked the difference as market return (AUDIT.md
+  F-038).  JS cannot import the helper; reading its exported verdict is
+  how the single source of truth crosses the language boundary.  Pinned by
   `tests/test_actions_catalog.py::test_external_cash_flow_helper_handles_all_carve_outs`.
 
 - **Coinbase Pro trade-leg cash is NOT external money.** The Coinbase
@@ -1151,8 +1174,11 @@ a new canonical action:
 
 That's it.  `main.py`'s `_SUBTRACT_ACTIONS`, `history.py`'s sets,
 `analytics.py`'s cash-flow sets, `basis.py`'s `BASIS_EFFECTS`,
-`dashboard.py`'s `ACTION_COLORS` and `_TWR_*_ACTIONS` are all derived
-from the catalog at import time.  Adding the action in one place
+and `dashboard.py`'s `ACTION_COLORS` are all derived
+from the catalog at import time.  (The dashboard's TWR walk used to
+derive its own cash-flow sets this way too; it now reads the per-txn
+`cash_flow` annotation instead — see the cash-flow helper's consumer
+list below.)  Adding the action in one place
 threads through every consumer.
 
 ## Architecture (post-refactor)

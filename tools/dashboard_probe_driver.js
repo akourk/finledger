@@ -155,6 +155,29 @@
     results.console_errors.push('custom window render: ' + (e && e.message));
   }
 
+  // --- Custom window covering ALL of history --------------------------
+  // Same span as 'lifetime', different engine: 'lifetime' renders
+  // Python's precomputed summary, every other window runs the JS
+  // chain-link walk.  Rendering both is the only way to see them
+  // disagree, and disagreeing is what one chip-click looked like.
+  results.performance_full_custom = null;
+  try {
+    if (typeof history !== 'undefined' && history.length >= 2) {
+      clearNodes();
+      performanceAccountFilter = null;
+      performanceWindow = 'custom';
+      perfTwrStart = history[0].date;
+      perfTwrEnd = history[history.length - 1].date;
+      renderPerformance();
+      results.performance_full_custom = { cards: parseCards(snapshotHtml()) };
+      performanceWindow = 'lifetime';
+      perfTwrStart = null;
+      perfTwrEnd = null;
+    }
+  } catch (e) {
+    results.console_errors.push('full-range custom render: ' + (e && e.message));
+  }
+
   // --- Tax: one render per year with activity ------------------------
   // The tab defaults to the CURRENT year, which on most portfolios has
   // no realizations yet — so a single render shows an all-zero page and

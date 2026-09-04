@@ -934,3 +934,93 @@ class TestACustomWindowEndsWhereItSaysItDoes:
         for t in spans:
             assert f"to {custom['expected_end']}" in t, (
                 f"a card claims a span ending elsewhere: {t!r}")
+
+
+# ---------------------------------------------------------------------------
+# Relation — the two TWR engines agree over the same span
+# ---------------------------------------------------------------------------
+
+class TestTheTwoReturnEnginesAgree:
+    """`lifetime` renders Python's precomputed summary; every other
+    window — presets and custom alike — runs the JS chain-link walk.
+    Two implementations of one rule, and the tab puts them one chip-click
+    apart, so any divergence reads as "clicking a button changed my
+    return".
+
+    They diverged, badly and in the flattering direction: the JS walk
+    re-derived external cash flow instead of reading the `cash_flow`
+    annotation the pipeline already stamps on every txn, and its copy of
+    the classifier was missing two carve-outs (Coinbase bank-funded
+    Buys; transfers crossing fin's measurement boundary).  Under-counting
+    money IN is not neutral — the value it bought has to be attributed
+    to something, and Modified Dietz with no flow to net out books it as
+    market return.
+    """
+
+    def _twr(self, view):
+        card = find_cards(view, r"^Your Return \(TWR\)")
+        assert card, "no TWR card rendered"
+        m = re.search(r"([-+]?[\d.]+)%", card[0]["value"])
+        return float(m.group(1)) if m else None
+
+    def test_a_full_range_custom_window_equals_lifetime(self, rendered):
+        full = rendered.get("performance_full_custom")
+        if not full:
+            pytest.skip("probe could not render a full-range custom window")
+        life = next((x for x in rendered["performance"]
+                     if x["filter"] == "Total" and x["window"] == "lifetime"), None)
+        assert life is not None
+        a, b = self._twr(life), self._twr(full)
+        assert a is not None and b is not None
+        assert b == pytest.approx(a, abs=0.05), (
+            f"lifetime TWR {a:+.2f}% but a custom window over the SAME span "
+            f"{b:+.2f}% — the Python summary and the JS walk have diverged"
+        )
+
+
+class TestTheJsWalkDoesNotReclassifyCashFlow:
+    """Structural, because the relation above can go vacuous.
+
+    Whether the fixture exercises the divergence depends on it holding
+    the exact transaction shapes the JS copy mishandled — Coinbase
+    bank-funded Buys, boundary-crossing transfers.  A fixture without
+    them makes both routes agree and the relation prove nothing.  This
+    guard holds on any data.
+    """
+
+    @staticmethod
+    def _perf_src() -> str:
+        return (Path(__file__).resolve().parents[1]
+                / "src" / "dashboard" / "app" / "90-performance.js").read_text(
+                    encoding="utf-8")
+
+    def test_net_flow_reads_the_exported_annotation(self):
+        src = self._perf_src()
+        body = src[src.index("function _netFlowBetween"):]
+        body = body[:body.index("\n}")]
+        assert "t.cash_flow" in body, (
+            "_netFlowBetween no longer reads the per-txn cash_flow "
+            "annotation — external cash flow is classified once, in "
+            "basis.txn_external_cash_flow, and re-deriving it here is how "
+            "the two return engines drifted apart"
+        )
+        for token in ("_TWR_ADD_ACTIONS", "_TWR_SUB_ACTIONS",
+                      "retirementContribInfo", "cash_flow', 'in"):
+            assert token not in body, (
+                f"_netFlowBetween is re-deriving the classification again "
+                f"({token}) instead of reading the annotation"
+            )
+
+    def test_the_chain_link_walk_still_carries_unabsorbed_flow(self):
+        """Mirrors analytics/_shared.py::_chain_link_return."""
+        src = self._perf_src()
+        body = src[src.index("function _twrWalk"):]
+        body = body[:body.index("\n}\n")]
+        assert "pendingFlow" in body, (
+            "the JS walk no longer carries unabsorbed flow across skipped "
+            "periods — Python does, and dropping it books a skipped "
+            "deposit's value as market gain"
+        )
+        assert "peakSoFar" in body, (
+            "the JS walk lost the trailing-peak small-base filter"
+        )

@@ -121,6 +121,7 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-038 | **high** | *(fixed)* The dashboard's TWR walk re-derived external cash flow instead of reading the exported per-txn verdict, and its copy of the classifier was missing two carve-outs — so it saw materially less money arrive than Python did and booked the difference as market return; the same span reported two very different lifetime returns depending on which window chip was active; user-reported |
 | F-037 | **high** | *(fixed)* A custom Performance window whose "To" date fell between semimonthly snapshots resolved its END VALUE to today via a silent `|| history[last]` fallback, while the flow filters honoured the requested date — so a window ending months ago reported today's value minus that window's contributions; user-reported |
 | F-036 | medium | *(fixed)* Follow-up scan of F-035's bug class: the Performance tab's windowed row re-derived four figures the anchor row above it already publishes, so adjacent cards under one label disagreed by the annotations' cent rounding; and `value_qty_price_consistency` gated on `qty > 0`, exempting the negative rows most likely to be mis-signed |
 | F-035 | **high** | *(fixed)* The two cost-basis walkers used different conventions for a Savings cash position — principal in the holdings table, face value in every history snapshot — and the parity check that should have caught it exempted `USD`; surfaced as a Performance card that changed when only the time window changed; user-reported |
@@ -2435,6 +2436,83 @@ the broken lookup and the correct one agree, so the whole existing
 (filter × window) matrix was blind to this by construction.  The test
 carries a guard asserting the probe's chosen date really does fall
 between snapshots.
+
+
+### F-038: a third opinion on what counts as a deposit (2026-09-04)
+
+User-reported, and the report was precise: switching the window chip
+from Lifetime to Custom — *without entering any dates* — changed the
+reported lifetime return substantially.  Same portfolio, same span, one
+click.
+
+The tab has two return engines.  `lifetime` renders Python's
+precomputed `summary`; every other window, presets and custom alike,
+runs `_twrWalk` in JS, because a user-chosen range has bounds Python
+never saw.  Two implementations of one rule, rendered one chip apart,
+which is the only reason this was visible at all.
+
+**The first diagnosis was wrong, and worth recording as such.**  The
+obvious suspect was the unabsorbed-flow carry: Python carries a
+guard-skipped period's flow into the next measured period, the JS copy
+just dropped it, and the docstring for the Python fix records exactly
+this symptom (a phantom +175% month).  It fit.  It was also not the
+cause — porting the carry moved the number by zero.  The lesson is
+cheap to state and easy to skip: a mechanism that would produce the
+observed symptom is not thereby the mechanism that did.  Measuring the
+two engines against real data took one script and settled it.
+
+The actual cause was upstream of the walk.  `_netFlowBetween` — the JS
+answer to "how much external money moved in this period" — re-derived
+the classification from the action catalog's `cash_flow` column plus
+two hand-written special cases.  That is a THIRD implementation of a
+rule CLAUDE.md designates as having exactly one home
+(`basis.txn_external_cash_flow`, with the standing instruction to route
+duplicates through it).  Measured against Python over the real ledger,
+the JS copy classified a large multi-year total as NOT being external
+money at all, every dollar of it Coinbase:
+
+| rows | why Python counts it, and JS did not |
+|---|---|
+| bank-funded `Buy` | a buy settled straight from a bank account with no separate ACH row is new capital; basis.py documents both CSV formats it appears in |
+| `Receive` / `Send` | transfers crossing fin's MEASUREMENT BOUNDARY — crypto sent to self-custody is economically a withdrawal, an inbound receive a contribution, keyed on the RAW action |
+
+Under-counting money IN is not a neutral error.  The value that money
+bought still has to be attributed to something, and a Modified-Dietz
+numerator with no flow to net out attributes it to the market.  Every
+dollar the classifier missed became return.
+
+Fixed by deleting the copy rather than repairing it.  The pipeline
+already stamps every txn with the helper's verdict in the exported
+`cash_flow` field — the Performance tab's own Net Contributed card
+reads it — so `_netFlowBetween` now sums that field and the JS knows
+nothing about classification.  **This is how a single source of truth
+crosses a language boundary**: JS cannot import the Python helper, so
+it reads the helper's exported answer.  Re-deriving was the only other
+option and it is the one that drifts.
+
+Result on real data: the JS walk over the full range now returns the
+Python summary's cumulative AND annualized figures exactly, to
+displayed precision, where before it had been far above both.  Every
+preset window moved down too — the long ones most, the recent ones not
+at all, since they contain none of the misclassified rows.  The
+"clicking a chip changed my return" class is closed, not narrowed.
+
+The unabsorbed-flow carry and the trailing-peak small-base filter were
+ported anyway, since they are real divergences between two walkers that
+are supposed to mirror each other; they happen to change nothing on
+this portfolio, and Python's own docstring describes data where they
+change a great deal.
+
+**On the tests, again.**  The render relation — a full-range custom
+window must equal lifetime — is the right law and states the user's
+complaint directly.  It also cannot catch this on the synthetic
+fixture, which holds none of the transaction shapes the JS copy
+mishandled, so both routes agree there and the relation proves nothing.
+Verified by reintroducing the re-derivation: the relation stayed green,
+the structural guard failed.  That is now twice in one sitting
+(cf. F-036) that a correct relation over a synthetic fixture was worth
+less than a grep.  **Write the relation, then reintroduce the bug and
+watch which test notices.**
 
 
 ## Improvement opportunities
