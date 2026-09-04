@@ -121,6 +121,7 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-037 | **high** | *(fixed)* A custom Performance window whose "To" date fell between semimonthly snapshots resolved its END VALUE to today via a silent `|| history[last]` fallback, while the flow filters honoured the requested date — so a window ending months ago reported today's value minus that window's contributions; user-reported |
 | F-036 | medium | *(fixed)* Follow-up scan of F-035's bug class: the Performance tab's windowed row re-derived four figures the anchor row above it already publishes, so adjacent cards under one label disagreed by the annotations' cent rounding; and `value_qty_price_consistency` gated on `qty > 0`, exempting the negative rows most likely to be mis-signed |
 | F-035 | **high** | *(fixed)* The two cost-basis walkers used different conventions for a Savings cash position — principal in the holdings table, face value in every history snapshot — and the parity check that should have caught it exempted `USD`; surfaced as a Performance card that changed when only the time window changed; user-reported |
 | F-034 | **high** | *(fixed)* `Return of Capital` was catalogued `basis="ignore"` on the grounds that the payout was untracked; the cash bridge later started tracking it, leaving the basis half of the event unapplied — understated per-position return, basis diverging from the 1099-B, and a realized gain never booked |
@@ -2365,6 +2366,75 @@ noise, the regression is pinned structurally
 vacuous on any data.  **Check which of your new tests actually fails
 against the bug; on a synthetic fixture, assume none of them do until
 you have seen it.**
+
+
+### F-037: the window that ended today no matter what you asked for (2026-09-04)
+
+User-reported, from the same card as F-035: with a custom window, the
+Unrealized figure never moved unless the "To" date happened to be the
+15th or a month end.
+
+History is sampled semimonthly, so a date typed into a free date picker
+usually isn't a snapshot date.  The end value resolved like this:
+
+```js
+const endSnap = history.find(h => h.date === _winUpperIso)
+  || history[history.length - 1];
+```
+
+An exact match with TODAY behind it.  Every between-samples date fell
+through to the latest snapshot.
+
+The stuck Unrealized card was the symptom that got noticed, and it was
+the mildest consequence.  The flow filters — realized, net contributed
+— DID honour the requested date, so the row mixed two windows: a custom
+range ending in April reported **today's** value minus **April's**
+contributions.  Every market move and every deposit in the intervening
+five months was mis-attributed, and Total Return, which is
+`value − start − flows`, was wrong by that whole amount while looking
+entirely plausible.  A frozen number gets questioned; a wrong one that
+moves does not.
+
+Three different date-resolution rules were live on one tab:
+
+| bound | rule |
+|---|---|
+| window start (dollar cards) | last snapshot AT OR BEFORE — F-032's fix |
+| window end (dollar cards) | exact match, else silently today |
+| both bounds (`computeTimeWeightedReturnForWindow`) | NEAREST snapshot |
+
+Only two of those were ever argued for.  The end bound now resolves
+BACKWARD like the start bound — a level ("what did I hold on this
+date") must not be answered with information from after it — and
+`_winUpperIso` is then REBOUND to the resolved date, so the flows, the
+realized sum and the end value are all measured to the same day.  The
+row's own "Measured X to Y" note stops being aspirational.  The TWR
+function keeps nearest-snapshot snapping, which is argued in its own
+comment (reproducing a brokerage statement's period is a return over a
+span, not a level at a date) — two rules, each with a reason, instead
+of three by accident.
+
+**Not fixed by adding snapshots, and worth saying why.**  The obvious
+reading is "we don't have daily data".  Measured on the real portfolio:
+daily sampling costs +2.2s of compute (nothing) but takes the exported
+history from 1.3 MB to 19.6 MB, and `dashboard.html` — one
+self-contained file the browser parses as an inline literal — from
+5.0 MB to roughly 24 MB.  That is a 5x page weight to make one card's
+as-of date exact, and it would have left the silent fallback in place
+for every other way of missing (a date before the first snapshot, a
+future date).  `compute_daily_totals` already exists for the case where
+daily resolution changes an answer — max-drawdown depth — and is
+deliberately never exported wholesale; the same judgment applies here.
+
+The UI now states the resolved span next to the date inputs rather than
+letting the picker imply a precision the data doesn't have.
+
+Pinned by `TestACustomWindowEndsWhereItSaysItDoes`, which needed a new
+probe render: every PRESET window ends at the latest snapshot, where
+the broken lookup and the correct one agree, so the whole existing
+(filter × window) matrix was blind to this by construction.  The test
+carries a guard asserting the probe's chosen date really does fall
+between snapshots.
 
 
 ## Improvement opportunities

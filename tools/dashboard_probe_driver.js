@@ -113,6 +113,48 @@
     }
   }
 
+  // --- Custom window: a "To" date BETWEEN snapshots -------------------
+  // The preset matrix above can never exercise this: every preset ends
+  // at the latest snapshot, so the end-bound resolution is a no-op and
+  // a broken one looks identical.  History is semimonthly, so a date
+  // the user types is usually not a snapshot date at all.
+  results.performance_custom = null;
+  try {
+    if (typeof history !== 'undefined' && history.length >= 4) {
+      const snapDates = new Set(history.map(h => h.date));
+      // A day just after a real snapshot, roughly two samples back —
+      // late enough to have data, early enough that resolving it
+      // correctly gives a DIFFERENT answer than the latest snapshot.
+      const base = history[history.length - 4].date;
+      const d = new Date(base);
+      let requested = null;
+      for (let add = 1; add <= 6; add++) {
+        const c = new Date(d.getTime() + add * 86400000)
+          .toISOString().slice(0, 10);
+        if (!snapDates.has(c)) { requested = c; break; }
+      }
+      if (requested) {
+        clearNodes();
+        performanceAccountFilter = null;
+        performanceWindow = 'custom';
+        perfTwrStart = history[0].date;
+        perfTwrEnd = requested;
+        renderPerformance();
+        results.performance_custom = {
+          requested_end: requested,
+          expected_end: base,             // last snapshot at or before
+          latest_snapshot: history[history.length - 1].date,
+          cards: parseCards(snapshotHtml()),
+        };
+        performanceWindow = 'lifetime';
+        perfTwrStart = null;
+        perfTwrEnd = null;
+      }
+    }
+  } catch (e) {
+    results.console_errors.push('custom window render: ' + (e && e.message));
+  }
+
   // --- Tax: one render per year with activity ------------------------
   // The tab defaults to the CURRENT year, which on most portfolios has
   // no realizations yet — so a single render shows an all-zero page and

@@ -857,3 +857,80 @@ class TestTheWindowedRowDoesNotRederiveTheAnchorFigures:
         assert "as of ${_winUpperIso}" in src, (
             "the Unrealized card no longer states the date it is measured at"
         )
+
+
+# ---------------------------------------------------------------------------
+# Relation — a custom window ends where it says it ends
+# ---------------------------------------------------------------------------
+
+class TestACustomWindowEndsWhereItSaysItDoes:
+    """History is semimonthly; the "To" picker accepts any day.
+
+    The end bound used to be an exact `history.find(...)` with
+    `|| history[history.length - 1]` behind it, so any date that wasn't
+    the 15th or a month end silently resolved to TODAY — while the flow
+    filters honoured the date the user actually typed.  A window ending
+    in April therefore reported today's value minus April's
+    contributions: every market move and every deposit in between
+    mis-attributed.  Unrealized was the visible symptom (it never moved
+    off today's figure, which is what surfaced it); Total Return was
+    wrong in the same way and looked plausible.
+
+    None of the preset windows can catch this — they all end at the
+    latest snapshot, where the broken lookup and the correct one agree.
+    That is why the probe renders a custom window explicitly.
+    """
+
+    @pytest.fixture
+    def custom(self, rendered):
+        c = rendered.get("performance_custom")
+        if not c:
+            pytest.skip("probe could not build a between-snapshots date")
+        return c
+
+    def test_the_requested_date_was_not_a_snapshot(self, custom):
+        """Guards the guard: if the probe happened to pick a real
+        snapshot date, every assertion below would hold trivially."""
+        assert custom["requested_end"] != custom["expected_end"], (
+            "probe picked a date that IS a snapshot — this case cannot "
+            "distinguish correct resolution from the old fallback"
+        )
+        assert custom["requested_end"] != custom["latest_snapshot"]
+
+    def test_the_card_reports_the_resolved_date_not_the_requested_one(self, custom):
+        """Resolution is backward — the last snapshot at or before the
+        request — and the card says which date it actually used."""
+        card = find_cards(custom, r"^Unrealized")[-1]
+        assert custom["expected_end"] in card["label"], (
+            f"Unrealized is labelled {card['label']!r}; expected it to "
+            f"name the resolved snapshot {custom['expected_end']}"
+        )
+        assert custom["latest_snapshot"] not in card["label"], (
+            "the card resolved to the LATEST snapshot — the silent "
+            "fallback to today is back"
+        )
+
+    def test_the_figures_moved_off_the_latest_snapshot(self, custom, rendered):
+        """The real defect, not the label: a custom window ending in the
+        past must not report today's value."""
+        life = next((x for x in rendered["performance"]
+                     if x["filter"] == "Total" and x["window"] == "lifetime"), None)
+        assert life is not None
+        for metric in ("Unrealized", "Total Return"):
+            cur = money(find_cards(custom, rf"^{metric}(?:\s|$)")[-1]["value"])
+            latest = money(find_cards(life, rf"^{metric}(?:\s|$)")[-1]["value"])
+            assert cur is not None and latest is not None
+            assert cur != pytest.approx(latest, abs=0.01), (
+                f"custom {metric} equals the latest-snapshot figure "
+                f"({cur:,.2f}) — the window end silently fell through to today"
+            )
+
+    def test_the_stated_span_matches_the_card(self, custom):
+        """The row's own "Measured X to Y" note and the Unrealized
+        card's as-of date are the same date, because every figure in the
+        row is measured to the resolved bound."""
+        spans = [c["title"] for c in custom["cards"] if "Measured " in (c["title"] or "")]
+        assert spans, "no card states its measured span"
+        for t in spans:
+            assert f"to {custom['expected_end']}" in t, (
+                f"a card claims a span ending elsewhere: {t!r}")

@@ -1124,6 +1124,38 @@ function renderPerformance() {
   } else if (performanceWindow !== 'lifetime') {
     _winLowerIso = _windowCutoffIso(performanceWindow, _winRefIso);
   }
+  // RESOLVE the upper bound to a snapshot that exists, exactly as the
+  // lower bound is anchored below, and then MEASURE EVERYTHING TO THE
+  // RESOLVED DATE — the end value, the flows, the realized sum.
+  //
+  // History is semimonthly, so a custom "To" date the user typed almost
+  // never coincides with a snapshot.  The end value used to be an exact
+  // `history.find(...)` with `|| history[history.length - 1]` behind it:
+  // any date that wasn't the 15th or a month end silently fell through
+  // to TODAY.  That is not a rounding difference, it is a different
+  // window — and it was mixed with flows that DID respect the requested
+  // date, so a custom window ending in April reported today's value
+  // minus April's contributions: every market move and every deposit in
+  // between mis-attributed.  Unrealized was the visible symptom (it
+  // never moved off today's figure) but Total Return was wrong too.
+  //
+  // Resolve BACKWARD — the last snapshot at or before the request.  A
+  // level ("what did I hold on this date") must not be answered with
+  // information from after it, and it matches the lower-bound anchor,
+  // so both ends of the window follow one rule.  Note this deliberately
+  // differs from `computeTimeWeightedReturnForWindow`, which snaps to
+  // the NEAREST snapshot so a user can reproduce a brokerage
+  // statement's period; that is a return over a span, not a level at a
+  // date.  Two rules, each argued, rather than three by accident.
+  if (_winUpperIso && history.length) {
+    let _endSnapIdx = -1;
+    for (let i = 0; i < history.length; i++) {
+      if ((history[i].date || '') <= _winUpperIso) _endSnapIdx = i; else break;
+    }
+    // A bound before the first snapshot has no answer; the date input's
+    // `min` prevents it from the UI, but clamp rather than fall through.
+    _winUpperIso = history[_endSnapIdx >= 0 ? _endSnapIdx : 0].date || '';
+  }
   // ANCHOR the window on a snapshot we actually have, and measure every
   // dollar figure in this row from THAT date.
   //
@@ -1207,9 +1239,10 @@ function renderPerformance() {
     totalUnrealized = _whole_unrealized;
     totalValue = _whole_value;
   } else {
-    // Find the snapshot at upper bound and compute filtered value/unrealized
-    const endSnap = history.find(h => h.date === _winUpperIso) ||
-      history[history.length - 1];
+    // `_winUpperIso` is already resolved to a snapshot date above, so
+    // this is an exact hit by construction — no fallback, because the
+    // fallback was the bug (it silently substituted today).
+    const endSnap = history.find(h => h.date === _winUpperIso);
     if (endSnap && Array.isArray(endSnap.positions)) {
       for (const p of endSnap.positions) {
         if (_aggFilterSet && !_aggFilterSet.has(p.account_group)) continue;
@@ -1291,7 +1324,10 @@ function renderPerformance() {
            value="${perfTwrStart || ''}" onchange="setPerfTwrStart(this.value)">
     <span class="hist-label">To</span>
     <input type="date" class="hist-date" min="${_perfWindowMin}" max="${_perfWindowMax}"
-           value="${perfTwrEnd || ''}" onchange="setPerfTwrEnd(this.value)">` : '';
+           value="${perfTwrEnd || ''}" onchange="setPerfTwrEnd(this.value)">
+    <span class="hist-label" style="margin-left:10px;opacity:.7;"
+          title="History is sampled on the 15th and the last day of each month (plus today).  A date between samples resolves BACKWARD to the last one at or before it, and every figure in this row — value, flows, realized — is then measured to that same date, so they describe one span.">
+      measured ${_winAnchorIso || 'inception'} → ${_winUpperIso}</span>` : '';
 
   const _totalReturnTitle = 'Current portfolio value minus net contributed (deposits − withdrawals).  Same formula as the Top bar and the Overview tab — the "did I make money?" answer.\n\nIt is NOT Realized + Unrealized, and no simple sum reaches it. Sale proceeds get redeployed into new positions, so a dollar of gain can end up inside the cost basis of something you still hold rather than in either figure. Income arrives as cash without being a realized gain on any lot, and cash outside Savings accounts is not in the holdings value.\n\nTreat Realized and Unrealized as two views of the portfolio, not two halves of this number.';
 
