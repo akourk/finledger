@@ -29,6 +29,7 @@ from collections import defaultdict
 from typing import Iterable
 
 from .actions import NEUTRAL_ACTIONS, SUBTRACT_ACTIONS
+from .basis import txn_external_cash_flow
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS, contract_multiplier
 from .valuation import is_dust as _is_dust
 
@@ -238,35 +239,60 @@ def compute_position_endings(txns: list[dict]) -> tuple[dict[str, str], set[str]
 
 
 # ---------------------------------------------------------------------------
-# Stage 4: cash principal (Apple Savings basis = deposits − withdrawals)
+# Stage 4: cash principal (a Savings account's basis = external cash in)
 # ---------------------------------------------------------------------------
+
+def cash_principal_effect(t: dict) -> float:
+    """Signed principal change this txn makes to a Savings cash position.
+
+    Principal is the money that arrived from OUTSIDE the account — so it
+    is exactly the txn's external cash flow, and it routes through
+    ``basis.txn_external_cash_flow``, the single source of truth for
+    that question (the same helper ``net_contributed`` reads).  What is
+    deliberately left out is the return the account earns for itself:
+    interest raises the balance without raising basis, which is the
+    whole point of the convention — absorb it and a HYSA forever reads
+    "gain: 0", burying everything the account made.
+
+    Deriving from the cash-flow classifier rather than a local action
+    list is what keeps the two halves from contradicting each other.
+    This was a literal ``Deposit`` / ``Withdrawal`` check, written
+    before ``balance_anchor.py`` began synthesizing ``Cash Back`` rows
+    for Apple Card Daily Cash.  ``Cash Back`` is ``cash_flow="in"``, so
+    ``net_contributed`` counted those dollars as contributed capital
+    while this function did not — and the same dollars therefore also
+    showed up as the HYSA's unrealized *gain*.  Money arriving from
+    outside is contributed capital or investment return, never both.
+
+    Returns 0.0 for any txn that is not cash in a Savings-type account.
+
+    **Shared by both cost-basis walkers** — ``compute_cash_principal``
+    (which feeds ``build_holdings``) and ``history.compute_history``'s
+    per-snapshot walk.  Those two used to disagree; see the cash-basis
+    invariant in ``compute_history``'s docstring.
+    """
+    if t.get("symbol", "") not in CASH_SYMBOLS:
+        return 0.0
+    if ACCOUNT_TYPES.get(t.get("account_group", "")) != "Savings":
+        return 0.0
+    return txn_external_cash_flow(t)
+
 
 def compute_cash_principal(txns: Iterable[dict]) -> dict[tuple[str, str], float]:
     """Per-(account, USD) net principal for Savings-type accounts.
 
-    For HYSA-style accounts, basis = principal (deposits − withdrawals).
-    Interest accrued shows up as unrealized gain rather than getting
-    absorbed into basis — otherwise a HYSA always reads "gain: 0"
-    which buries the entire return of the account.
+    For HYSA-style accounts, basis = principal, so the interest the
+    account earns surfaces as unrealized gain.  The per-txn rule lives
+    in ``cash_principal_effect`` because the snapshot walker in
+    ``history.py`` needs the same rule applied incrementally.
 
     Returns ``{(account_group, "USD"): principal_dollars}``.
     """
     out: dict[tuple[str, str], float] = defaultdict(float)
     for t in txns:
-        sym = t.get("symbol", "")
-        if sym not in CASH_SYMBOLS:
-            continue
-        acct = t.get("account_group", "")
-        if ACCOUNT_TYPES.get(acct) != "Savings":
-            continue
-        action = t.get("action", "")
-        amt = float(t.get("amount", 0) or 0)
-        if action == "Deposit":
-            out[(acct, sym)] += amt
-        elif action == "Withdrawal":
-            out[(acct, sym)] -= amt
-        # Interest (and any future non-principal cash event) deliberately
-        # excluded — it's the gain itself, not principal.
+        eff = cash_principal_effect(t)
+        if eff:
+            out[(t.get("account_group", ""), t.get("symbol", ""))] += eff
     return dict(out)
 
 

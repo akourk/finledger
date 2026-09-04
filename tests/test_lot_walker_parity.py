@@ -238,6 +238,23 @@ class TestTheSharedRulesAreStillShared:
                 "shared helper"
             )
 
+    def test_history_uses_the_shared_cash_principal_rule(self):
+        """Cash has no lots, so its basis is the one figure neither
+        walker can read off a lot queue — each had to answer separately,
+        and they answered differently for years: principal in
+        `build_holdings`, face value here.  The numeric parity check
+        could not catch it, because it skipped USD outright.
+        """
+        src = inspect.getsource(H.compute_history)
+        assert "cash_principal_effect(" in src, (
+            "history's walker no longer routes savings-cash basis through "
+            "the shared principal rule — the convention is duplicated again"
+        )
+        assert "pos_basis = qty" not in src, (
+            "history has re-inlined face-value cash basis, which disagrees "
+            "with the holdings table by every dollar of interest earned"
+        )
+
 
 class TestTheSharedRulesThemselves:
     """`fmv_basis` and `basis_override_or` are now load-bearing for both

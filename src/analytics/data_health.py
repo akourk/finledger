@@ -494,22 +494,32 @@ def _check_lot_queue_parity(txns: list[dict],
 def _check_history_holdings_basis_parity(history: list[dict],
                                          holdings_by_account: list[dict]) -> list[dict]:
     """The latest history snapshot's per-position cost basis must match
-    the holdings table's cost basis for every non-cash (account, symbol)
-    present in both.
+    the holdings table's cost basis for every (account, symbol) present
+    in both — cash included.
 
     history.compute_history has its own inline lot walker (it needs lot
     state at every sample date), and basis-rule changes in basis.py have
     twice landed without the matching history.py change (wrap
     basis-carrying, FMV transfer-ins) — silently desyncing the Overview
     chart's Cost Basis line and the as-of-date holdings view from the
-    Holdings table.  This check pins the two walkers together."""
+    Holdings table.  This check pins the two walkers together.
+
+    CASH USED TO BE EXEMPT and should never have been.  The exemption
+    was written when the snapshot walker booked cash at face value and
+    the holdings table booked it at principal, so a HYSA's every
+    accrued dollar of interest was a disagreement — the skip made the
+    check pass by declining to look.  Both walkers now use principal
+    (``pipeline_stages.cash_principal_effect``); iterating holdings
+    means the bridged groups' synthetic snapshot USD rows, which have
+    no holdings counterpart and are genuinely face-value, are still
+    skipped by the `key not in snap_basis` guard below."""
     if not history:
         return []
     latest = history[-1]
     snap_basis: dict[tuple[str, str], float] = {}
     for p in latest.get("positions", []) or []:
         sym = p.get("symbol", "")
-        if not sym or sym == "USD":
+        if not sym:
             continue
         key = (p.get("account_group", ""), sym)
         snap_basis[key] = snap_basis.get(key, 0.0) + float(p.get("cost_basis") or 0)
@@ -517,7 +527,7 @@ def _check_history_holdings_basis_parity(history: list[dict],
     drift = []
     for h in holdings_by_account:
         sym = h.get("symbol", "")
-        if not sym or sym == "USD":
+        if not sym:
             continue
         cb = h.get("cost_basis")
         if cb is None:

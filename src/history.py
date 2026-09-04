@@ -28,6 +28,7 @@ from .basis import (
 from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
                           wrap_next_dates, wrap_symbol_families)
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS
+from .pipeline_stages import cash_principal_effect
 from .prices import get_price
 from .valuation import QTY_EPSILON, mark, mark_is_dust
 
@@ -217,6 +218,19 @@ def compute_history(txns: list[dict],
     ``basis_override`` wins on lot-creating branches.  The
     ``history_holdings_basis_parity`` data-health check pins the two
     walkers together; if you change a rule in basis.py, change it here.
+
+    CASH: a Savings cash position has no lots, so its basis is walked
+    separately — principal only, via
+    ``pipeline_stages.cash_principal_effect``, the same per-txn rule
+    ``build_holdings`` uses.  This used to be face value (``basis ==
+    qty``, unrealized always 0) while the holdings table used
+    principal, so the two disagreed by every dollar of interest the
+    account had ever earned.  Nothing caught it: the parity check
+    skipped ``symbol == "USD"`` outright.  It surfaced on the
+    Performance tab, whose Unrealized card reads live holdings for the
+    lifetime window and this snapshot for every other window — one
+    label, one date, two answers.  The USD skip is gone; keep the two
+    conventions identical.
     """
     if not txns:
         return []
@@ -310,6 +324,11 @@ def compute_history(txns: list[dict],
 
     balances: dict[tuple[str, str], float] = defaultdict(float)
     lots: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    # Running principal for Savings cash positions — cash has no lots, so
+    # its basis is walked here instead.  Same per-txn rule the holdings
+    # table uses (pipeline_stages.cash_principal_effect); see the cash
+    # note in this function's docstring for why face value was wrong.
+    cash_principal: dict[tuple[str, str], float] = defaultdict(float)
     # Fallback price basis per symbol — last non-zero `price` observed in a
     # transaction at or before the current sample date.  Used when the price
     # cache can't resolve a symbol (multi-word fund display names, delisted
@@ -391,6 +410,14 @@ def compute_history(txns: list[dict],
                         balances[(acct, sym)] -= qty
                     else:
                         balances[(acct, sym)] += qty
+
+            # Cash basis walk — a no-op for everything except cash in a
+            # Savings account.  Kept next to the balance walk (not in the
+            # basis dispatch below) because cash never enters a lot queue:
+            # basis_effect_for returns "ignore" for every USD row.
+            _cash_eff = cash_principal_effect(t)
+            if _cash_eff:
+                cash_principal[(acct, sym)] += _cash_eff
 
             # Intra-group transfers net to zero in the same lot queue —
             # except rebase pairs (Transfer In with a user basis
@@ -562,7 +589,13 @@ def compute_history(txns: list[dict],
 
             # Cost basis for this position at this date
             if sym in CASH_SYMBOLS:
-                pos_basis = qty  # cash "basis" = face value
+                # Principal, NOT face value — the holdings table's
+                # convention (pipeline_stages.build_holdings), so a
+                # HYSA's accrued interest reads as unrealized gain on
+                # both sides.  Only Savings cash reaches `balances`;
+                # the bridged-group synthetic USD rows appended below
+                # are genuinely face-value.
+                pos_basis = cash_principal.get((acct, sym), 0.0)
             else:
                 pos_basis = sum(lot["qty"] * lot["basis_per_share"]
                                 for lot in lots.get((acct, sym), []))

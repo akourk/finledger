@@ -462,6 +462,19 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     branch.  **If you change a basis rule, change BOTH walkers** (see
     the `fin-lot-walker-sync` skill) — or better, put the rule in
     `basis.py` at module level and call it from both.
+
+    **CASH is the third rule they share, and the one that bit.**  A
+    Savings cash position has no lots, so neither walker can read its
+    basis off a lot queue — each had to answer separately, and they
+    answered differently for years: `build_holdings` used PRINCIPAL
+    (so a HYSA's accrued interest reads as unrealized gain) while the
+    snapshot walker used FACE VALUE (unrealized always $0).  Both now
+    call `pipeline_stages.cash_principal_effect`, walked incrementally
+    here so each snapshot carries principal as of ITS date.  The
+    numeric parity check could never have caught this: it skipped
+    `symbol == "USD"` outright, i.e. it passed by declining to look at
+    the only positions where the two conventions could differ.  The
+    skip is gone.  See AUDIT.md F-035.
 15. **Export** (`export.export_json`) — JSON with a fixed field order so
     dashboard columns stay logical.
 16. **Dashboard** (`dashboard.generate_dashboard`) — string-interpolate the
@@ -576,6 +589,20 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
 - **USD balance tracking is deliberately skipped for non-Savings accounts.**
   Don't try to "fix" this — sell proceeds are underreported in most broker
   exports and you'll produce worse data.
+
+  **A Savings cash position's basis is PRINCIPAL, not face value.**
+  Basis moves only with external cash flow
+  (`pipeline_stages.cash_principal_effect`, which delegates to
+  `basis.txn_external_cash_flow`); the interest the account earns
+  raises value without raising basis, so it surfaces as the account's
+  unrealized gain.  Absorb it and a HYSA reads "gain: $0" forever,
+  burying everything the account made.  Derive the rule from the
+  cash-flow classifier rather than a local action list — it was a
+  literal `Deposit`/`Withdrawal` check until `Cash Back`
+  (`cash_flow="in"`) started arriving from `balance_anchor.py`, at
+  which point the same dollars were counted as contributed capital by
+  `net_contributed` AND as investment return by the Holdings table.
+  Both walkers use this rule; see step 14's invariant block.
 
   **Carve-out: reconstructed cash bridges (`src/cash_bridge.py`).**  For
   a broker whose export is *provably complete*, the implicit cash
@@ -1041,7 +1068,10 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   Consumers: `basis.compute_cash_summary`,
   `history._compute_net_contributed_series`,
   `history._compute_benchmark_series`,
-  `analytics._shared.net_cash_flow`.  All four call this helper —
+  `analytics._shared.net_cash_flow`, and
+  `pipeline_stages.cash_principal_effect` (a Savings cash position's
+  basis is its external cash flow — see the cash-basis invariant
+  above).  All five call this helper —
   if you find yourself duplicating cash-flow classification, route
   it through here instead.  Pinned by
   `tests/test_actions_catalog.py::test_external_cash_flow_helper_handles_all_carve_outs`.
@@ -1153,7 +1183,10 @@ threads through every consumer.
   Stages: `walk_balances`, `compute_position_endings`,
   `compute_cash_principal`, `build_holdings`,
   `fold_cash_into_basis_methods`, `build_basis_methods_totals`, plus
-  `is_dust` re-exported from `valuation`.
+  `is_dust` re-exported from `valuation`.  `cash_principal_effect`
+  (the per-txn rule behind `compute_cash_principal`) is exported for
+  `history.py`'s snapshot walker, which needs it applied incrementally
+  — cash basis is a rule BOTH walkers share.
 
 - **Invariant assertions** — `analytics.data_health.check_invariants`
   promotes high-severity data-health checks (snapshot rollup, lot-

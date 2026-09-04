@@ -40,6 +40,37 @@ A basis rule lives in up to FOUR places.  Change all that apply:
    `BasisEffect` literal, the catalog is the single source of truth
    (see the `fin-add-action` skill).
 
+## Cash: the basis rule with no lot queue
+
+A Savings cash position (`USD` in an account typed `Savings`) never
+enters a lot queue — `basis_effect_for` returns `"ignore"` for every
+cash row — so neither walker can read its basis off lot state.  Both
+walk it separately, and both must call
+**`pipeline_stages.cash_principal_effect`**:
+
+- `compute_cash_principal` → `build_holdings` (the Holdings table)
+- `history.compute_history`, incrementally beside the balance walk, so
+  each snapshot carries principal as of ITS date
+
+The convention is **principal, not face value**: basis moves only with
+external cash flow (the helper delegates to
+`basis.txn_external_cash_flow`), so interest earned surfaces as the
+account's unrealized gain.  Both directions of getting this wrong are
+real regressions, so pin whichever you touch:
+
+- Making the two walkers *disagree* is the bug that shipped — one date,
+  one position, two answers, visible on the Performance tab as an
+  Unrealized card that changed when only the time window changed
+  (AUDIT.md F-035).
+- Making them *agree on face value* would also make the parity check
+  pass, and would silently delete the HYSA's entire reported return.
+
+Derive from the cash-flow classifier, never a local action list.  The
+rule was a literal `Deposit`/`Withdrawal` check until `balance_anchor.py`
+began synthesizing `Cash Back` rows (`cash_flow="in"`), at which point
+the same dollars were contributed capital to `net_contributed` and
+investment return to the Holdings table.
+
 ## Adjacent things that often need the same change
 
 - **`cost_basis_overrides.py`** — its `_LOT_CREATING_ACTIONS` set must
@@ -61,7 +92,11 @@ All enforced as high-severity in tests via `FIN_ASSERT_INVARIANTS=1`:
   table (catches #3 drift).
 - `history_holdings_basis_parity` — latest snapshot per-position basis
   vs holdings table (catches #2 drift).  Added after the second missed-
-  consumer bug; do not weaken it.
+  consumer bug; do not weaken it.  **It used to skip `symbol == "USD"`,
+  which made it pass by declining to look at the only positions where
+  the two cash conventions could differ.**  If a check needs an
+  exemption to go green, the exemption is the finding — verify the
+  exempted class agrees instead of carving it out.
 - `negative_cost_basis`, `zero_qty_with_basis`, `negative_holding_days`.
 
 **Plus a STRUCTURAL check that needs no fixture:**
@@ -83,7 +118,10 @@ shared: `_consume_lots`, `_consume_lots_directed`,
 2026-08-25 — `basis_effect_for` (the symbol-aware effect classifier),
 `reserved_for` (future-demand lot reservation), `wrap_kind`,
 `zero_basis_origin`, and `wrap_carry_lots` (the whole basis-carrying
-half of a wrap: which source lots go and how they rescale).
+half of a wrap: which source lots go and how they rescale).  Since
+2026-09-04, `pipeline_stages.cash_principal_effect` too — the one
+shared rule that lives outside `basis.py`, because cash basis is not
+lot state.
 `test_lot_walker_parity.py` pins ALL of these as shared — each has a
 test that fails if a walker re-inlines it, several asserting the inlined
 form is absent rather than just that the call is present.
@@ -106,3 +144,11 @@ snapshot's known-good figures need a *justified* update.
   latest snapshot's per-position `cost_basis` matches
   `state_to_holdings(compute_basis_default(txns), "fifo")` — see
   `test_history_wrap_carries_basis_to_destination` for the pattern.
+- For a cash-basis change, `tests/test_cash_basis_parity.py` — it runs
+  both walkers over one savings ledger and asserts they report the same
+  figure, that the figure is principal rather than face value, and that
+  the data-health check still flags a seeded disagreement.
+
+**Verify any new parity test is non-vacuous**: revert the fix, confirm
+the test fails, restore.  A parity test that passes against the broken
+code is the failure mode this whole skill is about.

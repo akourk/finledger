@@ -121,6 +121,7 @@ not a verdict**, and so is a clean result.
 
 | ID | Sev | Claim |
 |---|---|---|
+| F-035 | **high** | *(fixed)* The two cost-basis walkers used different conventions for a Savings cash position — principal in the holdings table, face value in every history snapshot — and the parity check that should have caught it exempted `USD`; surfaced as a Performance card that changed when only the time window changed; user-reported |
 | F-034 | **high** | *(fixed)* `Return of Capital` was catalogued `basis="ignore"` on the grounds that the payout was untracked; the cash bridge later started tracking it, leaving the basis half of the event unapplied — understated per-position return, basis diverging from the 1099-B, and a realized gain never booked |
 | F-033 | **high** | *(fixed)* The Overview's Cost Basis, Unrealized and Realized read the pure-FIFO what-if table instead of the annotated walk, so they disagreed with the rest of the app whenever an account overrides the default lot method |
 | F-032 | **high** | *(fixed)* A Performance window reaching back past the first snapshot double-counted the founding deposit — a 5y view of a younger portfolio printed a dollar LOSS beside a large positive cumulative return; found by the new render-relation harness |
@@ -2177,6 +2178,105 @@ showing a figure computed against a basis the position no longer has —
 but "total gain in dollars" remains the meaningful readout for these,
 and if a percent is ever wanted, the denominator would have to be
 original cost, which is a change to what `pct_return` means everywhere.
+
+
+### F-035: the exemption that made the check pass (2026-09-04)
+
+User-reported, from the Performance tab: switching the time window
+Lifetime → 3y → 3mo moved most stat cards, but Unrealized moved once
+and then stopped.
+
+Half of that is correct and worth stating first, because it looks
+wrong and isn't.  **Unrealized is a level at the window END, not a
+flow accrued during the window.** Every trailing window ends on the
+same day, so 3y and 3mo resolve to the same snapshot and must print
+the same number.  Only a custom window with an earlier end date can
+move it.  The `3mo` sub-label invites the other reading; the figure is
+right.
+
+Lifetime differing from both was the real finding.  The card reads
+live `holdings_by_account` for the lifetime window and the latest
+history snapshot for every other window — the same date, two sources:
+
+| | cash basis convention |
+|---|---|
+| `pipeline_stages.build_holdings` | principal (deposits − withdrawals) |
+| `history.compute_history` | face value (`pos_basis = qty`) |
+
+A savings account has no lots.  `basis_effect_for` returns `"ignore"`
+for every cash row, so neither walker can read cash basis off lot
+state — each had to answer separately, and they answered differently.
+The gap was the whole lifetime interest of the HYSA.
+
+Both conventions were deliberate in isolation.  `build_holdings` uses
+principal so the account's accrued interest shows up as its unrealized
+gain, which is the only place a HYSA's return is visible at all;
+absorb it into basis and the position reads "gain: $0" forever.  The
+snapshot walker's face value is the obvious default for cash.  Neither
+author was reasoning about the other.
+
+**What makes this worth writing down is the check.**
+`_check_history_holdings_basis_parity` exists specifically to pin the
+two walkers together, is high-severity, and is enforced as a hard
+assertion in the test suite.  It ran on every fixture and stayed
+green, because it opened with:
+
+```python
+if not sym or sym == "USD":
+    continue
+```
+
+on both sides.  Cash was the ONLY class of position where the two
+walkers could disagree — lots are shared code — so the check was
+exempting exactly the gap it was written to cover.  It passed by
+declining to look.
+
+That is a different failure from F-034's.  There, a rule's written
+justification was invalidated by a change elsewhere.  Here the rule
+was never stated in one place at all, and the guard that would have
+forced the question was carved out to make it green.  **An exemption
+added so a check passes is not a detail of the check; it is the
+finding.**  The right move when a class of position fails a parity
+check is to establish which convention is correct and make both sides
+use it — carving the class out converts an open question into a
+permanent silent disagreement, and removes the only mechanism that
+would ever raise it again.
+
+Fixed by extracting `pipeline_stages.cash_principal_effect` — the
+per-txn rule, called by `compute_cash_principal` for holdings and
+walked incrementally beside the balance walk in `compute_history`, so
+each snapshot carries principal as of its own date.  The USD skip is
+gone from both sides of the parity check; bridged groups' synthetic
+snapshot cash rows are still skipped, but structurally (the check
+iterates holdings, and a snapshot-only position has no counterpart)
+rather than by name.
+
+A second defect fell out of writing the rule down.  Principal was a
+literal `Deposit` / `Withdrawal` check, written before
+`balance_anchor.py` began synthesizing `Cash Back` rows for Apple Card
+Daily Cash.  `Cash Back` is `cash_flow="in"` in the catalog, so
+`net_contributed` counts those dollars as contributed capital — while
+the principal check did not, so the same dollars were ALSO the
+account's unrealized gain.  Contributed capital and investment return
+at once.  `cash_principal_effect` now delegates to
+`basis.txn_external_cash_flow`, the documented single source for "did
+this txn move money in or out of the user's pocket", which makes the
+two halves the same classification by construction and closes the
+question for every future action rather than for this one.
+
+Portfolio-level totals were never affected: `total_return` is
+`value − net_contributed`, and neither figure reads cash basis.  What
+was wrong was the split between "contributed" and "earned", and the
+Cost Basis / Unrealized lines wherever they were sourced from
+snapshots — the Overview chart's overlays as well as the Performance
+card that surfaced it.
+
+Pinned by `tests/test_cash_basis_parity.py` (both walkers over one
+savings ledger; the figure is principal, not face value; a seeded
+disagreement is flagged) and a structural guard in
+`test_lot_walker_parity.py` that fails if `history.py` re-inlines
+face-value cash basis.  Each was verified to fail against the
+pre-fix code before being kept.
 
 
 ## Improvement opportunities
