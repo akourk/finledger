@@ -2898,3 +2898,159 @@
       height: 9px;
     }
   }
+  /* ---------------------------------------------------------------
+     Positions board — the Holdings-by-Asset section's alternate
+     layout.  One to three independently-sorted panes; the three-pane
+     arrangement puts the value-ranked list at full height beside a
+     stacked pair of movers, which is the layout this view exists for.
+     --------------------------------------------------------------- */
+  .board-controls {
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .board-asof {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    margin-left: auto;
+  }
+
+  .board-grid {
+    display: grid;
+    gap: 14px;
+  }
+
+  .board-grid-1 { grid-template-columns: 1fr; }
+  .board-grid-2 { grid-template-columns: 1fr 1fr; }
+  /* Main list wider than the movers rail — the movers only need enough
+     width for a symbol and two numbers. */
+  .board-grid-3 { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+
+  .board-col-side {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    gap: 14px;
+    min-width: 0;
+  }
+
+  .board-col-main { min-width: 0; }
+
+  .board-pane {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .board-pane-head {
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .board-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .board-chip {
+    font-size: 0.68rem;
+    padding: 2px 7px;
+  }
+
+  .board-pane-meta {
+    align-items: center;
+    display: flex;
+    gap: 10px;
+    margin-left: auto;
+  }
+
+  .board-pane-total {
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Each pane scrolls independently so a long value-ranked list never
+     pushes the movers rail off the page. */
+  .board-scroll {
+    max-height: 620px;
+    overflow: auto;
+  }
+
+  .board-col-side .board-scroll { max-height: 300px; }
+
+  .board-scroll table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  .board-scroll th,
+  .board-scroll td {
+    padding: 5px 9px;
+    white-space: nowrap;
+  }
+
+  .board-scroll td {
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .board-scroll tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+
+  /* Sticky header: the movers panes are short, but the main list is
+     long enough that the column you sorted by scrolls away. */
+  .board-scroll thead th {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    font-weight: 600;
+    position: sticky;
+    text-transform: uppercase;
+    top: 0;
+    z-index: 1;
+  }
+
+  .board-th { cursor: pointer; user-select: none; }
+  .board-th:hover { color: var(--text); }
+  .board-th.sorted { color: var(--accent); }
+
+  /* An unknown move.  Dim and dashed rather than 0 — the distinction
+     between "did not move" and "cannot be priced" is the whole point. */
+  .board-na {
+    color: var(--text-dim);
+    cursor: help;
+  }
+
+  /* Traded-in-window marker: this row's figure covers only the shares
+     still open, so realized gain on anything sold sits outside it. */
+  .board-traded {
+    color: var(--yellow);
+    cursor: help;
+    font-size: 0.9em;
+  }
+
+  .board-empty,
+  .board-note {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    padding: 14px;
+  }
+
+  .board-note { align-items: center; display: flex; gap: 10px; }
+
+  .board-allcol { border-left: 1px solid var(--border); }
+
+  @media (max-width: 1100px) {
+    .board-grid-2,
+    .board-grid-3 { grid-template-columns: 1fr; }
+    .board-col-side { grid-template-rows: auto auto; }
+  }

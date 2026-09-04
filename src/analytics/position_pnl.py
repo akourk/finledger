@@ -49,6 +49,16 @@ via the intrinsic floor) or not at all.  A flat last-traded price
 carried backwards would silently print a $0 move for a fund whose real
 move is unknown — the same rule ``priced_pct`` follows elsewhere.
 
+A genuine $0.00 is still possible and is not the same thing: a mutual
+fund whose NAV has not struck yet resolves to the SAME cached close at
+both ends of a 1D window, so its move really is nil *in fin's data*.
+That is deliberately not re-labelled "unknown" here, because
+``header``'s portfolio 1-day change treats it the same way — it sums
+values and books the fund as contributing nothing.  Splitting the two
+would put the board and the top bar in disagreement about the same
+position on the same day.  The freshness caveat those figures share is
+the ``prices_as_of`` / ``provisional`` stamp, not a per-position dash.
+
 Returned shape::
 
     {

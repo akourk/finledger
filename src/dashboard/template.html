@@ -152,8 +152,16 @@
 
   <div class="section-header" style="margin-top:32px;" id="byAssetHeader">
     <h2><span style="color:var(--accent);">Holdings by Asset<span class="as-of-label"></span></span></h2>
+    <!-- Table vs Board are two arrangements of ONE dataset — the board
+         reads analytics.position_pnl, which is anchored to the same
+         holdings rows the table renders.  Neither recomputes. -->
+    <div class="toggle-group">
+      <button class="tbtn active" id="btnBoardTable" onclick="setBoardLayout('table')">Table</button>
+      <button class="tbtn" id="btnBoardBoard" onclick="setBoardLayout('board')">Board</button>
+    </div>
     <span class="total-value" id="byAssetTotalValue"></span>
   </div>
+  <div id="boardBody" style="display:none;"></div>
   <div id="byAssetBody">
     <div class="controls" id="byAssetControls">
       <input type="text" id="byAssetSearch" placeholder="Search symbol or sector..." />

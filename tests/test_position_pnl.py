@@ -268,3 +268,36 @@ def test_windows_are_ordered_and_labelled(stub_prices):
 def test_empty_holdings_yields_nothing(stub_prices):
     from src.analytics.position_pnl import compute_position_pnl
     assert compute_position_pnl({"lots": {}}, [], [], as_of=AS_OF) is None
+
+
+def test_board_rows_anchor_to_the_holdings_table(stub_prices):
+    """Every board row has a Holdings row and carries that row's own
+    level figures.  The board is an ARRANGEMENT of the holdings data,
+    not a second derivation of it — if these ever diverge, one of the
+    two tables is lying about which positions exist."""
+    from src.analytics.position_pnl import compute_position_pnl
+    _seed("AAA", {"2024-06-13": 100.0, "2024-06-14": 110.0})
+    state = {"lots": {
+        ("Broker", "AAA"):   [_lot("2020-01-01", 10.0, 40.0)],
+        ("Roth IRA", "AAA"): [_lot("2021-01-01", 5.0, 60.0)],
+    }}
+    holdings = [
+        _holding("Broker", "AAA", 110.0, 400.0, value=1100.0, qty=10.0),
+        _holding("Roth IRA", "AAA", 110.0, 300.0, value=550.0, qty=5.0,
+                 acct_type="Retirement"),
+        _holding("Apple Savings", "USD", 1.0, 5000.0, value=5100.0,
+                 qty=5100.0, acct_type="Savings"),
+    ]
+    out = compute_position_pnl(state, holdings, [], as_of=AS_OF)
+
+    keys_in = {(h["account_group"], h["symbol"]) for h in holdings}
+    keys_out = {(r["account_group"], r["symbol"]) for r in out["by_account"]}
+    assert keys_in == keys_out
+    for h, r in zip(holdings, out["by_account"]):
+        assert r["value"] == h["value"]
+        assert r["price"] == h["price"]
+        assert r["cost_basis"] == h["cost_basis"]
+        assert r["open_pnl"] == h["unrealized_gain"]
+    # ...and the symbol rollup sums the same money, cash included.
+    assert sum(r["value"] for r in out["by_symbol"]) == pytest.approx(
+        sum(h["value"] for h in holdings))

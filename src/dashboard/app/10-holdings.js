@@ -95,6 +95,13 @@ function setAsOfDate(date) {
   if (typeof renderAllocation === 'function') renderAllocation();
   if (typeof renderHoldings === 'function') renderHoldings();
   if (typeof renderByAssetTable === 'function') renderByAssetTable();
+  // Board mode is latest-only; it renders its own explanation when the
+  // as-of date moves off latest (defined in 15-board.js, which is
+  // concatenated after this file — hence the call-time guard).
+  if (typeof renderPositionsBoard === 'function'
+      && typeof boardLayout !== 'undefined' && boardLayout === 'board') {
+    renderPositionsBoard();
+  }
   if (typeof renderRecentTransactions === 'function') renderRecentTransactions();
 }
 

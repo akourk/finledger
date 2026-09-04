@@ -113,3 +113,26 @@ def test_missing_marker_raises(tmp_path, monkeypatch):
     json_path.write_text("{}")
     with pytest.raises(RuntimeError, match="missing marker"):
         generate_dashboard(json_path, tmp_path / "out.html")
+
+
+def test_board_module_is_bundled_and_reads_precomputed_figures():
+    """The positions board must ship in the bundle AND source its
+    numbers from `analytics.position_pnl`.
+
+    The board's whole claim is that it re-arranges one dataset rather
+    than deriving a second one; a renderer that recomputed a window
+    would be the exact failure this codebase keeps re-learning (the JS
+    quietly disagreeing with the Python).  This pins the wiring: the
+    module is concatenated, it reads the precomputed key, and the
+    template gives it both a container and a way in.
+    """
+    from src.dashboard import _read_app_js
+
+    js = _read_app_js()
+    assert "ANALYTICS.position_pnl" in js, (
+        "the board must read the precomputed payload")
+    assert "renderPositionsBoard" in js
+
+    tpl = (Path("src/dashboard/template.html")).read_text(encoding="utf-8")
+    assert 'id="boardBody"' in tpl, "board needs a render target"
+    assert "setBoardLayout('board')" in tpl, "board needs a way in"

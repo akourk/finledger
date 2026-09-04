@@ -288,6 +288,26 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       txns.  Drives the Holdings tab's expandable per-lot detail.
     - `positions` — per-symbol realized+unrealized rollup with
       pct_return, plus top-10 winners/losers.
+    - `position_pnl` — per-position open P&L over trailing windows
+      (1D/1W/1M/3M/YTD/1Y) for the Holdings tab's **board mode**;
+      `{as_of, windows, by_account, by_symbol}`.  **Flow-adjusted, and
+      computed per LOT**: "open P&L over a window" is only unambiguous
+      while the share count is constant, so each open lot answers for
+      itself — acquired AFTER the boundary → `value − basis`, before →
+      `qty × (P_now − P_start)`.  That is what a broker's 1D column
+      already is (a stock bought this morning shows `mark − cost`), and
+      summing it degenerates correctly: an untouched position reduces to
+      the constant-share move, a position younger than the window needs
+      no historical price, and a partially-sold one counts only the
+      shares still open (realized gain is NOT in a column labelled
+      *open* — `traded_in` flags those rows so the omission is visible).
+      Reads `lots.open_lot_rows`, so no ledger re-walk and no possible
+      disagreement with the Holdings lot detail.  Boundary marks are
+      taken with NO txn-price fallback: a window resolves from the price
+      cache (or an option's intrinsic floor) or reports `None`, never a
+      confident `$0`.  A genuine `$0.00` is a different thing and stays
+      — a fund whose NAV has not struck resolves to the same close at
+      both ends, exactly as `header`'s 1-day change already treats it.
     - `header_summary` — persistent top-bar (1-day change, etc.).
       Also carries `net_contributed` / `total_return` /
       `total_return_pct` — the SINGLE source for the Total Return
@@ -504,6 +524,22 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       Each Holdings-by-Asset row expands (click, latest as-of only)
       into its per-lot detail — acquired date, per-unit basis, value,
       unrealized, days-held, ST/LT term — from `analytics.lots`.
+      The Holdings-by-Asset section also has a **Table ↔ Board**
+      layout toggle (`app/15-board.js`).  Board mode is a broker-style
+      monitoring view: symbol / qty / mkt val / mark / window open P&L
+      $ and % / all-time open P&L $ and %, in one to three
+      independently-sorted panes (the 3-pane default puts the
+      value-ranked list beside a stacked gainers-over-losers rail).
+      Each pane picks its own window chip; "All windows" appends one
+      column per window to compare timeframes.  Every figure is READ
+      from `analytics.position_pnl` + the same `holdings_by_account`
+      rows the table renders — **the board derives nothing**, which is
+      why the two layouts cannot disagree.  Board mode is
+      **latest-as-of only** (trailing windows measured from today's
+      prices beside a past date's holdings would put two dates in one
+      row); off latest it renders a notice instead.  Pane config
+      persists in `localStorage` behind try/catch (a `file://`
+      dashboard can be origin-null, where the accessor throws).
     - **Transactions** — full ledger with filters, search, column toggle.
     - **Options** — lifetime P&L, win rate, cumulative P&L chart, open
       contracts, closed trades, per-underlying breakdown (with cross-
@@ -1424,7 +1460,7 @@ threads through every consumer.
     `// @@APP_JS@@` placeholder markers.
   - `styles.css` — all styling.
   - `app/*.js` — all JavaScript, split into one module per tab/concern
-    (`00-core.js`, `10-holdings.js`, `20-history.js`, `30-overview.js`,
+    (`00-core.js`, `10-holdings.js`, `15-board.js`, `20-history.js`, `30-overview.js`,
     `40-options.js`, `50-retirement.js`, `60-planning.js`, `70-income.js`,
     `80-tax.js`, `85-crypto.js`, `90-performance.js`,
     `95-transactions.js`).  They are concatenated **in filename order**
