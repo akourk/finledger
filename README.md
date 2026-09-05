@@ -6,6 +6,14 @@ holdings and every transaction ever — across every account, in one view.
 
 No server, no database, no cloud. One Python script, one HTML file out.
 
+> **Not tax, financial, or investment advice.** `fin` reconstructs figures
+> from broker CSV exports and will disagree with your broker in known,
+> documented ways — off-platform cost basis it cannot see, lot-relief
+> differences, wash-sale deferral. Treat your broker's own 1099s and
+> statements as authoritative and reconcile against them (that is what the
+> `Reconcile *` metadata rows are for) before relying on anything here for
+> a tax filing or a financial decision.
+
 ## Screenshots
 
 All screenshots are rendered from the bundled **fictional** sample portfolio
@@ -430,3 +438,7 @@ transaction pipeline never parses them as trades. Recommended names:
 
 The synthetic `samples/portfolio.snapshot.json` shows how the project
 works without exposing real data.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
