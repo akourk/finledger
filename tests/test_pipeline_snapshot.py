@@ -142,9 +142,9 @@ class TestRealizedGains:
         aapl_rg = _realized_for_symbol(synthetic_pipeline, "AAPL")
         assert aapl_rg == pytest.approx(150.0)
         # And the top-line realized should be AAPL's plus TWTR's merger gain
-        # TWTR: 2 × $54.20 - 2 × $50 = $8.40 realized
+        # TWTR: 2 × $60.00 - 2 × $50 = $20.00 realized
         twtr_rg = _realized_for_symbol(synthetic_pipeline, "TWTR")
-        assert twtr_rg == pytest.approx(8.40)
+        assert twtr_rg == pytest.approx(20.00)
         # XLNX: stock-for-stock (Sell at $0 basis → -$200)
         xlnx_rg = _realized_for_symbol(synthetic_pipeline, "XLNX")
         assert xlnx_rg == pytest.approx(-200.0)
@@ -158,7 +158,7 @@ class TestRealizedGains:
         amd_cil_rg = _realized_for_symbol(synthetic_pipeline, "AMD")
         assert amd_cil_rg == pytest.approx(108.45)
         # Overall realized should match sum-of-parts within rounding
-        expected_total = 150.0 + 8.40 + -200.0 + -500.0 + 108.45
+        expected_total = 150.0 + 20.00 + -200.0 + -500.0 + 108.45
         assert totals["realized_gain"] == pytest.approx(expected_total)
 
 

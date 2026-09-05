@@ -60,7 +60,7 @@ class TestCashMerger:
              "Quantity": "2S"},
             {"Activity Date": "10/31/2024", "Trans Code": "MRGC",
              "Instrument": "TWTR",
-             "Description": "Cash received thru Merger 2 shares at $54.2",
+             "Description": "Cash received thru Merger 2 shares at $60.0",
              "Amount": "$120.00"},
         ])
         txns = _parse(csv)
@@ -68,7 +68,7 @@ class TestCashMerger:
         assert len(sells) == 1, f"expected 1 Sell, got {len(sells)}"
         assert sells[0]["quantity"] == 2.0
         assert sells[0]["amount"] == 120.00
-        assert sells[0]["price"] == pytest.approx(54.20)
+        assert sells[0]["price"] == pytest.approx(60.00)
         assert _balance(txns, "TWTR") == pytest.approx(0.0)
 
     def test_mrgs_without_mrgc_emits_zero_proceeds_sell(self, isolated_workdir):
