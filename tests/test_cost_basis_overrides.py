@@ -34,7 +34,7 @@ def test_override_stamps_unpaired_transfer_in():
               "source": "t"}]
     match_and_stamp(txns2, [_ov("Coinbase", "2021-07-09", 12000.00, 5.1234567, "ETH")])
     res = compute_basis_default(txns2)
-    # realized = 23144 proceeds − 12000.00 override basis (not the FMV guess)
+    # realized = 15370.37 proceeds − 12000.00 override basis (not the FMV guess)
     assert res["realized_total"] == round(15370.37 - 12000.00, 2) or \
         abs(res["realized_total"] - (15370.37 - 12000.00)) < 0.01
 
