@@ -241,11 +241,11 @@ class TestOptionSymbols:
         write_robinhood_csv(csv, [
             {"Activity Date": "11/9/2018", "Trans Code": "CONV",
              "Instrument": "AMD",
-             "Description": "AMD 11/9/2018 Put $15.50",
+             "Description": "AMD 3/15/2019 Put $20.00",
              "Quantity": "1"},
             {"Activity Date": "11/9/2018", "Trans Code": "OEXP",
              "Instrument": "AMD",
-             "Description": "AMD 11/9/2018 Put $15.50",
+             "Description": "AMD 3/15/2019 Put $20.00",
              "Quantity": ""},
         ])
         txns = _parse(csv)

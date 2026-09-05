@@ -12,7 +12,7 @@ Conventions (documented for future hand entry):
 - ``Date`` is MM/DD/YYYY.
 - ``Security Description`` becomes the symbol as entered.  Use the
   plain ticker where known, or fin's option-symbol format
-  (``AMD 11/9/2018 Put $15.50``) so the leg pairs with its sell /
+  (``ZZZ 11/9/2018 Put $20.00``) so the leg pairs with its sell /
   expiration in the modern CSVs.  A full security name also works —
   it stays its own symbol, which is fine for positions that open AND
   close inside this file (net zero, realized computes locally).

@@ -89,8 +89,8 @@ def contract_multiplier(symbol: str) -> float:
     and how brokers quote), so valuing a position needs the ×100
     contract multiplier.  Cost basis is unaffected — it comes from the
     txn ``amount``, which is already the full cash paid.  Without this,
-    every open option was valued 100x low (a $1,065 contract showed as
-    $10.65 of value against $1,065 of basis — a phantom unrealized
+    every open option was valued 100x low (a $1,000 contract showed as
+    $10.00 of value against $1,000 of basis — a phantom unrealized
     loss).  Everything else is ×1.
     """
     s = symbol or ""

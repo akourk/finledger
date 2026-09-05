@@ -21,9 +21,9 @@ _HEADER = ("Date,Security Description,CUSIP,Transaction Description,"
 def _write_apex(path):
     path.write_text(
         _HEADER
-        + "10/30/2017,NETFLIX COM INC,64110L106,PURCHASE,1,196.10,196.10\n"
-        + "11/06/2017,NETFLIX COM INC,64110L106,SELL,1,198.00,198.00\n"
-        + "06/08/2018,AMD 11/9/2018 Put $15.50,,PURCHASE,1,1.71,171.00\n",
+        + "10/30/2017,SAMPLE CORP INC,999999ZZ9,PURCHASE,10,100.00,1000.00\n"
+        + "11/06/2017,SAMPLE CORP INC,999999ZZ9,SELL,10,110.00,1100.00\n"
+        + "06/08/2018,ZZZ 11/9/2018 Put $20.00,,PURCHASE,1,2.00,200.00\n",
         encoding="utf-8")
 
 
@@ -67,23 +67,22 @@ def test_parse_apex_rows(tmp_path):
     assert buy["date"] == "2017-10-30"
     assert buy["account"] == "Robinhood"
     assert buy["action"] == "Buy"
-    assert buy["symbol"] == "NETFLIX COM INC"
-    assert buy["cusip"] == "64110L106"
+    assert buy["symbol"] == "SAMPLE CORP INC"
+    assert buy["cusip"] == "999999ZZ9"
     assert sell["action"] == "Sell"
     # Option symbol passes through in fin's own format, and the action
     # becomes the option-specific opener so the Options tab pairs it.
-    assert opt["symbol"] == "AMD 11/9/2018 Put $15.50"
+    assert opt["symbol"] == "ZZZ 11/9/2018 Put $20.00"
     assert opt["action"] == "Option Buy"
-    assert opt["amount"] == pytest.approx(171.0)
+    assert opt["amount"] == pytest.approx(200.0)
 
 
 def test_apex_option_price_derived_from_amount(tmp_path):
     """An option leg's per-share premium is derived from
     Amount / (qty × 100), so a 1099-style per-CONTRACT Price ($57)
     isn't inflated 100× by the contract multiplier in the history
-    snapshot mark.  Regression: a hand-entered AMD Put with Price=57
-    showed the Robinhood account at $5,700 on the day it was held
-    instead of $57."""
+    snapshot mark.  Regression: a hand-entered option with Price=57
+    showed the account at $5,700 on the day it was held instead of $57."""
     from src.parsers import parse_robinhood_apex
     f = tmp_path / "robinhood-apex.csv"
     # Synthetic ticker + round figures (never the real portfolio's).
@@ -115,22 +114,22 @@ def test_apex_option_buy_pairs_with_modern_sell():
     modern Robinhood CSVs — the original motivating case (an option
     sell with no visible buy side)."""
     from src.basis import compute_basis_default
-    sym = "AMD 11/9/2018 Put $15.50"
+    sym = "ZZZ 11/9/2018 Put $20.00"
     txns = [
         {"date": "2018-06-08", "account": "Robinhood",
          "account_group": "Robinhood", "account_type": "Taxable",
          "symbol": sym, "action": "Option Buy", "quantity": 1.0,
-         "price": 1.71, "fees": 0.0, "amount": 171.0,
+         "price": 2.00, "fees": 0.0, "amount": 200.0,
          "description": "", "source": "robinhood-apex.csv"},
         {"date": "2018-08-20", "account": "Robinhood",
          "account_group": "Robinhood", "account_type": "Taxable",
          "symbol": sym, "action": "Option Sell", "quantity": 1.0,
-         "price": 2.21, "fees": 0.0, "amount": 221.0,
+         "price": 3.00, "fees": 0.0, "amount": 300.0,
          "description": "", "source": "robinhood-1.csv"},
     ]
     compute_basis_default(txns)
-    assert txns[1]["cost_basis"] == pytest.approx(171.0)
-    assert txns[1]["realized_gain"] == pytest.approx(50.0)
+    assert txns[1]["cost_basis"] == pytest.approx(200.0)
+    assert txns[1]["realized_gain"] == pytest.approx(100.0)
 
 
 def test_apex_covered_conv_is_neutralized():
@@ -139,13 +138,13 @@ def test_apex_covered_conv_is_neutralized():
     Neutral.  A CONV with no Apex-file coverage (referral free share)
     keeps originating its position."""
     from src.main import _reconcile_apex_conversions
-    sym = "AMD 11/9/2018 Put $15.50"
+    sym = "ZZZ 11/9/2018 Put $20.00"
     txns = [
         {"date": "2018-10-30", "symbol": sym, "action": "Option Buy",
          "quantity": 1.0, "source": "robinhood-apex.csv", "description": ""},
         {"date": "2018-11-09", "symbol": sym, "action": "CONV",
          "quantity": 1.0, "source": "robinhood-12.csv", "description": ""},
-        {"date": "2018-11-12", "symbol": "S", "action": "CONV",
+        {"date": "2018-11-12", "symbol": "ZZZZ", "action": "CONV",
          "quantity": 1.0, "source": "robinhood-12.csv", "description": ""},
     ]
     out = _reconcile_apex_conversions(txns)
@@ -157,22 +156,22 @@ def test_apex_covered_conv_is_neutralized():
 def test_option_holdings_value_uses_contract_multiplier():
     """Open option contracts value at premium × 100 × contracts —
     quantity is CONTRACTS, price is the per-share premium.  Without the
-    multiplier a $1,065 contract showed $10.65 of value against $1,065
+    multiplier a $1,000 contract showed $10.00 of value against $1,000
     of basis (phantom unrealized loss), and the basis-sanity data-health
     check false-positived at exactly 100x on every option holding."""
     from src.pipeline_stages import build_holdings
-    sym = "MSTR 8/7/2026 Put $86.00"
+    sym = "ZZZ 8/7/2026 Put $90.00"
     holdings, by_account = build_holdings(
         balances={("Robinhood", sym): 1.0, ("Robinhood", "VOO"): 2.0},
-        last_prices={sym: 10.65, "VOO": 500.0},
-        fifo_basis_by_key={("Robinhood", sym): 1065.04,
+        last_prices={sym: 10.00, "VOO": 500.0},
+        fifo_basis_by_key={("Robinhood", sym): 1000.00,
                            ("Robinhood", "VOO"): 900.0},
         cash_principal_by_key={},
     )
     opt = next(h for h in by_account if h["symbol"] == sym)
-    assert opt["price"] == 10.65            # per-share premium, as quoted
-    assert opt["value"] == 1065.0           # 1 contract × 10.65 × 100
-    assert abs(opt["unrealized_gain"]) < 1.0  # ~breakeven, not −$1,054
+    assert opt["price"] == 10.00            # per-share premium, as quoted
+    assert opt["value"] == 1000.0           # 1 contract × 10.00 × 100
+    assert abs(opt["unrealized_gain"]) < 1.0  # ~breakeven, not −$990
     voo = next(h for h in by_account if h["symbol"] == "VOO")
     assert voo["value"] == 1000.0           # stocks unchanged (×1)
 
@@ -193,13 +192,13 @@ def test_value_qty_price_check_understands_contract_multiplier():
     after the multiplier fix), while still catching a genuinely wrong
     option value."""
     from src.analytics.data_health import _check_value_qty_price_consistency
-    ok = [{"account_group": "Robinhood", "symbol": "MSTR 8/7/2026 Put $86.00",
-           "quantity": 1.0, "price": 10.65, "value": 1065.0,
-           "cost_basis": 1065.04}]
+    ok = [{"account_group": "Robinhood", "symbol": "ZZZ 8/7/2026 Put $90.00",
+           "quantity": 1.0, "price": 10.00, "value": 1000.0,
+           "cost_basis": 1000.00}]
     assert _check_value_qty_price_consistency(ok) == []
-    wrong = [{"account_group": "Robinhood", "symbol": "MSTR 8/7/2026 Put $86.00",
-              "quantity": 1.0, "price": 10.65, "value": 10.65,
-              "cost_basis": 1065.04}]
+    wrong = [{"account_group": "Robinhood", "symbol": "ZZZ 8/7/2026 Put $90.00",
+              "quantity": 1.0, "price": 10.00, "value": 10.00,
+              "cost_basis": 1000.00}]
     flags = _check_value_qty_price_consistency(wrong)
     assert flags and flags[0]["kind"] == "value_qty_price_mismatch"
 
@@ -212,18 +211,18 @@ def test_zero_basis_lot_honours_cost_basis_override():
     from src.basis import compute_basis_default
     txns = [
         {"date": "2018-11-12", "account_group": "Robinhood",
-         "account_type": "Taxable", "symbol": "S", "action": "Conversion",
+         "account_type": "Taxable", "symbol": "ZZZZ", "action": "Conversion",
          "quantity": 1.0, "price": 0.0, "fees": 0.0, "amount": 0.0,
          "description": "", "source": "robinhood-12.csv"},
         {"date": "2019-06-18", "account_group": "Robinhood",
-         "account_type": "Taxable", "symbol": "S", "action": "Sell",
-         "quantity": 1.0, "price": 7.22, "fees": 0.0, "amount": 7.22,
+         "account_type": "Taxable", "symbol": "ZZZZ", "action": "Sell",
+         "quantity": 1.0, "price": 10.00, "fees": 0.0, "amount": 10.00,
          "description": "", "source": "robinhood-12.csv"},
     ]
     applied, warns = match_and_stamp(txns, [
-        {"date": "2018-11-12", "amount": 5.51, "account_group": "Robinhood",
-         "asset": "S", "qty": 1.0}])
+        {"date": "2018-11-12", "amount": 4.00, "account_group": "Robinhood",
+         "asset": "ZZZZ", "qty": 1.0}])
     assert applied == 1 and not warns
     compute_basis_default(txns)
-    assert txns[0]["cost_basis"] == 5.51
-    assert txns[1]["realized_gain"] == 1.71   # 7.22 − 5.51, matches the 1099
+    assert txns[0]["cost_basis"] == 4.00
+    assert txns[1]["realized_gain"] == 6.00   # 10.00 − 4.00
