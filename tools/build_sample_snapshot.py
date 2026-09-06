@@ -774,13 +774,25 @@ def _build(tmp: Path) -> None:
         ["Target Allocation", "",  "5", "Technology",     "Single-stock tilt"],
         # Reconcile — broker-reported ground truth to check fin against.
         # Drives the Overview's Reconciliation panel (analytics/reconcile.py).
-        # The realized / income figures are exact (txn-derived, stable); the
-        # balances are the 2025-12-31 snapshot values (the 1.5% band absorbs
-        # small price-data drift).  The 401K balance is intentionally ~1.6%
-        # high to demonstrate the panel catching statement-vs-snapshot drift.
-        ["Reconcile Balance",  "2025-12-31", "17585",  "Roth IRA",      "Schwab year-end statement"],
-        ["Reconcile Balance",  "2025-12-31", "9983",   "Coinbase",      "Coinbase year-end value"],
-        ["Reconcile Balance",  "2025-12-31", "19900",  "401K",          "Vanguard statement"],
+        # The realized / income figures are exact (txn-derived, stable).
+        # The balances are pinned to the 2025-12-31 snapshot values, which
+        # are stable across rebuilds now that the price cache covers that
+        # date.  They drifted once before: the declared figures were set
+        # when the sample was written, then a backfill of ~1,355 days of
+        # index-fund history (plus two splits) moved the computed side and
+        # left the panel reading two hard breaks on synthetic data.  If
+        # that happens again, re-pin them rather than widening the bands.
+        # These three deliberately show the panel's whole range.  Coinbase
+        # matches to the cent (ok).  Roth IRA is short by a December
+        # dividend the statement cut off before it settled, declared with
+        # an [expected] token so the row reads "explained" and re-flags on
+        # its own if the gap ever changes.  The 401K holds a CIT with no
+        # public ticker, valued through a proxy fund, and drifts ~2% —
+        # the textbook "warn": worth a look, not a bug.
+        ["Reconcile Balance",  "2025-12-31", "22844.61", "Roth IRA",
+         "Schwab year-end statement - Dec dividend settled in Jan [expected 142.60]"],
+        ["Reconcile Balance",  "2025-12-31", "13261.89", "Coinbase",      "Coinbase year-end value"],
+        ["Reconcile Balance",  "2025-12-31", "19900",  "401K",          "Vanguard statement - CIT valued via proxy"],
         ["Reconcile Realized", "2024",       "-280",   "Robinhood",     "1099-B realized gains"],
         ["Reconcile Income",   "2023",       "37.57",  "Apple Savings", "1099-INT interest"],
         # Account Group / Account Type mappings.  These are no longer

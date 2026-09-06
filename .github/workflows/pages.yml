@@ -55,10 +55,15 @@ jobs:
           python -m src.main --import-snapshot samples/portfolio.snapshot.json
           python -m src.main
 
+      # The dashboard says nothing about being a demo and carries no link
+      # home, so a reader sent the URL cannot tell the figures are
+      # fictional or find the source.  The banner is added HERE rather
+      # than in the renderer: a locally generated dashboard shows a
+      # user's own money and must not be labelled a demo.
       - name: Stage the site
         run: |
-          mkdir -p _site
-          cp exports/dashboard.html _site/index.html
+          python -m tools.demo_banner exports/dashboard.html _site/index.html
+          grep -q 'github.com/akourk/finledger' _site/index.html             || { echo '::error::demo banner missing from the staged page'; exit 1; }
           ls -lh _site
 
       - uses: actions/upload-pages-artifact@v3
