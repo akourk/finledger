@@ -68,6 +68,10 @@ All screenshots are rendered from the bundled **fictional** sample portfolio
 > Regenerate the sample dashboard yourself (in a scratch dir, per the
 > dev-loop): import the snapshot, then run the pipeline → `exports/dashboard.html`.
 
+**[Architecture and design decisions →](docs/ARCHITECTURE.md)** — the pipeline
+end to end, the transaction schema, deduplication and reconciliation, cost
+basis, and the arguments for having no database and no front-end framework.
+
 ## What it does
 
 1. **Scans** `data/` for broker CSV exports and auto-detects each one
@@ -308,6 +312,8 @@ finledger/
 ├── data/                  # Drop broker CSVs + metadata.csv here (gitignored)
 ├── exports/               # Generated JSON + HTML dashboard (gitignored)
 ├── samples/               # Synthetic starter portfolio (--import-snapshot)
+├── docs/
+│   └── ARCHITECTURE.md    # Design decisions & trade-offs
 ├── tools/                 # Maintenance scripts (e.g. build_sample_snapshot.py)
 ├── cache/
 │   ├── sector_cache.json       # Symbol → sector, hand-editable
