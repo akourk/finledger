@@ -6,6 +6,9 @@ holdings and every transaction ever — across every account, in one view.
 
 No server, no database, no cloud. One Python script, one HTML file out.
 
+**[Live demo →](https://akourk.github.io/finledger/)** — the dashboard rendered from
+the bundled fictional sample portfolio, rebuilt on every push.
+
 > **Not tax, financial, or investment advice.** `fin` reconstructs figures
 > from broker CSV exports and will disagree with your broker in known,
 > documented ways — off-platform cost basis it cannot see, lot-relief
