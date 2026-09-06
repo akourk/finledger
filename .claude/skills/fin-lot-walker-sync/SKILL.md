@@ -61,7 +61,7 @@ real regressions, so pin whichever you touch:
 - Making the two walkers *disagree* is the bug that shipped — one date,
   one position, two answers, visible on the Performance tab as an
   Unrealized card that changed when only the time window changed
-  (AUDIT.md F-035).
+  (docs/AUDIT.md F-035).
 - Making them *agree on face value* would also make the parity check
   pass, and would silently delete the HYSA's entire reported return.
 

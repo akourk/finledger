@@ -28,7 +28,7 @@
 // "Investments", whose entire purpose is to keep savings yield out of
 // equity-benchmark comparisons, subtracted a hardcoded savings set that
 // missed any savings account not literally named "Apple Savings".
-// Same failure as AUDIT.md F-038: a JS copy of a Python rule, silently
+// Same failure as docs/AUDIT.md F-038: a JS copy of a Python rule, silently
 // disagreeing.
 //
 // The fallback (a fresh derivation from ACCOUNT_TYPE_OF) covers the
@@ -532,7 +532,7 @@ function computeSPYReturnOverPeriod(startDate, endDate) {
   // But note what that means when the caller is wrong — it hands back
   // another filter's plausible-looking number instead of nothing.  It
   // did exactly that when the benchmark card passed the chart's window
-  // instead of the metric's (AUDIT.md F-031).  Pass the window the
+  // instead of the metric's (docs/AUDIT.md F-031).  Pass the window the
   // return you're pairing against was actually measured over.
   for (const perf of Object.values(ANALYTICS_PERF)) {
     const s = perf && perf.summary;
@@ -1238,7 +1238,7 @@ function renderPerformance() {
   // one snapshot period and the error is invisible.  When the window
   // reaches back past the portfolio's first snapshot the gap swallows
   // the founding deposit, and a 5y view of a 4-year-old portfolio
-  // printed a LOSS next to a +57% cumulative return (AUDIT.md F-032).
+  // printed a LOSS next to a +57% cumulative return (docs/AUDIT.md F-032).
   //
   // So: anchor = the last snapshot at or before the cutoff, and flows
   // are counted strictly after the anchor's own date.  No snapshot that

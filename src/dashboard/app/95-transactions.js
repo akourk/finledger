@@ -19,7 +19,7 @@ function renderStats() {
   // put this tab's Realized P&L roughly 19% below the same quantity on
   // Performance, and its Cost Basis / Unrealized below the Holdings
   // table — three headline numbers disagreeing with the rest of the app
-  // under one unqualified label (AUDIT.md F-033).  `basisMethods` is for
+  // under one unqualified label (docs/AUDIT.md F-033).  `basisMethods` is for
   // the comparison table and nothing else.
   let totalValue, costBasis, unrealized, netContrib;
   if (isAsOfLatest()) {

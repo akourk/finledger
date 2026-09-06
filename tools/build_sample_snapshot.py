@@ -413,7 +413,7 @@ def _build(tmp: Path) -> None:
         # unobservable — a wrap alone preserves total basis by
         # construction, so nothing distinguishes carrying it from
         # rebuilding it (the same trap that made the split-parity test
-        # vacuous; see AUDIT.md).
+        # vacuous; see docs/AUDIT.md).
         {"ID": "tx-7", "Timestamp": "2025-08-15 13:00:00 UTC",
          "Transaction Type": "Sell", "Asset": "CBETH",
          "Quantity Transacted": "0.46", "Price Currency": "USD",

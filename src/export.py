@@ -123,7 +123,7 @@ def export_json(txns: list[dict], output_path: Path, *,
         "basis_methods": basis_methods or {},
         # The portfolio's REAL totals, from the annotated walk.  Read
         # this, not basis_methods, for any published figure — see
-        # pipeline_stages.build_annotated_basis_totals and AUDIT.md F-033.
+        # pipeline_stages.build_annotated_basis_totals and docs/AUDIT.md F-033.
         "basis_totals": basis_totals or {},
         "cash_summary": cash_summary or {},
         "retirement_meta": retirement_meta or {},

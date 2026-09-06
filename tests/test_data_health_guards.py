@@ -539,7 +539,7 @@ class TestValueQtyPriceChecksNegativeQuantities:
     ``is_dust`` drops only the UNPRICED ones — a priced negative
     position reaches the holdings table.  So the exemption covered the
     rows most likely to be mis-signed, which is how a check ends up
-    passing over the thing it exists to find (AUDIT.md F-035, same
+    passing over the thing it exists to find (docs/AUDIT.md F-035, same
     shape as the ``symbol == "USD"`` skip next door).
 
     Synthetic round numbers only.

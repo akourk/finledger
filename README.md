@@ -487,6 +487,15 @@ transaction pipeline never parses them as trades. Recommended names:
 The synthetic `samples/portfolio.snapshot.json` shows how the project
 works without exposing real data.
 
+## Documentation
+
+| | |
+| --- | --- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Design decisions and trade-offs: the pipeline end to end, the transaction schema, deduplication and reconciliation, cost basis, and the arguments for no database and no front-end framework. |
+| [`docs/AUDIT.md`](docs/AUDIT.md) | Sanitized results of a nine-segment defect hunt (mutation testing, coverage archaeology, error-path sweeps).  Findings are referenced by ID from code comments — `docs/AUDIT.md F-033` and friends. |
+| [`docs/PLAN-audit.md`](docs/PLAN-audit.md) | The method behind that audit, including a bug-class taxonomy derived from this repo's own failure history.  Kept because the taxonomy is the part you cannot re-derive by reading code. |
+| [`CLAUDE.md`](CLAUDE.md) | The working spec: every pipeline stage, every invariant, and the reasoning behind each one.  Written for an AI coding assistant, and equally the reference for a human contributor. |
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

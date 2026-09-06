@@ -503,7 +503,7 @@ def build_annotated_basis_totals(holdings: list[dict],
     that annotated walk is what produces ``holdings`` and every per-txn
     ``realized_gain``.  Publishing a figure off ``basis_methods`` instead
     put the Overview's Realized roughly 19% away from the same quantity
-    on Performance — see AUDIT.md F-033.  This is the one dict a consumer
+    on Performance — see docs/AUDIT.md F-033.  This is the one dict a consumer
     should read for "what did this portfolio actually do".
 
     Realized comes from the walker's own accumulator rather than a sum of

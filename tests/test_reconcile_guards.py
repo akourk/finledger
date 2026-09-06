@@ -8,7 +8,7 @@ wasn't "ok". The panel's entire purpose is flagging breaks, and the
 flagging path was unexercised.
 
 This matters more than an ordinary coverage gap because
-`PLAN-audit.md`'s technique (6) runs *through* this panel: ground-truth
+`docs/PLAN-audit.md`'s technique (6) runs *through* this panel: ground-truth
 reconciliation is measured with it, so a defect here silently
 miscalibrates Segment 7.
 

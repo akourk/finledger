@@ -10,7 +10,7 @@ const basisMethods = DATA.basis_methods || {};
 // The portfolio's REAL totals, from the annotated basis walk (the
 // per-account lot methods the brokers actually use).  This is what a
 // headline figure reads.  Reading `basisMethods.fifo` instead is
-// AUDIT.md F-033: with one account on HIFO it put the Overview's
+// docs/AUDIT.md F-033: with one account on HIFO it put the Overview's
 // Realized roughly 19% away from the same quantity on Performance.
 const basisTotals = DATA.basis_totals || {};
 const cashSummary = DATA.cash_summary || {};

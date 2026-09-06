@@ -5,7 +5,7 @@ The JS half explains why the probe renders rather than computing.  This
 half exists so both the test suite and an interactive session reach it
 the same way, and so the bundle always comes from the real bundler —
 ``_read_app_js`` owns the concatenation order, and a hand-rolled glob
-here would be exactly the duplicated-logic drift (PLAN-audit.md
+here would be exactly the duplicated-logic drift (docs/PLAN-audit.md
 taxonomy 1) this repo keeps paying for.
 
 Interactive use::

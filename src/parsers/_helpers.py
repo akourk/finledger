@@ -110,7 +110,7 @@ def _num(val: str) -> float:
 # Every parser drops a row whose date won't parse, with a bare
 # ``continue``.  That is right for one odd row but silent for all of
 # them, so a broker changing its date format empties a file without a
-# word (see F-017 / AUDIT.md).
+# word (see F-017 / docs/AUDIT.md).
 #
 # Each parser calls exactly ONE ``_date_*`` helper, once per row, inside
 # that try/except, and none of them tries several formats speculatively.

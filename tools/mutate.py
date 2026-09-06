@@ -1,6 +1,6 @@
 """Targeted mutation harness — does the suite actually notice this change?
 
-`PLAN-audit.md` technique (1).  Deliberately NOT a full mutmut sweep: a
+`docs/PLAN-audit.md` technique (1).  Deliberately NOT a full mutmut sweep: a
 blanket run over 11k lines produces mostly noise (unreachable branches,
 equivalent mutants, log strings).  Here you name a specific, meaningful
 mutation and a scoped set of tests, and get one of three answers:

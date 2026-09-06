@@ -326,7 +326,7 @@ class TestSampleDrivesAFullRun:
         assert sells, (
             "the sample no longer sells after the split — without a "
             "disposal the rescale is unobservable and this test proves "
-            "nothing (see AUDIT.md on invariance traps)"
+            "nothing (see docs/AUDIT.md on invariance traps)"
         )
         sold_qty = sum(t["quantity"] for t in sells)
         expected_relief = cost * (sold_qty / (bought + added))

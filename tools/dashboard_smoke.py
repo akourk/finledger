@@ -1,6 +1,6 @@
 """Build a dashboard from a deliberately degenerate portfolio.
 
-Segment 6 of `PLAN-audit.md` needed behavioural coverage of the
+Segment 6 of `docs/PLAN-audit.md` needed behavioural coverage of the
 dashboard's 8.7k lines of JavaScript, which has no test harness. It
 turns out none is required: generate the real dashboard from a
 degenerate input, serve it, and drive it in a browser. That found the

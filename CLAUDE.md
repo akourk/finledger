@@ -1,6 +1,60 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in this repo.
+**This file is configuration, not notes.**  Claude Code loads it into
+context automatically at the start of every session in this repository,
+so its contents are instructions that shape how changes get made here —
+the same role a linter config or a CONTRIBUTING guide plays for a human
+contributor, and it is equally useful read as one.
+
+## How to read it
+
+It is long, and deliberately so.  Almost nothing in it describes *what*
+the code does — that is what the code is for, and
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) covers the design at the
+level of decisions.  What this file carries is the part that cannot be
+recovered by reading the source: **which rules are load-bearing, what
+broke when one was violated, and where the same rule lives in more than
+one place.**  A comment saying "this is deliberate" is worth little; a
+paragraph saying "this was the other way for two years and here is the
+bug that produced" is worth a great deal, and that is what most of the
+length is.
+
+Sections, in order:
+
+| Section | What it is for |
+| --- | --- |
+| What this project is · Run it | Orientation. |
+| Pipeline | The sixteen stages in execution order, each with its non-obvious rule.  `src/main.py` is the spec; this narrates it. |
+| Invariants the code relies on | Rules that hold across the whole pipeline — sign conventions, cash-flow classification, action semantics.  Violating one produces a wrong number, not an exception. |
+| Adding a new broker / action | Checklists.  Both are also packaged as skills under `.claude/skills/`. |
+| Architecture (post-refactor) | Module-by-module map, with the duplication each extraction was pulling apart. |
+| Invariants: cost-basis walker · price cache | The two subsystems with the most invariants and the worst failure modes. |
+| Files that look like shared infrastructure but aren't · Repairing a suspect price cache · Snapshot feature | Operational notes. |
+| Data is sensitive | **Read before any commit.**  This repository is public; the data it processes is not. |
+
+## How to maintain it
+
+- **Add to it when a rule turns out to be load-bearing**, not when code
+  is written.  A rule earns a paragraph here by having been broken, or
+  by living in two places at once.
+- **Record the failure, not just the rule.**  "Do X" decays into
+  cargo-culting; "do X, because doing Y made the Overview and the
+  Performance tab disagree by 19%" survives a refactor that changes the
+  shape of the code.
+- **Prefer a test to a paragraph.**  Where a rule can be pinned
+  mechanically, pin it — the paragraph then documents the test rather
+  than substituting for it.  Most invariants below name the test that
+  enforces them; the ones that do not are the weak spots.
+- **Never put real figures in here.**  This file is tracked and the
+  repository is public.  Describe mechanisms and bug classes, never
+  amounts.
+
+Finding IDs of the form `F-0NN` refer to
+[`docs/AUDIT.md`](docs/AUDIT.md), the sanitized record of a systematic
+defect hunt; the method behind it is in
+[`docs/PLAN-audit.md`](docs/PLAN-audit.md).
+
+---
 
 ## What this project is
 
@@ -179,7 +233,7 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       tell is arithmetic and worth knowing: a lower cumulative beside a
       higher annualized is impossible over one window, and
       `years = ln(1+cum) / ln(1+ann)` recovers each side's true span.
-      See AUDIT.md F-031 and PLAN-audit.md taxonomy (12).
+      See docs/AUDIT.md F-031 and docs/PLAN-audit.md taxonomy (12).
     - `savings_by_year` — per-year `{gross_income, net_contributed,
       savings_rate_pct}` (salary + bonus from metadata vs external net
       contributions; `analytics/savings.py`).  Drives the Sav% column
@@ -496,7 +550,7 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     numeric parity check could never have caught this: it skipped
     `symbol == "USD"` outright, i.e. it passed by declining to look at
     the only positions where the two conventions could differ.  The
-    skip is gone.  See AUDIT.md F-035.
+    skip is gone.  See docs/AUDIT.md F-035.
 15. **Export** (`export.export_json`) — JSON with a fixed field order so
     dashboard columns stay logical.
 16. **Dashboard** (`dashboard.generate_dashboard`) — string-interpolate the
@@ -528,7 +582,7 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       nothing, and the three columns drop out entirely when no row
       resolves.  Per-value tooltips carry the measured span, because
       each filter's window is its own — see the
-      `performance_by_filter` note above and AUDIT.md F-031),
+      `performance_by_filter` note above and docs/AUDIT.md F-031),
       Target vs Actual, concentration grid (positions/sectors/
       accounts; one global HHI on the positions card only), and the
       lot-method comparison table (collapsed `<details>` — the
@@ -616,7 +670,7 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
       windowed card describes exactly its anchor twin's quantity, so it
       READS the anchor's field (`_isWholeLifetime`) rather than deriving
       it again — re-summing the cent-rounded per-txn annotations put
-      adjacent cards a cent or two apart (AUDIT.md F-036; the same rule
+      adjacent cards a cent or two apart (docs/AUDIT.md F-036; the same rule
       as `basis_totals` below).  Real windows still sum the annotations;
       only the all-time case is short-circuited.  **Unrealized is the
       one LEVEL in that row** and is labelled with the as-of DATE, never
@@ -773,7 +827,7 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   `Return of Capital` in `_RH_CASH_IN`, which made that premise false —
   and nothing connected the two, so the cash half of the event updated
   and the basis half didn't.  No parity check could catch it: both
-  walkers agreed, because `ignore` made both do nothing.  See AUDIT.md
+  walkers agreed, because `ignore` made both do nothing.  See docs/AUDIT.md
   F-034.  When you write a conditional exemption, the condition needs a
   test, not a comment.
 - **Credit-union "dividends" are INTEREST.**  A share savings account
@@ -1073,7 +1127,7 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
     **All three of the above reject rather than clamp, and do so
     SILENTLY** — a mistyped value is indistinguishable from an absent
     one.  Likewise a non-numeric `Amount` becomes `0.0` and a malformed
-    `Date` is stored unvalidated (see AUDIT.md F-018).  Pinned by
+    `Date` is stored unvalidated (see docs/AUDIT.md F-018).  Pinned by
     `tests/test_metadata_edge_cases.py`.
   - `Tax Return` — a figure from a FILED 1040.  Date = tax year,
     Symbol = field (`Total Tax` = line 24, `AGI` = line 11,
@@ -1197,7 +1251,7 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
   catalog — it did, and the copy was missing the Coinbase bank-funded
   Buy rule and the measurement-boundary transfer rule, so the JS TWR
   walk saw tens of thousands of dollars less external money arrive than
-  Python did and booked the difference as market return (AUDIT.md
+  Python did and booked the difference as market return (docs/AUDIT.md
   F-038).  JS cannot import the helper; reading its exported verdict is
   how the single source of truth crosses the language boundary.  Pinned by
   `tests/test_actions_catalog.py::test_external_cash_flow_helper_handles_all_carve_outs`.
@@ -1545,7 +1599,7 @@ threads through every consumer.
     tab DISPLAYS; the tests assert relations between them across the
     whole (filter × window) matrix rather than pinning values.  This
     exists because `analytics/`'s compute-once rule cannot protect a
-    PAIRING that only exists in the layout — see AUDIT.md F-031.
+    PAIRING that only exists in the layout — see docs/AUDIT.md F-031.
     Needs `node`; skips without it (CI installs it explicitly so the
     suite can't silently stop running).  Its fixture
     (`tests/fixtures/build_staggered_portfolio.py`) is separate from
@@ -1596,7 +1650,7 @@ process.
   metadata), which is the ANNOTATED walk — the one that produces
   `holdings` and every per-txn `realized_gain`.  Publishing off
   `basis_methods.fifo` put the Overview's Realized ~19% away from the
-  same quantity on Performance (AUDIT.md F-033); the two tabs then
+  same quantity on Performance (docs/AUDIT.md F-033); the two tabs then
   re-summed the cent-rounded annotations instead, which the rule above
   forbids.  Both now read `DATA.basis_totals`, built once by
   `pipeline_stages.build_annotated_basis_totals(holdings, fifo_state)`

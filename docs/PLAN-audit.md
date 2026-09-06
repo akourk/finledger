@@ -2,7 +2,7 @@
 
 Status: **executed 2026-08-05/06 — segments 1–7 and 9 complete**, with
 Segment 8's sweeps largely absorbed into the others. Results are in
-`AUDIT.md` (committed, sanitized) and `audit/findings.md` (gitignored,
+`AUDIT.md` (committed, sanitized) and `../audit/findings.md` (gitignored,
 carries real figures). **Read AUDIT.md's executive summary before
 re-running any of this** — it records what was found, what came back
 clean, and three patterns that are worth more than the individual
@@ -364,7 +364,7 @@ Ask the user before adding any dependency.
 **This repo is public and the audit will surface real figures.** The
 ledger must not leak them.
 
-- Working ledger: `audit/findings.md` — **add `audit/` to `.gitignore`**.
+- Working ledger: `../audit/findings.md` — **add `audit/` to `.gitignore`**.
   Real amounts allowed here; it never leaves the machine.
 - Committed summary: `AUDIT.md` — qualitative only. Mechanism, files, bug
   class, severity. No dollar amounts, no account balances, no figures
@@ -379,7 +379,7 @@ each finding into `AUDIT.md` in sanitized form **in the same working
 session that discovers it**, not in Segment 9. Segment 9 consolidates
 and re-ranks what is already committed; it must not be the first time a
 finding reaches a tracked file. If a segment ends with findings that
-exist only in `audit/findings.md`, that segment's output is one
+exist only in `../audit/findings.md`, that segment's output is one
 directory deletion from zero.
 
 Ledger entry format:
@@ -443,7 +443,7 @@ Kickoff prompts are at the bottom, ready to paste into a fresh chat.
 
 Everything downstream depends on this; do not skip it.
 
-1. Create `audit/findings.md` + `AUDIT.md`; add `audit/` to `.gitignore`.
+1. Create `../audit/findings.md` + `AUDIT.md`; add `audit/` to `.gitignore`.
 2. Install and run coverage. Produce `audit/coverage.md`: every
    `src/` file with its executed-line percentage, and **an explicit list
    of functions never executed by any test**. That list alone usually
@@ -726,7 +726,7 @@ Paste one into a fresh chat. Each is self-contained.
 > room to write up well.
 
 > **Segment N** (2–9). Read `PLAN-audit.md` in full, then read
-> `audit/findings.md`, `audit/risk-map.md`, and
+> `../audit/findings.md`, `audit/risk-map.md`, and
 > `audit/sample-coverage.md` for what earlier segments found — the last
 > one tells you which paths the sample data cannot exercise, so you know
 > where a green suite proves nothing. Execute Segment N only. Log

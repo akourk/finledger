@@ -419,7 +419,7 @@ def _check_value_qty_price_consistency(holdings_by_account: list[dict]) -> list[
     only the UNPRICED ones, so a priced negative position reached the
     holdings table with nothing checking its valuation.  Exempting the
     one class of row most likely to be mis-signed is how a check ends
-    up passing over the bug it exists to find (see AUDIT.md F-035, same
+    up passing over the bug it exists to find (see docs/AUDIT.md F-035, same
     shape).  The tolerance takes ``abs(expected)`` so a negative
     expectation can't produce a negative relative bound.
     """

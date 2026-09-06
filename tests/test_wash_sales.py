@@ -11,7 +11,7 @@ pinned here from both sides of its boundary.
 
 Two deliberate limitations are pinned as behaviour rather than asserted
 as correct, so that changing either is a decision rather than an
-accident. Both are documented in AUDIT.md (F-022):
+accident. Both are documented in docs/AUDIT.md (F-022):
 
 * fin matches on **exact symbol**, making no substantially-identical
   judgement — selling SPY and buying VOO is not flagged.

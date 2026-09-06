@@ -26,7 +26,7 @@ has a `Stock Split` transaction row, which reaches the *lot* rescale and
 says nothing about this. Seeding the splits cache directly is the only
 way to make the choice observable.
 
-Same shape as the two traps recorded in AUDIT.md — a rule that
+Same shape as the two traps recorded in docs/AUDIT.md — a rule that
 redistributes without changing a total needs a later sale; a config row
 with one candidate needs two lots. Here, a flag with only one reachable
 input value needs a split.

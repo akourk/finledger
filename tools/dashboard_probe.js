@@ -8,7 +8,7 @@
 // side are COMPARABLE — that pairing is invented at the render site, out
 // of inputs the compute layer never sees together.  Both bug classes this
 // repo learned from user reports rather than from its own suite —
-// PLAN-audit.md (11) as-of/date-alignment and (12) unpaired comparison —
+// docs/PLAN-audit.md (11) as-of/date-alignment and (12) unpaired comparison —
 // were exactly that shape, and both were invisible to any harness that
 // stops at the compute layer.
 //

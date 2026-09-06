@@ -1,4 +1,4 @@
-"""Golden-output + perturbation harness (PLAN-audit.md Segment 1, items 4).
+"""Golden-output + perturbation harness (docs/PLAN-audit.md Segment 1, items 4).
 
 Runs the full pipeline against `samples/portfolio.snapshot.json` in a
 throwaway workdir and diffs the exported JSON.  Two jobs:
@@ -25,7 +25,7 @@ under test.  An in-invocation A/B cancels it exactly.
 
 Every run gets its own workdir with its own `data/`, `cache/`,
 `exports/`.  The repo's checked-in `cache/` is COPIED in so pricing
-works offline; the real one is never written to (`PLAN-audit.md`: keep
+works offline; the real one is never written to (`docs/PLAN-audit.md`: keep
 cache churn out of audit commits).  Network fetches are stubbed dead in
 the child process, so a run is offline and deterministic.
 

@@ -158,7 +158,7 @@ def test_holdings_table_reads_precomputed_returns():
         "grouped rows must match a precomputed filter by account-group set")
     assert "filter_groups" in js, "the match key is the exported set"
     # The span travels with the figure — a return next to no window is
-    # the thing AUDIT.md F-031 was about.
+    # the thing docs/AUDIT.md F-031 was about.
     assert "_perfSpan" in js
 
 

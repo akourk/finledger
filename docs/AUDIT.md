@@ -1,9 +1,9 @@
-# fin — application audit
+# finledger — application audit
 
 Sanitized, committable summary of the audit described in
 `PLAN-audit.md`. **No portfolio figures appear here** — mechanism,
 files, bug class, and severity only. The working ledger is
-`audit/findings.md`, which is gitignored and never leaves the machine.
+`../audit/findings.md`, which is gitignored and never leaves the machine.
 
 | | |
 |---|---|
