@@ -332,10 +332,12 @@ function renderHistControls() {
   const customRangeHtml = historyRange === 'custom' ? `
     <span class="hist-label" style="margin-left:12px;">From:</span>
     <input type="date" class="hist-date" min="${minDate}" max="${maxDate}"
+           aria-label="History chart range: from date"
            value="${historyCustomStart || minDate}"
            onchange="setHistoryCustomStart(this.value)">
     <span class="hist-label">To:</span>
     <input type="date" class="hist-date" min="${minDate}" max="${maxDate}"
+           aria-label="History chart range: to date"
            value="${historyCustomEnd || maxDate}"
            onchange="setHistoryCustomEnd(this.value)">
   ` : '';

@@ -3,8 +3,16 @@
     --surface: #1a1a1a;
     --border: #2a2a2a;
     --text: #d4d4d4;
-    --text-dim: #777;
+    /* Was #777: 3.9:1 on --surface and 4.2:1 on --bg, i.e. below the
+       4.5:1 that SC 1.4.3 asks of body text, and it is the colour of
+       every label, hint and sub-figure on the page.  #9a9a9a clears
+       4.5:1 against the darkest surface the dashboard paints (the
+       tinted year-by-year header cells, ~#2a2a2a). */
+    --text-dim: #9a9a9a;
     --accent: #a78bfa;
+    /* Text placed ON the accent (active pills, badges).  White gives
+       2.7:1 against #a78bfa; this near-black gives 6.9:1. */
+    --on-accent: #14101f;
     --green: #4ade80;
     --red: #f87171;
     --yellow: #facc15;
@@ -161,7 +169,7 @@
 
   .tbtn.active {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border-color: var(--accent);
   }
 
@@ -204,7 +212,7 @@
   .filter-bar .fbtn .badge {
     display: inline-block;
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     font-size: 0.65rem;
     padding: 0 5px;
     border-radius: 3px;
@@ -430,7 +438,7 @@
 
   .date-range-group .date-quick.active {
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     border-color: var(--accent);
   }
 
@@ -2248,7 +2256,6 @@
     color: var(--text-dim);
     font-size: 0.72rem;
     margin-left: auto;
-    opacity: 0.7;
   }
 
   .data-health[open] .dh-hint {
@@ -3059,4 +3066,94 @@
     .board-grid-2,
     .board-grid-3 { grid-template-columns: 1fr; }
     .board-col-side { grid-template-rows: auto auto; }
+  }
+
+  /* ==================================================================
+     Accessibility
+     ==================================================================
+     Kept together at the end rather than sprinkled through the file:
+     these rules exist to satisfy specific WCAG success criteria, and
+     grouping them means the next person can check them against the
+     criteria without reading 3,000 lines.  `tests/test_accessibility.py`
+     pins the ones that are attributes; the axe-core job in CI pins the
+     ones that are computed (contrast, names, focus order). */
+
+  /* SC 2.4.1 Bypass Blocks.  The tablist alone is ten controls and the
+     top bar adds more, so a keyboard user meets ~60 stops before the
+     content of the active panel.  Off-screen until focused. */
+  .skip-link {
+    position: absolute;
+    left: 8px;
+    top: -100px;
+    z-index: 200;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--accent);
+    border-radius: 0 0 6px 6px;
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    text-decoration: none;
+    transition: top 0.12s ease-in;
+  }
+
+  .skip-link:focus {
+    top: 0;
+  }
+
+  /* Names for things that carry no visible text: table captions, and
+     labels for controls whose purpose is clear from layout but not
+     from markup.  Clip rather than `display:none` so assistive tech
+     still reaches the text. */
+  .sr-only {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* SC 2.4.7 Focus Visible + SC 1.4.11 Non-text Contrast.  The ring is
+     white and sits OUTSIDE the control (`outline-offset`), so it is
+     drawn on the page background rather than on the control's own fill
+     — that is what keeps it above 3:1 even on an active pill, whose
+     accent fill would swallow an accent-coloured ring.  `:focus-visible`
+     rather than `:focus` so a mouse click does not leave a ring behind.
+     The `:focus` fallback is for engines without :focus-visible. */
+  :focus {
+    outline: 2px solid #ffffff;
+    outline-offset: 2px;
+  }
+
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: 2px;
+  }
+
+  /* Panels are focus targets for the tabs pattern and for the skip
+     link; neither should paint a ring when reached programmatically. */
+  main:focus,
+  .tab-panel:focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /* SC 1.4.1 Use of Color.
+     Direction is carried by the sign character on every figure that has
+     one — `fmtSigned` and `fmtPct` always emit + or -, and `fmtMoney`
+     emits - for negatives — so the green/red classes are reinforcement,
+     not the only channel.  The bar chart below is the exception: every
+     bar grows upward from a shared baseline, so before this rule its
+     sign lived in the fill colour alone.  Negative days get a hatch. */
+  .daily-pnl-bar.neg .bar {
+    background-image: repeating-linear-gradient(
+        135deg,
+        rgba(0, 0, 0, 0.45) 0 2px,
+        rgba(0, 0, 0, 0) 2px 5px);
   }

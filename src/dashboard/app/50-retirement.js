@@ -295,7 +295,9 @@ function _buildMonteCarloSection() {
     ? ` Dashed orange line = FI threshold (4% rule × annual expenses).`
     : '';
   const chartHtml = `<div class="mc-fan-wrap">
-    <svg class="mc-fan" id="${svgId}" preserveAspectRatio="none"></svg>
+    <svg class="mc-fan" id="${svgId}" preserveAspectRatio="none"
+         role="img"
+         aria-label="Monte Carlo fan chart: simulated portfolio value to retirement, showing the median path and the 10th-to-90th and 25th-to-75th percentile bands. The cards above give the same percentiles as text."></svg>
     <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;">
       Shaded bands: 10th–90th percentile (outer) and 25th–75th (inner).  Solid line = median.
       Assumes ${((s.mean_return || 0) * 100).toFixed(0)}% mean / ${((s.stdev_return || 0) * 100).toFixed(0)}% stdev normal returns on the equity bucket, $${(s.annual_contribution || 0).toLocaleString()}/yr contributions.${fireNote}
@@ -447,8 +449,8 @@ function _buildFireSection(mcRoot, mc) {
     <div class="mc-stats" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">${statsHtml}</div>
     ${fire ? `<div class="panel" style="margin-top:14px;">
       <h3>Year first reaching FI (per percentile)</h3>
-      <table class="mini-table">
-        <thead><tr><th>Outcome</th><th class="num">Year offset (age at crossing)</th></tr></thead>
+      <table class="mini-table"><caption class="sr-only">Year each simulated percentile first reaches financial independence</caption>
+        <thead><tr><th scope="col">Outcome</th><th scope="col" class="num">Year offset (age at crossing)</th></tr></thead>
         <tbody>${ageRows}</tbody>
       </table>
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
@@ -594,13 +596,13 @@ function renderRetirement() {
           ${_legendSwatch(ACCOUNT_COLORS['401K'] || '#f59e0b', '401K (incl. Rollover IRA)')}
           ${_legendSwatch(ACCOUNT_COLORS['Roth IRA'] || '#a78bfa', 'Roth IRA')}
         </div>` : ''}
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Retirement contributions by year and account, with Roth eligibility</caption>
         <thead><tr>
-          <th>Year</th>
-          <th class="num">401K</th>
-          <th class="num">Roth IRA</th>
-          <th>Roth Eligibility</th>
-          <th class="num">Total</th>
+          <th scope="col">Year</th>
+          <th scope="col" class="num">401K</th>
+          <th scope="col" class="num">Roth IRA</th>
+          <th scope="col">Roth Eligibility</th>
+          <th scope="col" class="num">Total</th>
         </tr></thead>
         <tbody>${contribRows || '<tr><td colspan="5" style="color:var(--text-dim);padding:12px;">No retirement contributions found.</td></tr>'}</tbody>
       </table>
@@ -643,6 +645,8 @@ function renderContribBars(years, contribs, opts) {
   opts = opts || {};
   const id = opts.id || 'contribBars';
   const H = opts.height || 240;
+  const label = opts.label ||
+    'Retirement contributions per year, stacked by account. The table below carries the same figures.';
   if (!years.length) return `<div class="chart-empty">No contributions yet.</div>`;
   const build = (W) => _renderContribBarsContent(years, contribs, W, H);
   queueMicrotask(() => {
@@ -655,6 +659,7 @@ function renderContribBars(years, contribs, opts) {
   });
   return `<div class="chart-wrap" style="padding:10px;position:relative;">
     <svg id="${id}" class="chart-svg" viewBox="0 0 800 ${H}"
+         role="img" aria-label="${_htmlEsc(label)}"
          style="width:100%;height:${H}px;display:block;"></svg>
     <div class="chart-tooltip" id="${id}_tip"></div>
   </div>`;

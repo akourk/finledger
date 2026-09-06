@@ -196,7 +196,9 @@ function renderHeader() {
   headerRow.innerHTML = vis.map(col => {
     const cls = NUMERIC_FIELDS.has(col) ? ' class="num"' : '';
     const arrow = sortCol === col ? (sortAsc ? ' ▲' : ' ▼') : '';
-    return `<th${cls} data-col="${col}">${col}<span class="arrow">${arrow}</span>` +
+    const sorted = sortCol === col
+      ? ` aria-sort="${sortAsc ? 'ascending' : 'descending'}"` : '';
+    return `<th scope="col"${cls} data-col="${col}"${sorted} tabindex="0" role="columnheader">${col}<span class="arrow">${arrow}</span>` +
       `<span class="col-x" data-hide="${col}" title="Hide ${col} column">×</span></th>`;
   }).join('');
 }

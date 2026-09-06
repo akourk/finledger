@@ -376,6 +376,7 @@ function renderOptions() {
 
   // Cumulative P&L chart (SVG, stand-alone mini)
   const chartHtml = renderMiniLineChart(cumPoints, {
+    label: 'Cumulative realized options profit and loss over time. The Closed Trades table below lists the same trades.',
     id: 'optionsCumSvg',
     color: total >= 0 ? '#4ade80' : '#f87171',
     height: 240,
@@ -386,9 +387,9 @@ function renderOptions() {
   // Open contracts table
   const openCols = ['underlying', 'expiry', 'dte', 'type', 'strike', 'qty', 'open_date', 'entry_price'];
   const openHead = `<tr>
-    <th>Underlying</th><th>Expiry</th><th class="num">DTE</th><th>Type</th>
-    <th class="num">Strike</th><th class="num">Qty</th>
-    <th>Opened</th><th class="num">Entry Premium</th></tr>`;
+    <th scope="col">Underlying</th><th scope="col">Expiry</th><th scope="col" class="num">DTE</th><th scope="col">Type</th>
+    <th scope="col" class="num">Strike</th><th scope="col" class="num">Qty</th>
+    <th scope="col">Opened</th><th scope="col" class="num">Entry Premium</th></tr>`;
   const openRows = open.length ? open.map(o => {
     const otype = o.option_type || o.type || '';
     const dteStr = o.dte == null ? '—'
@@ -473,7 +474,7 @@ function renderOptions() {
       <span class="as-of-hint" style="margin-left:auto;">Current positions — window filter doesn't apply${_optAccountFilter ? ` · filtered to ${_htmlEsc(_optAccountFilter)}` : ''}</span>
     </div>
     <div class="table-wrap">
-      <table class="mini-table"><thead>${openHead}</thead><tbody>${openRows}</tbody></table>
+      <table class="mini-table"><caption class="sr-only">Open option contracts</caption><thead>${openHead}</thead><tbody>${openRows}</tbody></table>
     </div>
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Cumulative Realized P&amp;L</span></h2><span class="as-of-hint" style="margin-left:auto;">${winLabel}</span></div>
@@ -483,8 +484,8 @@ function renderOptions() {
       <div class="panel">
         <h3>P&amp;L by Underlying</h3>
         <div class="mini-scroll">
-          <table class="mini-table"><thead><tr>
-            <th>Underlying</th><th class="num">Trades</th><th class="num">Win %</th><th class="num">Realized</th>
+          <table class="mini-table"><caption class="sr-only">Option profit and loss by underlying</caption><thead><tr>
+            <th scope="col">Underlying</th><th scope="col" class="num">Trades</th><th scope="col" class="num">Win %</th><th scope="col" class="num">Realized</th>
           </tr></thead><tbody>${underRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody></table>
         </div>
         <div class="panel-foot"><a onclick="activateTab('tax')">View ST / LT / §1256 split on the Tax tab →</a></div>
@@ -492,8 +493,8 @@ function renderOptions() {
       <div class="panel">
         <h3>Annual Options Summary</h3>
         <div class="mini-scroll">
-          <table class="mini-table"><thead><tr>
-            <th>Year</th><th class="num">Trades</th><th class="num">Win %</th><th class="num">Realized</th>
+          <table class="mini-table"><caption class="sr-only">Option trade count and profit and loss by year</caption><thead><tr>
+            <th scope="col">Year</th><th scope="col" class="num">Trades</th><th scope="col" class="num">Win %</th><th scope="col" class="num">Realized</th>
           </tr></thead><tbody>${yearOptRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody></table>
         </div>
       </div>
@@ -501,10 +502,10 @@ function renderOptions() {
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Closed Trades</span></h2></div>
     <div class="table-wrap">
-      <table class="mini-table"><thead><tr>
-        <th>Close Date</th><th>Underlying</th><th>Expiry</th><th>Type</th>
-        <th class="num">Strike</th><th>Close</th><th class="num">Qty</th>
-        <th class="num">Proceeds</th><th class="num">Basis</th><th class="num">Realized</th><th class="num">Hold Days</th>
+      <table class="mini-table"><caption class="sr-only">Closed option trades</caption><thead><tr>
+        <th scope="col">Close Date</th><th scope="col">Underlying</th><th scope="col">Expiry</th><th scope="col">Type</th>
+        <th scope="col" class="num">Strike</th><th scope="col">Close</th><th scope="col" class="num">Qty</th>
+        <th scope="col" class="num">Proceeds</th><th scope="col" class="num">Basis</th><th scope="col" class="num">Realized</th><th scope="col" class="num">Hold Days</th>
       </tr></thead><tbody>${closedRows}${closedTail}</tbody></table>
     </div>
   `;
@@ -564,6 +565,10 @@ function renderMiniLineChart(points, opts) {
   const color = opts.color || '#a78bfa';
   const height = opts.height || 260;
   const yFmt = opts.yFormatter || fmtMoneyShort;
+  // A chart is an image: without a name a screen reader announces
+  // nothing at all for it.  The <title> elements inside describe
+  // individual marks; this names the whole plot.
+  const label = opts.label || 'Line chart';
   if (!points || !points.length) {
     return `<div class="chart-empty">${opts.emptyMsg || 'No data.'}</div>`;
   }
@@ -592,6 +597,7 @@ function renderMiniLineChart(points, opts) {
   // black-on-dark).
   return `<div class="chart-wrap" style="padding:10px;position:relative;">
     <svg id="${id}" class="chart-svg" viewBox="0 0 800 ${height}"
+         role="img" aria-label="${_htmlEsc(label)}"
          style="width:100%;height:${height}px;display:block;"></svg>
     <div class="chart-tooltip" id="${id}_tip"></div>
   </div>`;

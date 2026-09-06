@@ -298,10 +298,19 @@ function activateTab(name, opts) {
   opts = opts || {};
   const panel = document.getElementById('tab-' + name);
   if (!panel) return;
-  // Swap visible panel + active pill
+  // Swap visible panel + active pill.  `aria-selected` and the roving
+  // tabindex move with the `active` class rather than being maintained
+  // separately — the class IS the selection, so deriving the ARIA state
+  // from the same assignment is what keeps them from drifting.
   document.querySelectorAll('.tab-panel').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(el =>
-    el.classList.toggle('active', el.dataset.tab === name));
+  document.querySelectorAll('.tab-btn').forEach(el => {
+    const on = el.dataset.tab === name;
+    el.classList.toggle('active', on);
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+    // Only the selected tab is in the tab order; Left/Right reach the
+    // rest (WAI-ARIA authoring practices, tabs pattern).
+    el.tabIndex = on ? 0 : -1;
+  });
   panel.classList.add('active');
   // Lazy render on first activation
   if (!TAB_RENDERED.has(name) && TAB_RENDERERS[name]) {
@@ -310,6 +319,9 @@ function activateTab(name, opts) {
   }
   // Always re-call the Overview tab's chart render so resize/layout is right
   if (name === 'overview' && typeof renderHistory === 'function') renderHistory();
+  // Most tables do not exist until their tab first renders, so the
+  // scroll-region measurement has to run after, not once at load.
+  if (typeof applyScrollRegionFocus === 'function') applyScrollRegionFocus();
   // Update URL hash without triggering scroll.  window.history is the
   // browser's History API — avoid the bare `history` reference because
   // later in this file we shadow it with `const history = DATA.history`.
@@ -321,6 +333,81 @@ function activateTab(name, opts) {
 // Tab click handlers
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+});
+
+// Keyboard support for the tablist.  A tablist is a single tab stop:
+// Tab moves past it, Left/Right move between tabs, Home/End jump to the
+// ends.  Hidden tabs (see hideEmptyTabs below) are skipped — arrowing
+// onto a tab whose panel the portfolio has no data for would land focus
+// on something the user cannot see.
+function initTabA11y() {
+  const nav = document.getElementById('tabnav');
+  if (!nav) return;
+  const visible = () => Array.from(nav.querySelectorAll('.tab-btn'))
+    .filter(b => b.style.display !== 'none');
+  nav.addEventListener('keydown', (e) => {
+    const KEYS = { ArrowLeft: -1, ArrowRight: 1, Home: 'first', End: 'last' };
+    if (!(e.key in KEYS)) return;
+    const btns = visible();
+    const here = btns.indexOf(document.activeElement);
+    if (here < 0) return;
+    const step = KEYS[e.key];
+    const next = step === 'first' ? 0
+      : step === 'last' ? btns.length - 1
+        : (here + step + btns.length) % btns.length;
+    e.preventDefault();
+    // Follow-focus (automatic activation): the panels are already in the
+    // DOM and render lazily, so switching on arrow costs nothing and
+    // matches what a mouse user gets from a single click.
+    btns[next].focus();
+    activateTab(btns[next].dataset.tab);
+  });
+}
+initTabA11y();
+
+// A container that scrolls must be reachable from the keyboard, or the
+// content past its edge is mouse-only (SC 2.1.1).  Whether a given wrap
+// actually scrolls depends on the viewport and on how many columns are
+// visible, so this is measured rather than declared — marking every
+// wrapper focusable would add tab stops to tables that fit.
+function applyScrollRegionFocus() {
+  // One entry per wrapper the stylesheet gives an `overflow: auto`.
+  document.querySelectorAll(
+    '.table-wrap, .mini-scroll, .annual-breakdown-wrap, .ab-scroll, ' +
+    '.board-scroll, .lot-detail-inner, .recon-drill, .heatmap-wrap')
+    .forEach(el => {
+      const scrolls = el.scrollWidth > el.clientWidth + 1 ||
+                      el.scrollHeight > el.clientHeight + 1;
+      if (scrolls) {
+        el.tabIndex = 0;
+        // A focusable region needs a name; the table it wraps supplies
+        // one through its caption, so point at that rather than
+        // inventing a second description.
+        const cap = el.querySelector('caption');
+        if (cap && !el.hasAttribute('aria-label')) {
+          el.setAttribute('role', 'group');
+          el.setAttribute('aria-label', cap.textContent.trim());
+        }
+      } else if (el.tabIndex === 0) {
+        el.removeAttribute('tabindex');
+      }
+    });
+}
+window.addEventListener('resize', applyScrollRegionFocus);
+
+// Sortable column headers are plain header cells with a click
+// handler, so
+// without this they are mouse-only (SC 2.1.1).  One delegated handler
+// covers every table: the headers already carry tabindex and aria-sort
+// at their emit sites, and every sort path — delegated listener or
+// inline onclick — is reachable by dispatching the click they all
+// already listen for.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const th = e.target.closest && e.target.closest('th[tabindex="0"]');
+  if (!th) return;
+  e.preventDefault();
+  th.click();
 });
 
 // Hide tabs with no underlying activity so the nav is honest about
@@ -523,7 +610,10 @@ function renderHoldings() {
     const arrow = holdingsSortCol === col ? (holdingsSortAsc ? ' ▲' : ' ▼') : '';
     const label = HOLDINGS_COL_LABEL[col] || col;
     const tip = HOLDINGS_COL_TIP[col] ? ` title="${HOLDINGS_COL_TIP[col]}"` : '';
-    return `<th${cls} data-hcol="${col}"${tip}>${label}<span class="arrow">${arrow}</span></th>`;
+    const sorted = holdingsSortCol === col
+      ? ` aria-sort="${holdingsSortAsc ? 'ascending' : 'descending'}"` : '';
+    return `<th scope="col"${cls} data-hcol="${col}"${tip}${sorted} tabindex="0" role="columnheader"
+      >${label}<span class="arrow">${arrow}</span></th>`;
   }).join('');
 
   // Sort
@@ -634,10 +724,10 @@ function renderRebalancing() {
         allocation drift by sector vs <code>Target Allocation</code> in metadata.csv · max drift ${rb.max_abs_drift.toFixed(1)}%</span>
     </div>
     <div class="panel">
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Sector allocation: target share against current share, with the drift and the trade that would close it</caption>
         <thead><tr>
-          <th>Bucket</th><th class="num">Target</th><th class="num">Current</th>
-          <th>Current vs Target</th><th class="num">Drift</th><th class="num">Suggested</th>
+          <th scope="col">Bucket</th><th scope="col" class="num">Target</th><th scope="col" class="num">Current</th>
+          <th scope="col">Current vs Target</th><th scope="col" class="num">Drift</th><th scope="col" class="num">Suggested</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -774,12 +864,12 @@ function lotDetailHtml(p, colspan) {
   }
   return `<tr class="lot-detail"><td colspan="${colspan}">
     <div class="lot-detail-inner">
-      <table class="lots-table">
+      <table class="lots-table"><caption class="sr-only">Open tax lots for this position</caption>
         <thead><tr>
-          <th>acquired</th><th class="num">qty</th><th class="num">basis/share</th>
-          <th class="num">cost basis</th><th class="num">value</th>
-          <th class="num">unrealized</th><th class="num">%</th>
-          <th class="num">held</th><th>term</th><th>src</th>
+          <th scope="col">acquired</th><th scope="col" class="num">qty</th><th scope="col" class="num">basis/share</th>
+          <th scope="col" class="num">cost basis</th><th scope="col" class="num">value</th>
+          <th scope="col" class="num">unrealized</th><th scope="col" class="num">%</th>
+          <th scope="col" class="num">held</th><th scope="col">term</th><th scope="col">src</th>
         </tr></thead>
         <tbody>${rows.join('')}</tbody>
       </table>
@@ -833,7 +923,10 @@ function renderByAssetTable() {
   hRow.innerHTML = cols.map(col => {
     const cls = numCols.has(col) ? ' class="num"' : '';
     const arrow = byAssetSortCol === col ? (byAssetSortAsc ? ' ▲' : ' ▼') : '';
-    return `<th${cls} data-bcol="${col}">${col}<span class="arrow">${arrow}</span></th>`;
+    const sorted = byAssetSortCol === col
+      ? ` aria-sort="${byAssetSortAsc ? 'ascending' : 'descending'}"` : '';
+    return `<th scope="col"${cls} data-bcol="${col}"${sorted} tabindex="0" role="columnheader"
+      >${col}<span class="arrow">${arrow}</span></th>`;
   }).join('');
 
   filtered.sort((a, b) => {
@@ -953,7 +1046,7 @@ function renderBasisTable() {
   const numCols = new Set(['cost_basis', 'value', 'unrealized_gain', 'realized_gain']);
   head.innerHTML = cols.map(c => {
     const cls = numCols.has(c) ? ' class="num"' : '';
-    return `<th${cls}>${labels[c]}</th>`;
+    return `<th scope="col"${cls}>${labels[c]}</th>`;
   }).join('');
 
   if (!basisMethods || !Object.keys(basisMethods).length) {

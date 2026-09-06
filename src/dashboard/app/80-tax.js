@@ -623,10 +623,10 @@ function renderTax() {
         <td>${l.is_long_term ? 'LT' : 'ST'}${l.days_held != null ? ` <span style="color:var(--text-dim);font-size:0.78rem;">· held ${l.days_held}d</span>` : ''}</td>
       </tr>`).join('');
       expansion = `<tr class="lt-expansion"><td colspan="7" style="padding:8px 24px 12px;background:rgba(167,139,250,0.03);border-top:0;">
-        <table class="mini-table" style="font-size:0.82rem;">
+        <table class="mini-table" style="font-size:0.82rem;"><caption class="sr-only">Loss lots available to harvest in this position</caption>
           <thead><tr>
-            <th>Acquired</th><th class="num">Qty</th><th class="num">Basis</th>
-            <th class="num">Value</th><th class="num">Loss</th><th>Term</th>
+            <th scope="col">Acquired</th><th scope="col" class="num">Qty</th><th scope="col" class="num">Basis</th>
+            <th scope="col" class="num">Value</th><th scope="col" class="num">Loss</th><th scope="col">Term</th>
           </tr></thead>
           <tbody>${lotRows}</tbody>
         </table>
@@ -813,10 +813,10 @@ function renderTax() {
         </tr>`;
       }).join('');
       expansion = `<tr class="lt-expansion"><td colspan="7" style="padding:8px 24px 12px;background:rgba(167,139,250,0.03);border-top:0;">
-        <table class="mini-table" style="font-size:0.82rem;">
+        <table class="mini-table" style="font-size:0.82rem;"><caption class="sr-only">Tax lots approaching long-term eligibility in this position</caption>
           <thead><tr>
-            <th>Acquired</th><th class="num">Qty</th><th class="num">Basis</th>
-            <th class="num">Value</th><th class="num">Unrealized</th><th>Status</th>
+            <th scope="col">Acquired</th><th scope="col" class="num">Qty</th><th scope="col" class="num">Basis</th>
+            <th scope="col" class="num">Value</th><th scope="col" class="num">Unrealized</th><th scope="col">Status</th>
           </tr></thead>
           <tbody>${lotRows}</tbody>
         </table>
@@ -865,13 +865,15 @@ function renderTax() {
       )).join('')}
     </div>` : '';
 
-  // Sortable headers.  Each clickable <th> shows a sort indicator
+  // Sortable headers.  Each clickable header cell shows a sort indicator
   // when active; inactive ones get a faint glyph as an affordance.
   function _sortHdr(key, label, cls) {
     const active = _ltSortKey === key;
     const arrow = active ? (_ltSortDir > 0 ? '↑' : '↓') : '↕';
-    const aCls = active ? 'style="color:var(--accent);"' : 'style="color:var(--text-dim);opacity:0.5;"';
-    return `<th class="${cls || ''}" style="cursor:pointer;user-select:none;" onclick="_setLtSort('${key}')">${label} <span ${aCls}>${arrow}</span></th>`;
+    const aCls = active ? 'style="color:var(--accent);"' : 'style="color:var(--text-dim);opacity:0.75;"';
+    const sortAttr = active
+      ? ` aria-sort="${_ltSortDir > 0 ? 'ascending' : 'descending'}"` : '';
+    return `<th scope="col" class="${cls || ''}"${sortAttr} tabindex="0" style="cursor:pointer;user-select:none;" onclick="_setLtSort('${key}')">${label} <span ${aCls}>${arrow}</span></th>`;
   }
   const ltHeadHtml = `<tr>
     ${_sortHdr('symbol', 'Symbol')}
@@ -893,7 +895,7 @@ function renderTax() {
       <div style="color:var(--text-dim);font-size:0.75rem;margin-bottom:8px;">
         Filing status: <b style="color:var(--text);">${_htmlEsc(filingStatus())}</b>
         ${RETIREMENT_META.state ? ` · State: <b style="color:var(--text);">${_htmlEsc(RETIREMENT_META.state)}</b>` : ''}
-        <span style="margin-left:8px;opacity:0.7;">(edit <code>data/metadata.csv</code> to change)</span>
+        <span style="margin-left:8px;">(edit <code>data/metadata.csv</code> to change)</span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;font-size:0.85rem;">
         <div>
@@ -970,12 +972,12 @@ function renderTax() {
       <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">taxable positions with &gt; $10 of loss lots — click a row for the specific lots</span>
     </div>
     <div class="panel">
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Tax-loss harvest candidates across taxable accounts</caption>
         <thead><tr>
-          <th>Symbol</th><th>Account</th>
-          <th class="num">Loss Qty</th><th class="num">Loss Value</th>
-          <th class="num">Harvestable Loss</th><th class="num">Tax Save (est)</th>
-          <th>Wash Risk</th>
+          <th scope="col">Symbol</th><th scope="col">Account</th>
+          <th scope="col" class="num">Loss Qty</th><th scope="col" class="num">Loss Value</th>
+          <th scope="col" class="num">Harvestable Loss</th><th scope="col" class="num">Tax Save (est)</th>
+          <th scope="col">Wash Risk</th>
         </tr></thead>
         <tbody>${harvestRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">No taxable positions with loss lots &gt; $10.</td></tr>'}</tbody>
       </table>
@@ -995,7 +997,7 @@ function renderTax() {
     </div>
     <div class="panel">
       ${ltAcctChips}
-      <table class="mini-table lt-asset-table">
+      <table class="mini-table lt-asset-table"><caption class="sr-only">Long-term eligibility by asset</caption>
         <thead>${ltHeadHtml}</thead>
         <tbody>${ltAssetRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">No open taxable lots.</td></tr>'}${ltMoreNote}</tbody>
       </table>
@@ -1013,8 +1015,8 @@ function renderTax() {
       <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">sold at a loss + bought same symbol within 30 days</span>
     </div>
     <div class="panel">
-      <table class="mini-table">
-        <thead><tr><th>Sell Date</th><th>Symbol</th><th class="num">Loss</th><th>Offending Buy</th></tr></thead>
+      <table class="mini-table"><caption class="sr-only">Potential wash sales</caption>
+        <thead><tr><th scope="col">Sell Date</th><th scope="col">Symbol</th><th scope="col" class="num">Loss</th><th scope="col">Offending Buy</th></tr></thead>
         <tbody>${washRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">No potential wash sales detected.</td></tr>'}</tbody>
       </table>
       <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">
@@ -1032,12 +1034,12 @@ function renderTax() {
         : ''}
     </div>
     <div class="panel">
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Realized gains by year</caption>
         <thead><tr>
-          <th>Year</th><th class="num">Trades</th>
-          <th class="num">Proceeds</th><th class="num">Basis</th>
-          <th class="num">Short-term</th><th class="num">Long-term</th>
-          ${showS1256ByYear ? '<th class="num">§1256 (of which)</th>' : ''}
+          <th scope="col">Year</th><th scope="col" class="num">Trades</th>
+          <th scope="col" class="num">Proceeds</th><th scope="col" class="num">Basis</th>
+          <th scope="col" class="num">Short-term</th><th scope="col" class="num">Long-term</th>
+          ${showS1256ByYear ? '<th scope="col" class="num">§1256 (of which)</th>' : ''}
         </tr></thead>
         <tbody>${yearRows || `<tr><td colspan="${showS1256ByYear ? 7 : 6}" style="color:var(--text-dim);padding:12px;">No realized gains.</td></tr>`}</tbody>
       </table>
@@ -1049,14 +1051,14 @@ function renderTax() {
     </div>
     <div class="panel">
       <div class="table-wrap">
-        <table class="mini-table">
+        <table class="mini-table"><caption class="sr-only">Realized gains by asset</caption>
           <thead><tr>
-            <th>Symbol</th><th class="num">Trades</th>
-            <th class="num">Proceeds</th><th class="num">Basis</th>
-            <th class="num">Short-term</th><th class="num">Long-term</th>
-            ${showS1256BySym ? '<th class="num">§1256</th>' : ''}
-            <th class="num">Total Gain</th>
-            <th class="num">Est. Tax</th>
+            <th scope="col">Symbol</th><th scope="col" class="num">Trades</th>
+            <th scope="col" class="num">Proceeds</th><th scope="col" class="num">Basis</th>
+            <th scope="col" class="num">Short-term</th><th scope="col" class="num">Long-term</th>
+            ${showS1256BySym ? '<th scope="col" class="num">§1256</th>' : ''}
+            <th scope="col" class="num">Total Gain</th>
+            <th scope="col" class="num">Est. Tax</th>
           </tr></thead>
           <tbody>${symRows || `<tr><td colspan="${showS1256BySym ? 9 : 8}" style="color:var(--text-dim);padding:12px;">No realized gains in this range.</td></tr>`}</tbody>
         </table>

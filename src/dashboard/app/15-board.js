@@ -256,7 +256,9 @@ function boardPaneHtml(paneIdx) {
     const active = cfg.sort === c.key;
     const arrow = active ? (cfg.asc ? ' ▲' : ' ▼') : '';
     const tip = c.title ? ` title="${_htmlEsc(c.title)}"` : '';
-    return `<th class="${c.num ? 'num ' : ''}board-th${active ? ' sorted' : ''}${c.winStart ? ' board-wstart' : ''}"${tip}
+    const sortAttr = active ? ` aria-sort="${cfg.asc ? 'ascending' : 'descending'}"` : '';
+    return `<th scope="col" class="${c.num ? 'num ' : ''}board-th${active ? ' sorted' : ''}${c.winStart ? ' board-wstart' : ''}"${tip}${sortAttr}
+                tabindex="0"
                 onclick="setBoardPaneSort(${paneIdx}, '${c.key}')"
                 >${_htmlEsc(c.label)}<span class="arrow">${arrow}</span></th>`;
   }).join('');
@@ -290,7 +292,7 @@ function boardPaneHtml(paneIdx) {
         </div>
       </div>
       <div class="board-scroll">
-        <table>
+        <table><caption class="sr-only">Board pane: open positions sorted by ${_htmlEsc(sortCol.label)}</caption>
           <thead><tr>${head}</tr></thead>
           <tbody>${body || `<tr><td colspan="${cols.length}" class="board-empty">No positions match.</td></tr>`}</tbody>
         </table>
@@ -388,9 +390,10 @@ function renderBoardControls() {
   const accounts = [...new Set((PPNL.by_account || []).map(r => r.account_group))].sort();
   el.innerHTML = `
     <div class="controls board-controls">
-      <input type="text" id="boardSearch" placeholder="Search symbol or account..."
+      <input type="text" id="boardSearch" aria-label="Search board positions by symbol or account"
+             placeholder="Search symbol or account..."
              value="${_htmlEsc(boardSearch)}" oninput="boardSearch = this.value.trim().toLowerCase(); renderBoardPanes();" />
-      <select id="boardAccountFilter" onchange="boardAccountFilter = this.value; renderBoardPanes();">
+      <select id="boardAccountFilter" aria-label="Filter board positions by account group" onchange="boardAccountFilter = this.value; renderBoardPanes();">
         <option value="">All account groups</option>
         ${accounts.map(a => `<option value="${_htmlEsc(a)}"${a === boardAccountFilter ? ' selected' : ''}>${_htmlEsc(a)}</option>`).join('')}
       </select>

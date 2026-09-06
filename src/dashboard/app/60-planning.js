@@ -69,11 +69,11 @@ function renderPlanning() {
           <span style="color:var(--text-dim);font-size:0.72rem;"> (auto: ${fmtMoney(autoAnnualContrib)} — trailing 12 months)</span>
         </label>
       </div>
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Projected portfolio value at retirement under each growth scenario</caption>
         <thead><tr>
-          <th>Scenario</th><th class="num">Annual Rate</th>
-          <th class="num">Value at age ${retirementProjectionAge}${yearsToRetire != null ? ` (${yearsToRetire}y)` : ''}</th>
-          <th class="num">Investment Gain</th>
+          <th scope="col">Scenario</th><th scope="col" class="num">Annual Rate</th>
+          <th scope="col" class="num">Value at age ${retirementProjectionAge}${yearsToRetire != null ? ` (${yearsToRetire}y)` : ''}</th>
+          <th scope="col" class="num">Investment Gain</th>
         </tr></thead>
         <tbody>${projRows}</tbody>
       </table>

@@ -3,12 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Portfolio Dashboard</title>
+<title>finledger — Portfolio Dashboard</title>
 <style>
 /* @@STYLES@@ */
 </style>
 </head>
 <body>
+
+<!-- Skip link: roughly sixty controls (top bar, tablist, and the active
+     panel's own filters) sit between the top of the document and the
+     content a keyboard user came for.  First focusable element on the
+     page; visible only while focused. -->
+<a class="skip-link" href="#main-content">Skip to dashboard content</a>
 
 <div class="top-bar">
   <div class="top-bar-title">
@@ -21,21 +27,28 @@
           onclick="window.location.reload()">↻ Refresh</button>
 </div>
 
-<nav class="tabnav" id="tabnav">
-  <button class="tab-btn active" data-tab="overview">Overview</button>
-  <button class="tab-btn" data-tab="holdings">Holdings</button>
-  <button class="tab-btn" data-tab="transactions">Transactions</button>
-  <button class="tab-btn" data-tab="options">Options</button>
-  <button class="tab-btn" data-tab="retirement">Retirement</button>
-  <button class="tab-btn" data-tab="planning">Planning</button>
-  <button class="tab-btn" data-tab="income">Income</button>
-  <button class="tab-btn" data-tab="tax">Tax</button>
-  <button class="tab-btn" data-tab="crypto">Crypto</button>
-  <button class="tab-btn" data-tab="performance">Performance</button>
+<!-- Tabs follow the WAI-ARIA authoring-practices tabs pattern: the nav is
+     a tablist, each button is a tab that owns its panel, and only the
+     selected tab is in the tab order (roving tabindex).  Left/Right move
+     between tabs and Home/End jump to the ends — see `initTabA11y` in
+     app/10-holdings.js, which also keeps aria-selected in sync. -->
+<nav class="tabnav" id="tabnav" role="tablist" aria-label="Dashboard sections">
+  <button class="tab-btn active" data-tab="overview"     id="tabbtn-overview"     role="tab" aria-controls="tab-overview"     aria-selected="true"  tabindex="0">Overview</button>
+  <button class="tab-btn"        data-tab="holdings"     id="tabbtn-holdings"     role="tab" aria-controls="tab-holdings"     aria-selected="false" tabindex="-1">Holdings</button>
+  <button class="tab-btn"        data-tab="transactions" id="tabbtn-transactions" role="tab" aria-controls="tab-transactions" aria-selected="false" tabindex="-1">Transactions</button>
+  <button class="tab-btn"        data-tab="options"      id="tabbtn-options"      role="tab" aria-controls="tab-options"      aria-selected="false" tabindex="-1">Options</button>
+  <button class="tab-btn"        data-tab="retirement"   id="tabbtn-retirement"   role="tab" aria-controls="tab-retirement"   aria-selected="false" tabindex="-1">Retirement</button>
+  <button class="tab-btn"        data-tab="planning"     id="tabbtn-planning"     role="tab" aria-controls="tab-planning"     aria-selected="false" tabindex="-1">Planning</button>
+  <button class="tab-btn"        data-tab="income"       id="tabbtn-income"       role="tab" aria-controls="tab-income"       aria-selected="false" tabindex="-1">Income</button>
+  <button class="tab-btn"        data-tab="tax"          id="tabbtn-tax"          role="tab" aria-controls="tab-tax"          aria-selected="false" tabindex="-1">Tax</button>
+  <button class="tab-btn"        data-tab="crypto"       id="tabbtn-crypto"       role="tab" aria-controls="tab-crypto"       aria-selected="false" tabindex="-1">Crypto</button>
+  <button class="tab-btn"        data-tab="performance"  id="tabbtn-performance"  role="tab" aria-controls="tab-performance"  aria-selected="false" tabindex="-1">Performance</button>
 </nav>
 
+<main id="main-content" tabindex="-1">
+
 <!-- ============================ OVERVIEW ============================ -->
-<div id="tab-overview" class="tab-panel active">
+<div id="tab-overview" class="tab-panel active" role="tabpanel" aria-labelledby="tabbtn-overview" tabindex="0">
   <!-- Compact as-of selector — verbose explanation now lives in the
        title attribute on the picker.  Reduced to a single line. -->
   <div class="as-of-bar as-of-bar-compact">
@@ -70,7 +83,9 @@
       <div class="controls hist-controls" id="histControls"></div>
     </details>
     <div class="chart-wrap" id="chartWrap">
-      <svg class="chart-svg" id="chartSvg" preserveAspectRatio="none"></svg>
+      <svg class="chart-svg" id="chartSvg" preserveAspectRatio="none"
+           role="img"
+           aria-label="Line chart of total portfolio value over time, with optional cost-basis, net-contributed and benchmark overlays. The Year by Year table on the Planning tab carries the same history as text."></svg>
       <div class="chart-tooltip" id="chartTooltip"></div>
       <div class="chart-legend" id="chartLegend"></div>
     </div>
@@ -80,14 +95,20 @@
     <div class="panel" id="topHoldingsPanel">
       <h3>Top Holdings</h3>
       <div class="mini-scroll">
-        <table class="mini-table"><thead><tr id="topHoldingsHead"></tr></thead><tbody id="topHoldingsBody"></tbody></table>
+        <table class="mini-table">
+          <caption class="sr-only">Largest positions by market value</caption>
+          <thead><tr id="topHoldingsHead"></tr></thead><tbody id="topHoldingsBody"></tbody>
+        </table>
       </div>
       <div class="panel-foot"><a onclick="activateTab('holdings')">View all holdings →</a></div>
     </div>
     <div class="panel" id="recentTxnsPanel">
       <h3>Recent Transactions</h3>
       <div class="mini-scroll">
-        <table class="mini-table"><thead><tr id="recentTxnsHead"></tr></thead><tbody id="recentTxnsBody"></tbody></table>
+        <table class="mini-table">
+          <caption class="sr-only">Most recent transactions across every account</caption>
+          <thead><tr id="recentTxnsHead"></tr></thead><tbody id="recentTxnsBody"></tbody>
+        </table>
       </div>
       <div class="panel-foot"><a onclick="activateTab('transactions')">View all transactions →</a></div>
     </div>
@@ -101,21 +122,27 @@
     <div class="allocation-card">
       <div class="allocation-card-title">By Account</div>
       <div class="allocation-wrap">
-        <svg class="allocation-svg" id="allocationSvgGroup"></svg>
+        <svg class="allocation-svg" id="allocationSvgGroup"
+             role="img"
+             aria-label="Donut chart: share of portfolio value held in each account group. The same figures are listed beside the chart."></svg>
         <div class="allocation-legend" id="allocationLegendGroup"></div>
       </div>
     </div>
     <div class="allocation-card">
       <div class="allocation-card-title">By Type</div>
       <div class="allocation-wrap">
-        <svg class="allocation-svg" id="allocationSvgType"></svg>
+        <svg class="allocation-svg" id="allocationSvgType"
+             role="img"
+             aria-label="Donut chart: share of portfolio value by account type — taxable, retirement, savings. The same figures are listed beside the chart."></svg>
         <div class="allocation-legend" id="allocationLegendType"></div>
       </div>
     </div>
     <div class="allocation-card">
       <div class="allocation-card-title">By Sector</div>
       <div class="allocation-wrap">
-        <svg class="allocation-svg" id="allocationSvgSector"></svg>
+        <svg class="allocation-svg" id="allocationSvgSector"
+             role="img"
+             aria-label="Donut chart: share of portfolio value by sector. The same figures are listed beside the chart."></svg>
         <div class="allocation-legend" id="allocationLegendSector"></div>
       </div>
     </div>
@@ -124,7 +151,7 @@
 </div>
 
 <!-- ============================ HOLDINGS ============================ -->
-<div id="tab-holdings" class="tab-panel">
+<div id="tab-holdings" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-holdings" tabindex="0">
   <div class="as-of-bar">
     <label for="asOfPickerHoldings">View holdings as of</label>
     <select id="asOfPickerHoldings" class="as-of-picker"
@@ -134,7 +161,7 @@
   </div>
   <div class="section-header" id="holdingsHeader">
     <h2><span style="color:var(--accent);">Holdings<span class="as-of-label"></span></span></h2>
-    <div class="toggle-group">
+    <div class="toggle-group" role="group" aria-label="Group holdings by">
       <button class="tbtn active" id="btnByAccount" onclick="setHoldingsView('account')">By Account</button>
       <button class="tbtn" id="btnByType" onclick="setHoldingsView('type')">By Type</button>
       <button class="tbtn" id="btnBySector" onclick="setHoldingsView('sector')">By Sector</button>
@@ -144,6 +171,7 @@
   <div id="holdingsBody">
     <div class="table-wrap">
       <table>
+        <caption class="sr-only">Holdings grouped by account, account type or sector</caption>
         <thead><tr id="holdingsHeaderRow"></tr></thead>
         <tbody id="holdingsTbody"></tbody>
       </table>
@@ -155,7 +183,7 @@
     <!-- Table vs Board are two arrangements of ONE dataset — the board
          reads analytics.position_pnl, which is anchored to the same
          holdings rows the table renders.  Neither recomputes. -->
-    <div class="toggle-group">
+    <div class="toggle-group" role="group" aria-label="Holdings by asset layout">
       <button class="tbtn active" id="btnBoardTable" onclick="setBoardLayout('table')">Table</button>
       <button class="tbtn" id="btnBoardBoard" onclick="setBoardLayout('board')">Board</button>
     </div>
@@ -164,17 +192,18 @@
   <div id="boardBody" style="display:none;"></div>
   <div id="byAssetBody">
     <div class="controls" id="byAssetControls">
-      <input type="text" id="byAssetSearch" placeholder="Search symbol or sector..." />
-      <select id="byAssetAccountGroupFilter">
+      <input type="text" id="byAssetSearch" aria-label="Search holdings by symbol or sector" placeholder="Search symbol or sector..." />
+      <select id="byAssetAccountGroupFilter" aria-label="Filter holdings by account group">
         <option value="">All account groups</option>
       </select>
-      <select id="byAssetSectorFilter">
+      <select id="byAssetSectorFilter" aria-label="Filter holdings by sector">
         <option value="">All sectors</option>
       </select>
       <span class="pill" id="byAssetCountPill"></span>
     </div>
     <div class="table-wrap mini-scroll tall">
       <table>
+        <caption class="sr-only">Every held position, one row per asset. Activate a row to expand its tax lots.</caption>
         <thead><tr id="byAssetHeaderRow"></tr></thead>
         <tbody id="byAssetTbody"></tbody>
       </table>
@@ -204,7 +233,7 @@
     </summary>
     <div class="section-header" id="basisHeader">
       <h2><span style="color:var(--accent);">Lot Method Comparison</span></h2>
-      <div class="toggle-group">
+      <div class="toggle-group" role="group" aria-label="Filter lot method comparison by account type">
         <button class="tbtn"        id="btnBasisAll"  onclick="setBasisTypeFilter('all')">All</button>
         <button class="tbtn"        id="btnBasisTax"  onclick="setBasisTypeFilter('Taxable')">Taxable</button>
         <button class="tbtn active" id="btnBasisRet"  onclick="setBasisTypeFilter('Retirement')">Retirement</button>
@@ -213,6 +242,7 @@
     <div id="basisBody">
       <div class="table-wrap">
         <table>
+          <caption class="sr-only">Cost basis, realized and unrealized gain under FIFO, LIFO, HIFO and Average lot selection</caption>
           <thead><tr id="basisHeaderRow"></tr></thead>
           <tbody id="basisTbody"></tbody>
         </table>
@@ -228,17 +258,19 @@
 </div>
 
 <!-- ============================ TRANSACTIONS ============================ -->
-<div id="tab-transactions" class="tab-panel">
+<div id="tab-transactions" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-transactions" tabindex="0">
   <div class="section-header">
     <h2><span style="color:var(--accent);">Transactions</span></h2>
   </div>
   <div class="filter-bar" id="filterBar"></div>
   <div class="controls">
-    <input type="text" id="search" placeholder="Search all columns..." />
-    <input type="text" id="symbolFilter" placeholder="Filter symbol (e.g. ETH-USD)" />
+    <input type="text" id="search" aria-label="Search transactions across all columns" placeholder="Search all columns..." />
+    <input type="text" id="symbolFilter" aria-label="Filter transactions by symbol" placeholder="Filter symbol (e.g. ETH-USD)" />
     <span class="date-range-group">
+      <label class="sr-only" for="dateFrom">Transactions from date, inclusive</label>
       <input type="date" id="dateFrom" title="From date (inclusive)" />
-      <span class="date-range-sep">to</span>
+      <span class="date-range-sep" aria-hidden="true">to</span>
+      <label class="sr-only" for="dateTo">Transactions to date, inclusive</label>
       <input type="date" id="dateTo" title="To date (inclusive)" />
       <button class="tbtn date-quick" data-range="30d" title="Last 30 days">30d</button>
       <button class="tbtn date-quick" data-range="90d" title="Last 90 days">90d</button>
@@ -251,6 +283,7 @@
   </div>
   <div class="table-wrap">
     <table>
+      <caption class="sr-only">Full transaction ledger</caption>
       <thead><tr id="headerRow"></tr></thead>
       <tbody id="tbody"></tbody>
     </table>
@@ -258,17 +291,17 @@
 </div>
 
 <!-- ============================ OPTIONS ============================ -->
-<div id="tab-options" class="tab-panel">
+<div id="tab-options" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-options" tabindex="0">
   <div id="optionsContent"><div class="tab-placeholder">Options tab — rendered on activation.</div></div>
 </div>
 
 <!-- ============================ RETIREMENT ============================ -->
-<div id="tab-retirement" class="tab-panel">
+<div id="tab-retirement" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-retirement" tabindex="0">
   <div id="retirementContent"><div class="tab-placeholder">Retirement tab — rendered on activation.</div></div>
 </div>
 
 <!-- ============================ PLANNING ============================ -->
-<div id="tab-planning" class="tab-panel">
+<div id="tab-planning" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-planning" tabindex="0">
   <div id="planningContent"><div class="tab-placeholder">Planning tab — rendered on activation.</div></div>
 
   <!-- Year-by-year financial overview: pivot table with accounts as
@@ -283,24 +316,26 @@
 </div>
 
 <!-- ============================ INCOME ============================ -->
-<div id="tab-income" class="tab-panel">
+<div id="tab-income" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-income" tabindex="0">
   <div id="incomeContent"><div class="tab-placeholder">Income tab — rendered on activation.</div></div>
 </div>
 
 <!-- ============================ TAX ============================ -->
-<div id="tab-tax" class="tab-panel">
+<div id="tab-tax" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-tax" tabindex="0">
   <div id="taxContent"><div class="tab-placeholder">Tax tab — rendered on activation.</div></div>
 </div>
 
 <!-- ============================ CRYPTO ============================ -->
-<div id="tab-crypto" class="tab-panel">
+<div id="tab-crypto" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-crypto" tabindex="0">
   <div id="cryptoContent"><div class="tab-placeholder">Crypto tab — rendered on activation.</div></div>
 </div>
 
 <!-- ============================ PERFORMANCE ============================ -->
-<div id="tab-performance" class="tab-panel">
+<div id="tab-performance" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-performance" tabindex="0">
   <div id="performanceContent"><div class="tab-placeholder">Performance tab — rendered on activation.</div></div>
 </div>
+
+</main>
 
 <script>
 // @@APP_JS@@

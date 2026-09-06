@@ -161,9 +161,9 @@ function renderAnnualBreakdown() {
   const savingsByYear = ANALYTICS.savings_by_year || {};
   const haveSavings = Object.keys(savingsByYear).length > 0;
 
-  let h1 = '<tr><th rowspan="2" class="ab-sticky-col">Year</th><th rowspan="2">Age</th>';
+  let h1 = '<tr><th scope="col" rowspan="2" class="ab-sticky-col">Year</th><th scope="col" rowspan="2">Age</th>';
   if (haveSavings) {
-    h1 += '<th rowspan="2" title="Savings rate — external net contributions across all accounts ÷ gross income (salary + bonus from metadata.csv)">Sav%</th>';
+    h1 += '<th scope="col" rowspan="2" title="Savings rate — external net contributions across all accounts ÷ gross income (salary + bonus from metadata.csv)">Sav%</th>';
   }
   let h2 = '<tr>';
   for (const a of accounts) {
@@ -175,17 +175,17 @@ function renderAnnualBreakdown() {
     const headTint = _acctTint(a, TINT_HEAD);
     const cellTint = _acctTint(a, TINT_CELL);
     const contribTint = _acctTint(a, TINT_CONTRIB);
-    h1 += `<th colspan="${colspan}" class="ab-acct-head${expanded ? ' ab-expanded' : ''}" data-acct="${_htmlEsc(a)}" style="background:${headTint};color:${acctColor};border-bottom:2px solid ${acctColor};" title="Click to ${expanded ? 'collapse' : 'expand'} contribution columns">
+    h1 += `<th scope="colgroup" colspan="${colspan}" class="ab-acct-head${expanded ? ' ab-expanded' : ''}" data-acct="${_htmlEsc(a)}" style="background:${headTint};color:${acctColor};border-bottom:2px solid ${acctColor};" title="Click to ${expanded ? 'collapse' : 'expand'} contribution columns">
       <span class="ab-acct-arrow">${arrow}</span>${_htmlEsc(label)}
     </th>`;
     if (expanded) {
-      h2 += `<th class="num ab-sub" style="background:${contribTint};" title="Net cash flow into this account this year">contr.</th>
-             <th class="num ab-sub" style="background:${contribTint};" title="Cumulative net cash flow into this account through year end">Σ contr.</th>
-             <th class="num ab-sub" style="background:${contribTint};" title="Year-over-year change in cumulative contributions">Δ contr.</th>`;
+      h2 += `<th scope="col" class="num ab-sub" style="background:${contribTint};" title="Net cash flow into this account this year">contr.</th>
+             <th scope="col" class="num ab-sub" style="background:${contribTint};" title="Cumulative net cash flow into this account through year end">Σ contr.</th>
+             <th scope="col" class="num ab-sub" style="background:${contribTint};" title="Year-over-year change in cumulative contributions">Δ contr.</th>`;
     }
-    h2 += `<th class="num ab-sub" style="background:${cellTint};" title="Year-end balance">Σ</th>
-           <th class="num ab-sub" style="background:${cellTint};" title="Year-over-year % change of year-end balance">Δ%</th>
-           <th class="num ab-sub" style="background:${cellTint};" title="Year-over-year $ change of year-end balance">Δ$</th>`;
+    h2 += `<th scope="col" class="num ab-sub" style="background:${cellTint};" title="Year-end balance">Σ</th>
+           <th scope="col" class="num ab-sub" style="background:${cellTint};" title="Year-over-year % change of year-end balance">Δ%</th>
+           <th scope="col" class="num ab-sub" style="background:${cellTint};" title="Year-over-year $ change of year-end balance">Δ$</th>`;
   }
   // Sum group (always 3 columns)
   const sumExpanded = _annualSumExpanded;
@@ -193,17 +193,17 @@ function renderAnnualBreakdown() {
   const sumTip = sumExpanded
     ? 'Click to hide Target comparison columns'
     : 'Click to show Target columns (year-end Sum vs target)';
-  h1 += `<th colspan="3" class="ab-sum-head ab-sum-toggle${sumExpanded ? ' ab-expanded' : ''}" title="${sumTip}">
+  h1 += `<th scope="colgroup" colspan="3" class="ab-sum-head ab-sum-toggle${sumExpanded ? ' ab-expanded' : ''}" title="${sumTip}">
     <span class="ab-acct-arrow">${sumArrow}</span>Sum
   </th>`;
-  h2 += `<th class="num ab-sub">Σ</th>
-         <th class="num ab-sub">Δ%</th>
-         <th class="num ab-sub">Δ$</th>`;
+  h2 += `<th scope="col" class="num ab-sub">Σ</th>
+         <th scope="col" class="num ab-sub">Δ%</th>
+         <th scope="col" class="num ab-sub">Δ$</th>`;
   if (sumExpanded) {
-    h1 += `<th colspan="3" class="ab-target-head">Target</th>`;
-    h2 += `<th class="num ab-sub" title="Year-end target">Σ</th>
-           <th class="num ab-sub" title="% above (+) or below (−) target">Δ%</th>
-           <th class="num ab-sub" title="$ above (+) or below (−) target">Δ$</th>`;
+    h1 += `<th scope="colgroup" colspan="3" class="ab-target-head">Target</th>`;
+    h2 += `<th scope="col" class="num ab-sub" title="Year-end target">Σ</th>
+           <th scope="col" class="num ab-sub" title="% above (+) or below (−) target">Δ%</th>
+           <th scope="col" class="num ab-sub" title="$ above (+) or below (−) target">Δ$</th>`;
   }
   h1 += `</tr>`;
   h2 += `</tr>`;
@@ -214,7 +214,7 @@ function renderAnnualBreakdown() {
     const prevYear = i > 0 ? years[i - 1] : null;
     const prevSnap = prevYear ? yearEndSnaps[prevYear] : null;
     const cells = [
-      `<th class="ab-sticky-col">${year}</th>`,
+      `<th scope="row" class="ab-sticky-col">${year}</th>`,
       `<td class="num">${ageAtYearEnd(year)}</td>`,
     ];
     if (haveSavings) {
@@ -310,7 +310,7 @@ function renderAnnualBreakdown() {
   }).join('');
 
   host.innerHTML = `<div class="ab-scroll">
-    <table class="annual-breakdown">
+    <table class="annual-breakdown"><caption class="sr-only">Year-end balance, year-over-year change and contributions for each account, one row per year</caption>
       <thead>${h1}${h2}</thead>
       <tbody>${bodyRows}</tbody>
     </table>
@@ -334,12 +334,12 @@ function renderTopHoldings() {
     .sort((a, b) => (b.value || 0) - (a.value || 0))
     .slice(0, 15);
   head.innerHTML = `
-    <th>Symbol</th>
-    <th>Sector</th>
-    <th class="num">Quantity</th>
-    <th class="num">Price</th>
-    <th class="num">Value</th>
-    <th class="num">Gain</th>`;
+    <th scope="col">Symbol</th>
+    <th scope="col">Sector</th>
+    <th scope="col" class="num">Quantity</th>
+    <th scope="col" class="num">Price</th>
+    <th scope="col" class="num">Value</th>
+    <th scope="col" class="num">Gain</th>`;
   body.innerHTML = rows.map(h => {
     const ug = typeof h.unrealized_gain === 'number' ? h.unrealized_gain : null;
     const ugStr = ug == null ? '—'
@@ -372,12 +372,12 @@ function renderRecentTransactions() {
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
     .slice(0, 15);
   head.innerHTML = `
-    <th>Date</th>
-    <th>Account</th>
-    <th>Symbol</th>
-    <th>Action</th>
-    <th class="num">Qty</th>
-    <th class="num">Amount</th>`;
+    <th scope="col">Date</th>
+    <th scope="col">Account</th>
+    <th scope="col">Symbol</th>
+    <th scope="col">Action</th>
+    <th scope="col" class="num">Qty</th>
+    <th scope="col" class="num">Amount</th>`;
   body.innerHTML = rows.map(t => {
     const actionColor = ACTION_COLORS[t.action] || '';
     const actionSpan = actionColor
@@ -645,9 +645,9 @@ function reconDrillHtml(r, colspan) {
       <div class="recon-drill-outer">
         <div class="recon-drill">
           <div class="recon-src-chips">${srcChips}</div>
-          <table class="lots-table">
-            <thead><tr><th>date</th><th>action</th><th>symbol</th>
-              <th class="num">${valHead}</th></tr></thead>
+          <table class="lots-table"><caption class="sr-only">Transactions behind this reconciliation check</caption>
+            <thead><tr><th scope="col">date</th><th scope="col">action</th><th scope="col">symbol</th>
+              <th scope="col" class="num">${valHead}</th></tr></thead>
             <tbody>${body}</tbody>
           </table>
         </div>
@@ -832,13 +832,13 @@ function renderOverviewStatus() {
     const nHidden = recon.rows.length - visible.length;
     const toggleLink = `<a href="javascript:void(0)" onclick="toggleReconShowAll()" style="color:var(--accent);font-weight:400;text-transform:none;letter-spacing:0;font-size:0.85em;">${reconShowAll ? 'issues only' : `show all ${total}`}</a>`;
     const tableHtml = visible.length
-      ? `<table>
+      ? `<table><caption class="sr-only">fin's computed figures against the broker-reported figures declared in metadata.csv</caption>
         <thead><tr>
-          <th>Account</th><th>Check</th>
-          <th style="text-align:right;">Reported</th>
-          <th style="text-align:right;">fin</th>
-          <th style="text-align:right;">Δ</th>
-          <th>Status</th>
+          <th scope="col">Account</th><th scope="col">Check</th>
+          <th scope="col" style="text-align:right;">Reported</th>
+          <th scope="col" style="text-align:right;">fin</th>
+          <th scope="col" style="text-align:right;">Δ</th>
+          <th scope="col">Status</th>
         </tr></thead>
         <tbody>${bodyRows}</tbody>
       </table>`
@@ -899,16 +899,37 @@ function _buildMonthlyPnlSection() {
   // Color scale: red below 0, green above; intensity proportional to
   // the row's distance from 0 vs the most-extreme observed |return|.
   const span = Math.max(Math.abs(minR), Math.abs(maxR), 0.001);
+  // The tint is translucent, so the colour the text actually sits on is
+  // the BLEND of tint and panel surface — and at high intensity that
+  // blend is light enough that the page's usual light-on-dark body
+  // colour drops to about 2:1.  Blend it here and pick the pole that
+  // wins.  White and black specifically: between those two the worst
+  // possible background still clears 4.58:1, which no softer pair of
+  // colours can promise across the whole scale.
+  const _SURFACE = [26, 26, 26];                 // --surface
+  const _blend = (rgb, a) => rgb.map((c, i) => Math.round(a * c + (1 - a) * _SURFACE[i]));
+  const _lum = (rgb) => {
+    const f = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+  };
+  const _contrast = (a, b) => {
+    const l1 = _lum(a), l2 = _lum(b);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  };
   const colorFor = (r) => {
-    if (r == null) return 'transparent';
+    if (r == null) return { bg: 'transparent', fg: 'inherit' };
     const intensity = Math.min(1, Math.abs(r) / span);
     const alpha = 0.18 + intensity * 0.62;
-    return r >= 0 ? `rgba(74, 222, 128, ${alpha.toFixed(2)})`
-      : `rgba(248, 113, 113, ${alpha.toFixed(2)})`;
+    const tint = r >= 0 ? [74, 222, 128] : [248, 113, 113];
+    const seen = _blend(tint, alpha);
+    return {
+      bg: `rgba(${tint.join(', ')}, ${alpha.toFixed(2)})`,
+      fg: _contrast(seen, [255, 255, 255]) >= _contrast(seen, [0, 0, 0]) ? '#ffffff' : '#000000',
+    };
   };
 
   const headerCells = _MONTH_LABELS.map((m, i) =>
-    `<th class="num" title="${_MONTH_FULL[i]}">${m}</th>`).join('');
+    `<th scope="col" class="num" title="${_MONTH_FULL[i]}">${m}</th>`).join('');
   const rowsHtml = mp.rows.map(row => {
     let yearTotal = 0;
     const cells = [];
@@ -919,12 +940,13 @@ function _buildMonthlyPnlSection() {
       } else {
         yearTotal = (1 + yearTotal) * (1 + r) - 1;
         const tip = `${_MONTH_FULL[m - 1]} ${row.year}: ${(r * 100).toFixed(2)}%`;
-        cells.push(`<td class="mp-cell" style="background:${colorFor(r)};" title="${_htmlEsc(tip)}">${(r * 100).toFixed(1)}</td>`);
+        const c = colorFor(r);
+          cells.push(`<td class="mp-cell" style="background:${c.bg};color:${c.fg};" title="${_htmlEsc(tip)}">${(r * 100).toFixed(1)}</td>`);
       }
     }
     const ytdCls = yearTotal >= 0 ? 'positive' : 'negative';
     return `<tr>
-      <th class="mp-year">${row.year}</th>
+      <th scope="row" class="mp-year">${row.year}</th>
       ${cells.join('')}
       <td class="mp-ytd"><span class="${ytdCls}">${(yearTotal * 100).toFixed(1)}%</span></td>
     </tr>`;
@@ -950,8 +972,8 @@ function _buildMonthlyPnlSection() {
       </span>
     </div>
     <div class="panel">
-      <table class="monthly-pnl-table">
-        <thead><tr><th></th>${headerCells}<th class="num">YTD</th></tr></thead>
+      <table class="monthly-pnl-table"><caption class="sr-only">Investment return for each month of each year, with a year-to-date column</caption>
+        <thead><tr><th scope="col"></th>${headerCells}<th scope="col" class="num">YTD</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
       ${summary}
@@ -972,7 +994,13 @@ function _buildDailyPnlSection() {
     const pct = r.change_pct || 0;
     const pctStr = ` (${sign}${pct.toFixed(2)}%)`;
     const tipText = `${r.date}: ${sign}${fmtMoney(pnl, 0)}${pctStr}`;
-    return `<div class="daily-pnl-bar ${neg ? 'neg' : ''}" title="${_htmlEsc(tipText)}">
+    // Every bar grows upward from the same baseline, so the sign lives
+    // in the fill — colour for sighted users (plus a hatch on losses,
+    // see styles.css) and the label here for everyone else.  Naming each
+    // bar rather than the strip as a whole means the per-day figures are
+    // readable by keyboard and screen reader, not hover-only.
+    return `<div class="daily-pnl-bar ${neg ? 'neg' : ''}" title="${_htmlEsc(tipText)}"
+                 role="img" aria-label="${_htmlEsc(tipText)}">
       <div class="tip">${_htmlEsc(r.date)}: <b>${sign}${fmtMoney(pnl, 0)}</b>${pctStr}</div>
       <div class="bar" style="height:${h}%"></div>
     </div>`;
@@ -984,7 +1012,8 @@ function _buildDailyPnlSection() {
         Market-only moves (today's positions repriced at recent dates) — same-day cash flows excluded.
       </span>
     </div>
-    <div class="daily-pnl-bars">${bars}</div>
+    <div class="daily-pnl-bars" role="group"
+         aria-label="Daily profit and loss for the last 30 days, one bar per day">${bars}</div>
   `;
 }
 

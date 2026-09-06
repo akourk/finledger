@@ -35,6 +35,8 @@ function _renderCashFlowWaterfall(items, finalLabel, opts) {
   }
   bars.push({ short: finalLabel, start: 0, end: run, amt: run, isTotal: true });
 
+  const label = opts.label ||
+    'Waterfall chart: projected twelve-month cash flow, from gross inflows through each outflow to the net figure. The table below carries the same lines.';
   const build = (W) => _renderWaterfallContent(bars, W, H);
   queueMicrotask(() => {
     const svg = document.getElementById(id);
@@ -46,6 +48,7 @@ function _renderCashFlowWaterfall(items, finalLabel, opts) {
   });
   return `<div class="chart-wrap" style="padding:10px;position:relative;">
     <svg id="${id}" class="chart-svg" viewBox="0 0 800 ${H}"
+         role="img" aria-label="${_htmlEsc(label)}"
          style="width:100%;height:${H}px;display:block;"></svg>
     <div class="chart-tooltip" id="${id}_tip"></div>
   </div>`;
@@ -210,8 +213,8 @@ function _buildCashFlowForecast(passiveProjected) {
         <div class="item"><span class="label">Net of retirement (proj.)</span><span class="value">${fmtMoney(totalNet)}</span></div>
         ${savingsItem}
       </div>
-      <table class="mini-table">
-        <thead><tr><th>Source</th><th class="num">Projected (next 12mo)</th></tr></thead>
+      <table class="mini-table"><caption class="sr-only">Projected cash flow over the next twelve months, by source</caption>
+        <thead><tr><th scope="col">Source</th><th scope="col" class="num">Projected (next 12mo)</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
@@ -282,8 +285,8 @@ function _buildPaycheckSection() {
     </div>
     ${_renderStatCards(cards)}
     <div class="panel">
-      <table class="mini-table">
-        <thead><tr><th>Line</th><th class="num">Per Paycheck</th><th class="num">Annual</th></tr></thead>
+      <table class="mini-table"><caption class="sr-only">Paycheck: gross pay through each deduction to estimated take-home</caption>
+        <thead><tr><th scope="col">Line</th><th scope="col" class="num">Per Paycheck</th><th scope="col" class="num">Annual</th></tr></thead>
         <tbody>${rows.join('')}</tbody>
       </table>
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
@@ -356,16 +359,16 @@ function _buildBudgetSection() {
     </div>
     ${_renderStatCards(cards)}
     <div class="panel">
-      <table class="mini-table">
-        <thead><tr><th>Category</th><th class="num">Monthly</th><th class="num">Annual</th><th>Share</th></tr></thead>
+      <table class="mini-table"><caption class="sr-only">Budgeted living expenses by category</caption>
+        <thead><tr><th scope="col">Category</th><th scope="col" class="num">Monthly</th><th scope="col" class="num">Annual</th><th scope="col">Share</th></tr></thead>
         <tbody>${catRows}</tbody>
       </table>
     </div>
     <details style="margin-top:10px;">
       <summary style="cursor:pointer;color:var(--text-dim);font-size:0.85rem;">All items (${b.count})</summary>
       <div class="panel" style="margin-top:8px;">
-        <table class="mini-table">
-          <thead><tr><th>Item</th><th>Category</th><th>Cadence</th><th class="num">Cost / period</th><th class="num">Monthly</th></tr></thead>
+        <table class="mini-table"><caption class="sr-only">Every budgeted item with its cadence and normalised monthly cost</caption>
+          <thead><tr><th scope="col">Item</th><th scope="col">Category</th><th scope="col">Cadence</th><th scope="col" class="num">Cost / period</th><th scope="col" class="num">Monthly</th></tr></thead>
           <tbody>${itemRows}</tbody>
         </table>
       </div>
@@ -474,13 +477,13 @@ function renderIncome() {
         <div class="item"><span class="label">Trailing 12mo (actual)</span><span class="value">${fmtMoney(ttm)}</span></div>
         <div class="item"><span class="label">Next 12mo (projected)</span><span class="value">${fmtMoney(fcTotal)}</span></div>
       </div>
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Trailing and projected dividend and interest income for each held position</caption>
         <thead><tr>
-          <th>Symbol</th>
-          <th class="num">Last 12mo</th>
-          <th class="num">Projected Next 12mo</th>
-          <th class="num" title="Yield-on-cost: TTM income ÷ cost basis. Tells you the return your contributions earn — rises over time as the position grows the dividend.">YoC</th>
-          <th class="num" title="Current yield: TTM income ÷ current value. What new money invested today would earn at recent income levels.">Cur Yield</th>
+          <th scope="col">Symbol</th>
+          <th scope="col" class="num">Last 12mo</th>
+          <th scope="col" class="num">Projected Next 12mo</th>
+          <th scope="col" class="num" title="Yield-on-cost: TTM income ÷ cost basis. Tells you the return your contributions earn — rises over time as the position grows the dividend.">YoC</th>
+          <th scope="col" class="num" title="Current yield: TTM income ÷ current value. What new money invested today would earn at recent income levels.">Cur Yield</th>
         </tr></thead>
         <tbody>${forecast.slice(0, 20).map(f => {
     const yoc = f.yield_on_cost != null ? `${f.yield_on_cost.toFixed(2)}%` : '—';
@@ -519,14 +522,14 @@ function renderIncome() {
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Annual Summary</span></h2></div>
     <div class="panel">
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Investment income by year and income type</caption>
         <thead><tr>
-          <th>Year</th>
-          <th class="num">Dividends</th>
-          <th class="num">Interest</th>
-          <th class="num">Rewards</th>
-          <th class="num">Lending</th>
-          <th class="num">Total</th>
+          <th scope="col">Year</th>
+          <th scope="col" class="num">Dividends</th>
+          <th scope="col" class="num">Interest</th>
+          <th scope="col" class="num">Rewards</th>
+          <th scope="col" class="num">Lending</th>
+          <th scope="col" class="num">Total</th>
         </tr></thead>
         <tbody>${yearRows || '<tr><td colspan="6" style="color:var(--text-dim);padding:12px;">No income events.</td></tr>'}</tbody>
       </table>
@@ -537,15 +540,15 @@ function renderIncome() {
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">By Source</span></h2></div>
     <div class="panel">
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Investment income by source and account</caption>
         <thead><tr>
-          <th>Source</th>
-          <th>Account</th>
-          <th class="num">Dividends</th>
-          <th class="num">Interest</th>
-          <th class="num">Rewards</th>
-          <th class="num">Lending</th>
-          <th class="num">Total</th>
+          <th scope="col">Source</th>
+          <th scope="col">Account</th>
+          <th scope="col" class="num">Dividends</th>
+          <th scope="col" class="num">Interest</th>
+          <th scope="col" class="num">Rewards</th>
+          <th scope="col" class="num">Lending</th>
+          <th scope="col" class="num">Total</th>
         </tr></thead>
         <tbody>${sourceRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody>
       </table>

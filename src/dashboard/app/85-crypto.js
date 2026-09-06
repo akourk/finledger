@@ -125,17 +125,17 @@ function renderCrypto() {
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Per-Coin</span></h2></div>
     <div class="panel">
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Crypto holdings, realized gain and income per coin</caption>
         <thead><tr>
-          <th>Coin</th>
-          <th class="num">Quantity</th>
-          <th class="num">Price</th>
-          <th class="num">Value</th>
-          <th class="num">Basis</th>
-          <th class="num">Unrealized</th>
-          <th class="num">Realized</th>
-          <th class="num">Income</th>
-          <th class="num">Txns</th>
+          <th scope="col">Coin</th>
+          <th scope="col" class="num">Quantity</th>
+          <th scope="col" class="num">Price</th>
+          <th scope="col" class="num">Value</th>
+          <th scope="col" class="num">Basis</th>
+          <th scope="col" class="num">Unrealized</th>
+          <th scope="col" class="num">Realized</th>
+          <th scope="col" class="num">Income</th>
+          <th scope="col" class="num">Txns</th>
         </tr></thead>
         <tbody>${coinRows || '<tr><td colspan="9" style="color:var(--text-dim);padding:12px;">No crypto activity.</td></tr>'}</tbody>
       </table>
@@ -143,10 +143,10 @@ function renderCrypto() {
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Recent Crypto Activity</span></h2></div>
     <div class="panel">
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Recent crypto transactions</caption>
         <thead><tr>
-          <th>Date</th><th>Coin</th><th>Action</th>
-          <th class="num">Quantity</th><th class="num">Price</th><th class="num">Amount</th><th class="num">Realized</th>
+          <th scope="col">Date</th><th scope="col">Coin</th><th scope="col">Action</th>
+          <th scope="col" class="num">Quantity</th><th scope="col" class="num">Price</th><th scope="col" class="num">Amount</th><th scope="col" class="num">Realized</th>
         </tr></thead>
         <tbody>${recentRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody>
       </table>
@@ -154,9 +154,9 @@ function renderCrypto() {
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Conversions / Wraps</span></h2></div>
     <div class="panel">
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Crypto conversions and wraps</caption>
         <thead><tr>
-          <th>Date</th><th>Coin</th><th>Action</th><th class="num">Quantity</th><th>Note</th>
+          <th scope="col">Date</th><th scope="col">Coin</th><th scope="col">Action</th><th scope="col" class="num">Quantity</th><th scope="col">Note</th>
         </tr></thead>
         <tbody>${convRows || '<tr><td colspan="5" style="color:var(--text-dim);padding:12px;">No conversion/wrap events recorded.</td></tr>'}</tbody>
       </table>

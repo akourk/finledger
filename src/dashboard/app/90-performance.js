@@ -614,6 +614,7 @@ function renderMultiLineChart(seriesArr, opts) {
   const id = opts.id || ('multiChart_' + Math.random().toString(36).slice(2, 7));
   const height = opts.height || 300;
   const yFmt = opts.yFormatter || fmtMoneyShort;
+  const label = opts.label || 'Line chart';
   if (!seriesArr || !seriesArr.length || !seriesArr[0].points.length) {
     return `<div class="chart-empty">${opts.emptyMsg || 'No data.'}</div>`;
   }
@@ -743,6 +744,7 @@ function renderMultiLineChart(seriesArr, opts) {
   ).join('');
   return `<div class="chart-wrap" style="padding:10px;position:relative;">
     <svg id="${id}" class="chart-svg" viewBox="0 0 800 ${height}"
+         role="img" aria-label="${_htmlEsc(label)}"
          style="width:100%;height:${height}px;display:block;"></svg>
     <div class="chart-tooltip" id="${id}_tip"></div>
     <div class="chart-legend">${legend}</div>
@@ -794,7 +796,9 @@ function _buildDrawdownSection() {
   // Inline mini chart of drawdown series (bars going down from 0)
   const chartId = 'drawdownChart';
   const chartHtml = `<div class="chart-wrap">
-    <svg class="chart-svg" id="${chartId}" preserveAspectRatio="none" style="height:180px;"></svg>
+    <svg class="chart-svg" id="${chartId}" preserveAspectRatio="none" style="height:180px;"
+           role="img"
+           aria-label="Drawdown from the running peak over time. The cards above give the maximum and current drawdown as text."></svg>
   </div>`;
 
   // Render after DOM insertion
@@ -1386,9 +1390,11 @@ function renderPerformance() {
   const _customInputsHtml = _customActive ? `
     <span class="hist-label" style="margin-left:10px;">From</span>
     <input type="date" class="hist-date" min="${_perfWindowMin}" max="${_perfWindowMax}"
+           aria-label="Performance window: from date"
            value="${perfTwrStart || ''}" onchange="setPerfTwrStart(this.value)">
     <span class="hist-label">To</span>
     <input type="date" class="hist-date" min="${_perfWindowMin}" max="${_perfWindowMax}"
+           aria-label="Performance window: to date"
            value="${perfTwrEnd || ''}" onchange="setPerfTwrEnd(this.value)">
     <span class="hist-label" style="margin-left:10px;opacity:.7;"
           title="History is sampled on the 15th and the last day of each month (plus today).  A date between samples resolves BACKWARD to the last one at or before it, and every figure in this row — value, flows, realized — is then measured to that same date, so they describe one span.">
@@ -1882,6 +1888,7 @@ ${_rowSpan}`
     });
   }
   const benchChart = renderMultiLineChart(benchSeries, {
+    label: 'Portfolio value over the selected window against the SPY, BND, VXUS and 60/40 benchmarks. The Annual Returns table below carries the same comparison as text.',
     id: 'benchmarkCompareSvg', height: 320, emptyMsg: 'No history data yet.',
   });
   // Rebase toggle — lets the user override the auto behavior (rebase
@@ -1889,7 +1896,7 @@ ${_rowSpan}`
   // Absolute always.  A small chip row above the chart so it's
   // discoverable without crowding the main controls.
   const _rebaseLabel =
-    benchRebaseOverride === null ? `Auto <span style="opacity:0.7;font-weight:400;">(${_rebaseActive ? 'rebased' : 'absolute'})</span>` :
+    benchRebaseOverride === null ? `Auto <span style="font-weight:400;">(${_rebaseActive ? 'rebased' : 'absolute'})</span>` :
       benchRebaseOverride === true ? 'Rebased' :
         'Absolute';
   const benchToggleHtml = `
@@ -2104,11 +2111,11 @@ ${spanNote}`
     </div>
     ${acctSummaryHtml}
     <div class="panel">
-      <table class="mini-table">
+      <table class="mini-table"><caption class="sr-only">Annual returns: start and end value, net contributed, time-weighted return and the SPY benchmark</caption>
         <thead><tr>
-          <th>Year</th><th class="num">Start Value</th><th class="num">End Value</th>
-          <th class="num">Net Contributed</th><th class="num">Return $</th>
-          <th class="num">TWR %</th><th class="num">SPY %</th>
+          <th scope="col">Year</th><th scope="col" class="num">Start Value</th><th scope="col" class="num">End Value</th>
+          <th scope="col" class="num">Net Contributed</th><th scope="col" class="num">Return $</th>
+          <th scope="col" class="num">TWR %</th><th scope="col" class="num">SPY %</th>
         </tr></thead>
         <tbody>${annualByAcctRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">No data for this account.</td></tr>'}</tbody>
       </table>
@@ -2129,20 +2136,20 @@ ${spanNote}`
     <div class="overview-split" style="margin-top:24px;">
       <div class="panel">
         <h3>Top 10 Winners</h3>
-        <table class="mini-table">
+        <table class="mini-table"><caption class="sr-only">Top ten positions by total gain</caption>
           <thead><tr>
-            <th>Symbol</th><th>Sector</th><th class="num">Value</th>
-            <th class="num">Total Gain</th><th class="num">% Return</th>
+            <th scope="col">Symbol</th><th scope="col">Sector</th><th scope="col" class="num">Value</th>
+            <th scope="col" class="num">Total Gain</th><th scope="col" class="num">% Return</th>
           </tr></thead>
           <tbody>${winnerRows || '<tr><td colspan="5" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody>
         </table>
       </div>
       <div class="panel">
         <h3>Top 10 Losers</h3>
-        <table class="mini-table">
+        <table class="mini-table"><caption class="sr-only">Bottom ten positions by total gain</caption>
           <thead><tr>
-            <th>Symbol</th><th>Sector</th><th class="num">Value</th>
-            <th class="num">Total Gain</th><th class="num">% Return</th>
+            <th scope="col">Symbol</th><th scope="col">Sector</th><th scope="col" class="num">Value</th>
+            <th scope="col" class="num">Total Gain</th><th scope="col" class="num">% Return</th>
           </tr></thead>
           <tbody>${loserRows || '<tr><td colspan="5" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody>
         </table>
