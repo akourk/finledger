@@ -367,3 +367,18 @@ def test_ci_runs_the_axe_gate():
     assert "axe-core" in wf
     assert "samples/portfolio.snapshot.json" in wf, \
         "the gate must build from the synthetic sample, never from data/"
+
+def test_the_published_demo_banner_does_not_displace_the_skip_link(bundle):
+    """The Pages workflow prepends a banner carrying its own link.  Put
+    above the skip link it would become the first tab stop, which is
+    exactly the thing the skip link exists to avoid — and the axe job
+    scans the un-bannered build, so nothing else would notice."""
+    from tools.demo_banner import inject
+
+    published = inject(bundle)
+    body = published.index("<body>")
+    skip = published.index('class="skip-link"', body)
+    banner = published.index("live demo", body)
+    top_bar = published.index('class="top-bar"', body)
+    assert body < skip < banner < top_bar
+    assert inject(published) == published, "injection must stay idempotent"

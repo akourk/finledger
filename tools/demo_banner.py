@@ -36,19 +36,36 @@ BANNER = f"""<div style="
 """
 
 
-def inject(html: str) -> str:
-    """Insert the banner immediately after <body>.
+# The dashboard's skip link is the first focusable element on the page,
+# which is the entire point of it — a keyboard user should not have to
+# walk the top bar and the ten-tab tablist to reach the content.  The
+# banner carries a link of its own, so injecting it above the skip link
+# would quietly demote it.  Anchoring below instead costs nothing: the
+# skip link is off-screen until focused, so the banner is still the
+# first thing SEEN, and the first thing TABBED to is unchanged.
+_SKIP_LINK_END = 'href="#main-content">Skip to dashboard content</a>'
 
-    Anchored on the opening tag rather than appended at the end so the
+
+def inject(html: str) -> str:
+    """Insert the banner at the top of the body, below the skip link.
+
+    Anchored near the opening tag rather than appended at the end so the
     banner is visible without scrolling, and so it lands outside the
     dashboard's own top bar instead of inside a flex container that
     would stretch it.
     """
+    if REPO in html:
+        return html                      # already injected; stay idempotent
+    if _SKIP_LINK_END in html:
+        return html.replace(_SKIP_LINK_END,
+                            _SKIP_LINK_END + "\n" + BANNER, 1)
+    # A render without a skip link should still publish, but the
+    # ordering guarantee above is gone, so say so rather than degrade
+    # in silence.
     marker = "<body>"
     if marker not in html:
         raise SystemExit("demo_banner: no <body> in the rendered dashboard")
-    if REPO in html:
-        return html                      # already injected; stay idempotent
+    print("demo_banner: no skip link found — banner injected at <body>")
     return html.replace(marker, marker + "\n" + BANNER, 1)
 
 
