@@ -76,7 +76,8 @@ async function main() {
   }
 
   const browser = await puppeteer.launch({
-    headless: 'new',
+    headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
   const page = await browser.newPage();
@@ -87,6 +88,7 @@ async function main() {
   // failure of this check.
   const pageErrors = [];
   page.on('pageerror', e => pageErrors.push(String(e)));
+  page.on('console', m => { if (m.type() === 'error') pageErrors.push(m.text()); });
 
   await page.goto(pathToFileURL(file).href, { waitUntil: 'load' });
 

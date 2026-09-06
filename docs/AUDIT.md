@@ -1,5 +1,9 @@
 # finledger — application audit
 
+> Historical record of the August 2026 audit. Counts, coverage and statuses below
+> describe that audit at the time, not the current suite or open backlog. See
+> [the current improvement plan](IMPLEMENTATION_PLAN.md) and CI for current work.
+
 Sanitized, committable summary of the audit described in
 `PLAN-audit.md`. **No portfolio figures appear here** — mechanism,
 files, bug class, and severity only. The working ledger is

@@ -19,7 +19,7 @@ from ._helpers import (
     apply_ticker_rename,
     _load_ticker_renames,
     _num, _date_mdy, _date_ymd, _date_dmy, _date_iso, _txn,
-    take_date_failures,
+    take_date_failures, take_substantive_rows,
 )
 from .apple_savings import parse_apple_savings
 from .coinbase import parse_coinbase, parse_coinbase_pro
@@ -58,17 +58,6 @@ _PARSERS = {
 }
 
 
-# A broker file with more substantive lines than this, that still parses
-# to nothing, is assumed to have DATA the parser failed to read rather
-# than to be legitimately empty.  Set well above the longest known
-# preamble (Voya writes six lines before its header) so the warning can
-# never fire on an empty-but-valid file — an empty
-# `manual-adjustments.csv` is the common case and must stay quiet.  The
-# cost of the conservative threshold is that losing a handful of rows
-# stays silent; the catastrophe this guards is a real export of hundreds
-# of rows going to zero.
-_EMPTY_FILE_LINE_ALLOWANCE = 8
-
 # Per-file parse findings from the most recent ``parse_all_files`` call.
 # Rebuilt from scratch on every call, so it always describes the run that
 # produced the transactions currently in hand — never a stale one.
@@ -93,25 +82,39 @@ def parse_report() -> list[dict]:
     return [dict(r) for r in _parse_report]
 
 
-def _has_unread_data(path: Path) -> bool:
-    """True when a file carries more content than a header/preamble.
-
-    Used only to decide whether a zero-row parse deserves a warning.
-    """
-    try:
-        with open(path, encoding="utf-8-sig", errors="replace") as fh:
-            substantive = sum(
-                1 for line in fh
-                if line.strip() and not line.lstrip().startswith("#")
-            )
-    except OSError:
-        return False
-    return substantive > _EMPTY_FILE_LINE_ALLOWANCE
+def validate_ingestion(txns: list[dict], findings=None) -> None:
+    """Fail closed before valuation/export when any input was omitted."""
+    findings = parse_report() if findings is None else findings
+    if findings:
+        files = ", ".join(str(item.get("file", "input")) for item in findings)
+        raise ValueError("Import validation failed for " + files
+                         + ". Fix rejected or unrecognized input files before "
+                         "exporting; the previous dashboard is preserved.")
+    if not isinstance(txns, list) or not txns:
+        raise ValueError("No valid transactions were imported; the previous "
+                         "dashboard is preserved.")
+    import math
+    from datetime import date
+    for index, txn in enumerate(txns, 1):
+        if not isinstance(txn, dict):
+            raise ValueError(f"Transaction {index} is not an object")
+        try:
+            date.fromisoformat(txn["date"])
+        except (KeyError, ValueError, TypeError):
+            raise ValueError(f"Transaction {index} has an invalid date") from None
+        for field in ("account", "action"):
+            if not isinstance(txn.get(field), str) or not txn[field].strip():
+                raise ValueError(f"Transaction {index} is missing {field}")
+        for field in ("quantity", "price", "fees", "amount"):
+            value = txn.get(field)
+            if (not isinstance(value, (float, int)) or isinstance(value, bool)
+                    or not math.isfinite(value)):
+                raise ValueError(f"Transaction {index}, {field}: expected a finite number")
 
 
 def parse_all_files(data_dir: Path) -> list[Transaction]:
-    """Parse every supported CSV in ``data_dir``.  Unknown / skipped
-    files are silently ignored; each parser's output is tagged with
+    """Parse every supported CSV in ``data_dir``.  Reference files are skipped; unrecognized files are reported.
+     each parser's output is tagged with
     the ``source`` filename for traceability.
 
     A recognised broker file that yields NO transactions is called out
@@ -129,14 +132,22 @@ def parse_all_files(data_dir: Path) -> list[Transaction]:
     all_txns: list[Transaction] = []
     for csv_file in sorted(data_dir.glob("*.csv")):
         broker = detect_broker(csv_file)
-        if broker in ("skip", "unknown"):
+        if broker == "unknown":
+            _parse_report.append({"file": csv_file.name, "broker": broker,
+                                  "parsed": 0, "dropped": 0,
+                                  "empty_with_data": False})
+            print(f"  !! WARNING: {csv_file.name}: unrecognized CSV format")
+            continue
+        if broker == "skip":
             continue
         parser_fn = _PARSERS.get(broker)
         if parser_fn is None:
             continue
         take_date_failures()          # discard any tally from earlier work
+        take_substantive_rows()
         txns = parser_fn(csv_file)
         dropped = take_date_failures()
+        substantive_rows = take_substantive_rows()
         print(f"  {csv_file.name}: {len(txns)} transactions ({broker})")
         if dropped:
             print(f"  !! WARNING: {csv_file.name} — {dropped} row(s) were "
@@ -144,7 +155,7 @@ def parse_all_files(data_dir: Path) -> list[Transaction]:
                   f"transactions are missing from the portfolio. If the "
                   f"count is large, the '{broker}' export format has "
                   f"probably changed.")
-        empty_with_data = not txns and _has_unread_data(csv_file)
+        empty_with_data = not txns and substantive_rows > 0
         if empty_with_data:
             print(f"  !! WARNING: {csv_file.name} was detected as "
                   f"'{broker}' and has data rows, but parsed to ZERO "

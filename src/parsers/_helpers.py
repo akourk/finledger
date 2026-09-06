@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -91,17 +92,89 @@ def apply_ticker_rename(account: str, symbol: str, date: str) -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
+class CSVValue(str):
+    """A cell carrying location metadata, without exposing its contents in errors."""
+
+    def __new__(cls, value, source, line, field):
+        obj = super().__new__(cls, value)
+        obj.location = f"{source}: row {line}, column {field}"
+        return obj
+
+
+_substantive_rows = 0
+
+
+def take_substantive_rows():
+    """Count actual data rows, excluding explicitly recognized information."""
+    global _substantive_rows
+    count = _substantive_rows
+    _substantive_rows = 0
+    return count
+
+
+def skip_informational_row():
+    """Exclude a documented pending/zero-value row from empty-import guards."""
+    global _substantive_rows
+    _substantive_rows -= 1
+
+
+def read_csv_rows(lines, source, *, required=(), nonblank=(), line_offset=0):
+    """Read CSV cells with precise numeric error locations and header checks."""
+    global _substantive_rows
+    from itertools import chain
+    iterator = iter(lines)
+    for first in iterator:
+        if first.strip():
+            iterator = chain([first], iterator)
+            break
+        line_offset += 1
+    reader = csv.DictReader(iterator)
+    if len(reader.fieldnames or ()) != len(set(reader.fieldnames or ())):
+        raise ValueError(f"{source}: duplicate CSV column names")
+    missing = set(required) - set(reader.fieldnames or ())
+    if missing:
+        raise ValueError(f"{source}: missing required CSV column(s): "
+                         + ", ".join(sorted(missing)))
+    for row in reader:
+        if None in row:
+            raise ValueError(f"{source}: row {reader.line_num + line_offset}: "
+                             "more cells than header columns")
+        if not any(str(value or "").strip() for value in row.values()):
+            continue
+        if any(value is None for key, value in row.items() if key in required):
+            raise ValueError(f"{source}: row {reader.line_num + line_offset}: "
+                             "missing required cells")
+        for field in nonblank:
+            if not str(row.get(field) or "").strip():
+                raise ValueError(f"{source}: row {reader.line_num + line_offset}, "
+                                 f"column {field}: required value is blank")
+        _substantive_rows += 1
+        yield {key: CSVValue(value or "", source,
+                            reader.line_num + line_offset, key)
+               for key, value in row.items()}
+
+
 def _num(val: str) -> float:
-    """Parse a string to float, handling $, commas, parens for negatives."""
-    if not val or not val.strip():
+    """Parse finite broker numbers; blank optional cells alone mean zero."""
+    location = getattr(val, "location", "numeric field")
+    if val is None or not str(val).strip():
         return 0.0
-    val = val.strip().replace(",", "").replace("$", "")
+    val = str(val).strip()
     if val.startswith("(") and val.endswith(")"):
         val = "-" + val[1:-1]
+    val = re.sub(r"^([+-]?)\$", r"\1", val)
+    # Keep legitimate thousands groups and scientific notation while refusing
+    # misplaced separators ('1,2') and numeric prefixes ('123typo').
+    if not re.fullmatch(r"[+-]?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", val):
+        raise ValueError(f"{location}: invalid number; fix the CSV before exporting")
+    val = val.replace(",", "")
     try:
-        return float(val)
-    except ValueError:
-        return 0.0
+        number = float(val)
+    except (ValueError, TypeError):
+        raise ValueError(f"{location}: invalid number; fix the CSV before exporting") from None
+    if not math.isfinite(number):
+        raise ValueError(f"{location}: number must be finite; fix the CSV before exporting")
+    return number
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +201,7 @@ def _count_date_failure(val) -> None:
     permanent false warning on files that legitimately contain them.
     """
     global _date_parse_failures
-    if (val or "").strip():
+    if (val or "").strip() or isinstance(val, CSVValue):
         _date_parse_failures += 1
 
 

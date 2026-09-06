@@ -59,6 +59,7 @@ falls back to ``None``.
 
 from __future__ import annotations
 
+from .. import clock
 from datetime import datetime, timedelta
 
 from ..config import CASH_SYMBOLS, contract_multiplier
@@ -112,7 +113,7 @@ def open_lot_rows(fifo_state: dict | None, prices: dict,
     if not fifo_state or "lots" not in fifo_state:
         return []
     if today is None:
-        today = datetime.now().date()
+        today = clock.now(fallback=datetime.now).date()
 
     rows: list[dict] = []
     for (acct, sym), lots in fifo_state["lots"].items():
@@ -263,7 +264,7 @@ def compute_open_lots(fifo_state: dict | None,
         })
 
     return {
-        "as_of": datetime.now().date().isoformat(),
+        "as_of": clock.now(fallback=datetime.now).date().isoformat(),
         "positions": positions,
         "total_lots": total_lots,
     }

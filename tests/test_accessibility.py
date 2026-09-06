@@ -362,11 +362,18 @@ def test_ci_runs_the_axe_gate():
     the runtime guarantees rot."""
     root = Path(__file__).resolve().parents[1]
     assert (root / "tools" / "a11y_check.js").exists()
-    wf = (root / ".github" / "workflows" / "accessibility.yml").read_text(encoding="utf-8")
-    assert "tools/a11y_check.js" in wf
-    assert "axe-core" in wf
-    assert "samples/portfolio.snapshot.json" in wf, \
-        "the gate must build from the synthetic sample, never from data/"
+    wf = (root / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+    package = (root / "package.json").read_text(encoding="utf-8")
+    pages = (root / ".github/workflows/pages.yml").read_text(encoding="utf-8")
+    assert "npm run test:a11y" in wf and "npm run test:browser" in wf
+    assert "tools/a11y_check.js _site/index.html" in package
+    assert "python -m tools.build_demo" in wf
+    assert "scan --artifact _site" in wf
+    assert "uses: ./.github/workflows/tests.yml" in pages
+    assert "needs: validate" in pages
+    assert "name: verified-demo" in pages
+    assert "needs: stage" in pages
+
 
 def test_the_published_demo_banner_does_not_displace_the_skip_link(bundle):
     """The Pages workflow prepends a banner carrying its own link.  Put

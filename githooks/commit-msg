@@ -1,0 +1,7 @@
+#!/bin/sh
+# Commit messages are public data too. Never print their matching content.
+set -eu
+root=$(git rev-parse --show-toplevel)
+message_file=$1
+cd "$root"
+exec sh tools/run-privacy-guard.sh scan --message-file "$message_file" --require-local

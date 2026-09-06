@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import csv
 import re
 from pathlib import Path
 
+from ._helpers import read_csv_rows
 from ._helpers import (
     Transaction, _date_dmy, _date_iso, _date_mdy, _date_ymd,
     _num, _txn,
@@ -30,7 +30,7 @@ def parse_voya_401k(filepath: Path) -> list[Transaction]:
             break
 
     txns = []
-    reader = csv.DictReader(lines[header_idx:])
+    reader = read_csv_rows(lines[header_idx:], filepath.name, nonblank=('Fund', 'Activity'), required=('Activity Date', 'Fund', 'Activity', '# of Units', 'Unit Price', 'Amount'), line_offset=header_idx)
     for row in reader:
         fund = (row.get("Fund") or "").strip()
         activity = (row.get("Activity") or "").strip()

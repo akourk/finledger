@@ -87,6 +87,7 @@ doesn't try to parse it as broker data.
 
 import csv
 from pathlib import Path
+from .parsers._helpers import CSVValue, _num, read_csv_rows
 
 METADATA_FILE = "metadata.csv"
 LEGACY_METADATA_FILE = "retirement-data.csv"
@@ -186,9 +187,9 @@ def parse_metadata(data_dir: Path) -> dict:
     # hand-maintained and every field here feeds a displayed planning or
     # tax figure, so a rejection has to be visible: a mistyped value is
     # otherwise indistinguishable from an absent one, and the fallback
-    # is a plausible-looking number.  The sharpest case is a non-numeric
-    # `Annual Expenses`, which becomes 0 and is then multiplied by 25
-    # for the FI target on the Planning tab.
+    # is a plausible-looking number. Malformed/nonfinite numbers now fail
+    # immediately; finite but out-of-range planning inputs retain the
+    # documented fallback warnings below.
     #
     # Note these guards REJECT to the default rather than clamping to
     # the bound (`Retirement Age = 20` gives 67, not 30).  That is
@@ -197,21 +198,12 @@ def parse_metadata(data_dir: Path) -> dict:
     rejected: list[str] = []
 
     with open(path, newline="", encoding="utf-8-sig") as f:
-        for row in csv.DictReader(f):
+        for row in read_csv_rows(f, path.name, required=("Type", "Date", "Amount", "Symbol", "Note")):
             typ    = (row.get("Type")   or "").strip()
             date   = (row.get("Date")   or "").strip()
             symbol = (row.get("Symbol") or "").strip()
             note   = (row.get("Note")   or "").strip()
-            try:
-                amt = float((row.get("Amount") or "0").replace(",", ""))
-            except ValueError:
-                # A BLANK Amount never lands here (`or "0"` parses), so
-                # this only fires on a genuinely malformed value.
-                rejected.append(
-                    f"{typ or '(no Type)'}: Amount "
-                    f"{(row.get('Amount') or '').strip()!r} is not a number "
-                    f"— treated as 0")
-                amt = 0.0
+            amt = _num(row.get("Amount", ""))
 
             if typ == "Personal Info" and note.lower() == "birthday":
                 out["birthday"] = date or None
@@ -249,6 +241,9 @@ def parse_metadata(data_dir: Path) -> dict:
                 # Symbol = simplified group key; Note = tax category
                 # (Taxable / Retirement / Savings).  Both required.
                 if symbol and note:
+                    if note not in {"Taxable", "Retirement", "Savings"}:
+                        raise ValueError(f"{path.name}: Account Type must be "
+                                         "Taxable, Retirement, or Savings")
                     out["account_types"][symbol] = note
             elif typ == "Filing Status":
                 # Note is the status name (Single / Married Filing
@@ -302,10 +297,9 @@ def parse_metadata(data_dir: Path) -> dict:
                         ov_index = None
                     parts = parts[:-1]
                 if symbol and date and len(parts) >= 2:
-                    try:
-                        ov_qty = float(parts[0])
-                    except ValueError:
-                        ov_qty = None
+                    quantity_cell = CSVValue(parts[0], path.name, 0, "Note quantity")
+                    quantity_cell.location = getattr(row.get("Note"), "location", path.name)
+                    ov_qty = _num(quantity_cell)
                     if ov_qty is not None:
                         out["cost_basis_overrides"].append({
                             "account_group": symbol, "date": date,

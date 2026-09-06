@@ -42,12 +42,9 @@ _ADD_ACTIONS = {"Buy", "Transfer In", "Deposit", "Wrap Asset In",
 _DATE_TOL_DAYS = 2
 
 
-def _norm_symbol(asset: str) -> str:
-    from .config import CRYPTO_SYMBOLS, SYMBOL_MAP
-    a = SYMBOL_MAP.get(asset, asset)
-    if (a in CRYPTO_SYMBOLS or asset in CRYPTO_SYMBOLS) and not a.endswith("-USD"):
-        return a + "-USD"
-    return a
+def _norm_symbol(asset: str, account: str = "Coinbase") -> str:
+    from .config import normalize_symbol
+    return normalize_symbol(asset, account)
 
 
 def _pdate(s: str):
@@ -89,7 +86,10 @@ def match_and_stamp(txns: list, overrides: list | None) -> tuple[int, list]:
     applied = 0
 
     for ov in sorted(overrides, key=lambda o: (o["date"], o["asset"], o["qty"])):
-        sym = _norm_symbol(ov["asset"])
+        origins = {txn.get("account", txn.get("account_group", ""))
+                   for txn in txns if txn.get("account_group") == ov["account_group"]}
+        crypto = origins and origins <= {"Coinbase", "Coinbase Pro"}
+        sym = _norm_symbol(ov["asset"], "Coinbase" if crypto else ov["account_group"])
         od = _pdate(ov["date"])
         cands = []
         for t in txns:

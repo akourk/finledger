@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import csv
 import re
 from pathlib import Path
 
+from ._helpers import read_csv_rows
 from ._helpers import (
     Transaction, _date_dmy, _date_iso, _date_mdy, _date_ymd,
     _num, _txn,
@@ -21,7 +21,7 @@ from ._helpers import (
 def parse_usaa(filepath: Path) -> list[Transaction]:
     txns = []
     with open(filepath, newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
+        reader = read_csv_rows(f, filepath.name, nonblank=('Symbol', 'Action'), required=('Date', 'Symbol', 'Action', 'Quantity', 'unitPrice', 'Subtotal'))
         for row in reader:
             symbol = (row.get("Symbol") or "").strip()
             action = (row.get("Action") or "").strip()

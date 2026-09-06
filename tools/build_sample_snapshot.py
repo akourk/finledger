@@ -5,19 +5,17 @@ Run from the repo root::
 
     python tools/build_sample_snapshot.py
 
-The output is a plain JSON snapshot (see ``src/snapshot.py``) that any
-fresh checkout can drop in with::
+The output is a plain JSON snapshot (see ``src/snapshot.py``). To
+render the public example without touching personal data or fetching prices::
 
-    python -m src.main --import-snapshot samples/portfolio.snapshot.json
-    python -m src.main
+    python -m tools.build_demo
 
-The portfolio belongs to "Sam Sample" — a fictional 35-year-old with
-a moderately-diversified mix of taxable equities, crypto, retirement
-contributions, and a high-yield savings account.  All values are
-round numbers chosen to be obviously synthetic; tickers are common
-public market symbols (AAPL, MSFT, VOO, BTC-USD, etc.) so the
-dashboard's sector enrichment + price fetching exercise the same
-code paths real data would.
+The portfolio belongs to "Sam Sample", a fictional 36-year-old as of
+June 30, 2026, with taxable equities, crypto, retirement contributions,
+and savings accounts. Every figure and personal detail is invented.
+Familiar public ticker names label the examples; the isolated demo builder
+uses illustrative synthetic price curves from ``samples/prices.fixture.json``.
+
 """
 
 from __future__ import annotations
@@ -32,26 +30,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.snapshot import export_snapshot  # noqa: E402
+AS_OF_DATE = date(2026, 6, 30)
+SAMPLE_TIMESTAMP = AS_OF_DATE.isoformat() + "T00:00:00+00:00"
 
 
 # ---------------------------------------------------------------------------
-# Build-date-relative "recent activity" dates.
-#
-# Historical rows below are fixed dates (they're history), but the most
-# recent handful of transactions are dated relative to the BUILD date so a
-# freshly-rebuilt sample never trips the dashboard's stale-data alert
-# (fires at >30 days since the latest transaction).  Re-run this script
-# whenever the shipped snapshot has gone stale.
-#
-# Everything here stays AFTER 2025-12-31 — the seeded `Reconcile Balance`
-# rows pin 2025-12-31 snapshot values, which must not shift.
+# The public sample is a fixed, fictional snapshot. Advancing its date is an
+# explicit fixture edit; rebuilding never incorporates the current date,
+# market feeds, local portfolio files, or user-specific price caches.
 # ---------------------------------------------------------------------------
 
 def _recent(days_ago: int) -> date:
-    d = date.today() - timedelta(days=days_ago)
-    floor = date(2026, 1, 15)
-    return d if d > floor else floor
+    return AS_OF_DATE - timedelta(days=days_ago)
 
 
 def _iso(d: date) -> str:
@@ -169,6 +159,8 @@ def _w_coinbase(path: Path, rows: list[dict]) -> None:
         w = csv.DictWriter(f, fieldnames=headers)
         w.writeheader()
         for r in rows:
+            if r.get("Transaction Type") == "Buy" and not r.get("Notes"):
+                r = {**r, "Notes": "Bought fictional asset using bank account DEMO"}
             w.writerow({h: r.get(h, "") for h in headers})
 
 
@@ -215,6 +207,8 @@ def _build(tmp: Path) -> None:
 
     # Robinhood — taxable equities + one option round-trip + ACH funding.
     _w_robinhood(tmp / "robinhood-1.csv", [
+        {"Activity Date": "5/1/2021", "Trans Code": "ACH",
+         "Description": "Fictional opening funding", "Amount": "$10000.00"},
         {"Activity Date": "1/15/2022", "Trans Code": "ACH",
          "Description": "ACH Deposit", "Amount": "$5000.00"},
         {"Activity Date": "2/1/2022",  "Trans Code": "Buy",
@@ -276,7 +270,7 @@ def _build(tmp: Path) -> None:
         # gap as a phantom daily move.  The sample's only other contract
         # expires, so no valuation ever saw a live premium.
         #
-        # Dates are relative so the fixture cannot rot: bought 60 days
+        # Dates are relative to the fixed snapshot: bought 60 days
         # ago, expiring ~400 days out, therefore always open.
         {"Activity Date": _mdy(_recent(60)), "Trans Code": "BTO",
          "Instrument": "AAPL",
@@ -349,7 +343,7 @@ def _build(tmp: Path) -> None:
         {"Activity Date": "3/14/2025", "Trans Code": "Buy",
          "Instrument": "BND", "Description": "Vanguard Total Bond Market",
          "Quantity": "20", "Price": "$72.50", "Amount": "($1450.00)"},
-        # Recent activity (build-date-relative — keeps the sample fresh).
+        # Recent activity relative to the fixed sample date.
         {"Activity Date": _mdy(_recent(40)), "Trans Code": "CDIV",
          "Instrument": "VOO", "Description": "VOO Dividend",
          "Amount": "$18.00"},
@@ -360,6 +354,18 @@ def _build(tmp: Path) -> None:
 
     # Coinbase — BTC + ETH purchases, one dividend, one staking income.
     _w_coinbase(tmp / "coinbase-1.csv", [
+        {"ID": "tx-cash-withdrawal", "Timestamp": "2026-06-25 10:00:00 UTC",
+         "Transaction Type": "Withdrawal", "Asset": "USD",
+         "Quantity Transacted": "2830", "Price Currency": "USD",
+         "Price at Transaction": "$1.00", "Subtotal": "$2830.00",
+         "Total (inclusive of fees and/or spread)": "$2830.00",
+         "Fees and/or Spread": "$0.00", "Notes": "Fictional proceeds returned to bank"},
+        {"ID": "tx-opening-pro-funding", "Timestamp": "2023-01-14 10:00:00 UTC",
+         "Transaction Type": "Deposit", "Asset": "USD",
+         "Quantity Transacted": "500", "Price Currency": "USD",
+         "Price at Transaction": "$1.00", "Subtotal": "$500.00",
+         "Total (inclusive of fees and/or spread)": "$500.00",
+         "Fees and/or Spread": "$0.00", "Notes": "Fictional bank funding for Pro transfer"},
         {"ID": "tx-1", "Timestamp": "2021-04-15 14:30:00 UTC",
          "Transaction Type": "Buy", "Asset": "BTC",
          "Quantity Transacted": "0.05", "Price Currency": "USD",
@@ -583,7 +589,7 @@ def _build(tmp: Path) -> None:
          "Quantity": "8", "unitPrice": "260.00", "Fee": "0",
          "Subtotal": "2080.00", "Note": "EMPLOYEE PRE-TAX BASIC",
          "Account": "Vanguard 401K", "Currency": "USD"},
-        # Recent contribution (build-date-relative).
+        # Recent contribution (relative to the fixed sample date).
         {"Date": _iso(_recent(14)), "Symbol": "VFIAX", "Action": "Buy",
          "Quantity": "7", "unitPrice": "290.00", "Fee": "0",
          "Subtotal": "2030.00", "Note": "EMPLOYEE PRE-TAX BASIC",
@@ -667,7 +673,7 @@ def _build(tmp: Path) -> None:
          "Symbol": "USD", "Action": "Buy",
          "Quantity": "2000.00", "unitPrice": "1.00", "Fee": "0.00",
          "Subtotal": "2000.00", "Note": "Transfer in"},
-        # Recent interest credit (build-date-relative).
+        # Recent interest credit (relative to the fixed sample date).
         {"Account": "Apple Savings", "Date": _iso(_recent(20)),
          "Currency": "USD", "Symbol": "USD", "Action": "Dividend",
          "Quantity": "19.10", "unitPrice": "1.00", "Fee": "0.00",
@@ -772,27 +778,17 @@ def _build(tmp: Path) -> None:
         ["Target Allocation", "", "10", "Cryptocurrency", "Speculative sleeve"],
         ["Target Allocation", "", "10", "Cash",           "Dry powder"],
         ["Target Allocation", "",  "5", "Technology",     "Single-stock tilt"],
-        # Reconcile — broker-reported ground truth to check fin against.
-        # Drives the Overview's Reconciliation panel (analytics/reconcile.py).
-        # The realized / income figures are exact (txn-derived, stable).
-        # The balances are pinned to the 2025-12-31 snapshot values, which
-        # are stable across rebuilds now that the price cache covers that
-        # date.  They drifted once before: the declared figures were set
-        # when the sample was written, then a backfill of ~1,355 days of
-        # index-fund history (plus two splits) moved the computed side and
-        # left the panel reading two hard breaks on synthetic data.  If
-        # that happens again, re-pin them rather than widening the bands.
-        # These three deliberately show the panel's whole range.  Coinbase
-        # matches to the cent (ok).  Roth IRA is short by a December
-        # dividend the statement cut off before it settled, declared with
-        # an [expected] token so the row reads "explained" and re-flags on
-        # its own if the gap ever changes.  The 401K holds a CIT with no
-        # public ticker, valued through a proxy fund, and drifts ~2% —
-        # the textbook "warn": worth a look, not a bug.
-        ["Reconcile Balance",  "2025-12-31", "22844.61", "Roth IRA",
-         "Schwab year-end statement - Dec dividend settled in Jan [expected 142.60]"],
-        ["Reconcile Balance",  "2025-12-31", "13261.89", "Coinbase",      "Coinbase year-end value"],
-        ["Reconcile Balance",  "2025-12-31", "19900",  "401K",          "Vanguard statement - CIT valued via proxy"],
+        # Fixed fictional statement targets, independently pinned to the
+        # illustrative price fixture. Do not derive these from the pipeline
+        # at build time: a valuation regression must break reconciliation.
+        # The Roth row deliberately demonstrates one auditable timing
+        # exception, with a stated delta that re-flags if arithmetic changes.
+        ["Reconcile Balance", "2025-12-31", "24639.85", "Roth IRA",
+         "Fictional statement uses an earlier close [expected 142.60]"],
+        ["Reconcile Balance", "2025-12-31", "13005.18", "Coinbase",
+         "Fictional year-end statement including USD cash"],
+        ["Reconcile Balance", "2025-12-31", "9167.94", "401K",
+         "Fictional VFIAX year-end statement"],
         ["Reconcile Realized", "2024",       "-280",   "Robinhood",     "1099-B realized gains"],
         ["Reconcile Income",   "2023",       "37.57",  "Apple Savings", "1099-INT interest"],
         # Account Group / Account Type mappings.  These are no longer
@@ -868,15 +864,25 @@ def _build(tmp: Path) -> None:
     ])
 
 
-def main() -> None:
-    out = ROOT / "samples" / "portfolio.snapshot.json"
-    out.parent.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory() as td:
+def build_snapshot(out: Path) -> dict:
+    """Build exclusively from the literal fictional rows above, byte for byte."""
+    with tempfile.TemporaryDirectory(prefix="finledger-sample-") as td:
         data_dir = Path(td) / "data"
         _build(data_dir)
-        bundle = export_snapshot(data_dir, out)
-    print(f"Wrote {bundle['file_count']} synthetic file(s) to {out}")
-    print(f"Try it:  python -m src.main --import-snapshot {out.relative_to(ROOT)}")
+        files = {p.name: p.read_text(encoding="utf-8")
+                 for p in sorted(data_dir.glob("*.csv"))}
+    bundle = {"version": 1, "exported_at": SAMPLE_TIMESTAMP,
+              "file_count": len(files), "files": files}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+    return bundle
+
+
+def main() -> None:
+    out = ROOT / "samples" / "portfolio.snapshot.json"
+    bundle = build_snapshot(out)
+    print(f"Wrote {bundle['file_count']} fictional files; as of {AS_OF_DATE}")
+    print("Build the isolated offline demo: python -m tools.build_demo")
 
 
 if __name__ == "__main__":

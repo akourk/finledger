@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import csv
 import re
 from pathlib import Path
 
+from ._helpers import read_csv_rows
 from ._helpers import (
     Transaction, _date_dmy, _date_iso, _date_mdy, _date_ymd,
     _num, _txn,
@@ -20,10 +20,10 @@ from ._helpers import (
 
 def parse_manual(filepath: Path) -> list[Transaction]:
     with open(filepath, newline="", encoding="utf-8-sig") as f:
-        lines = [line for line in f if not line.startswith("#")]
+        lines = ["\n" if line.startswith("#") else line for line in f]
 
     txns = []
-    reader = csv.DictReader(lines)
+    reader = read_csv_rows(lines, filepath.name, nonblank=('Account', 'Type'), required=('Account', 'Date', 'Type', 'Symbol', 'Quantity', 'Price', 'Amount'))
     for row in reader:
         account = (row.get("Account") or "").strip()
         action = (row.get("Type") or "").strip()

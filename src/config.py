@@ -114,7 +114,9 @@ def contract_multiplier(symbol: str) -> float:
 # Fallbacks when an entry is missing:
 #   ACCOUNT_GROUPS.get(origin, origin)   — group defaults to the raw
 #                                          broker account name
-#   ACCOUNT_TYPES.get(group, "Taxable")  — type defaults to Taxable
+#   Account types are mandatory at CLI ingestion; src.accounts validates
+#   every group before any financial calculations. Internal legacy fallback
+#   lookups therefore only see already validated groups.
 
 ACCOUNT_GROUPS: dict[str, str] = {}
 ACCOUNT_TYPES:  dict[str, str] = {}
@@ -123,21 +125,34 @@ ACCOUNT_TYPES:  dict[str, str] = {}
 # Symbol normalization
 # ---------------------------------------------------------------------------
 
-# Crypto tickers that should get a -USD suffix for price lookup / display
+# Legacy market-data keys, retained for migration of existing price caches.
+# New transactions use broker context through normalize_symbol below.
 CRYPTO_SYMBOLS = {
     "ADA", "BAT", "BOBA", "BTC", "CBETH", "ETH", "ETH2", "FLR",
     "LUNA", "MATIC", "OMG", "OP", "REP", "USDC",
     "XLM", "XRP", "ZEC", "ZRX",
-    # NOTE: "QTUM" intentionally excluded.  It's both a crypto ticker
-    # and Defiance Quantum ETF; for this user's data it's always the
-    # ETF (Robinhood holdings with dividends, lending rebates, etc.).
-    # If you trade QTUM crypto, re-add it and distinguish at parse time.
 }
 
 # Explicit remap (applied before the crypto-suffix rule)
 SYMBOL_MAP = {
     "ETH2": "ETH-USD",
 }
+
+
+def normalize_symbol(symbol: str, account: str = "") -> str:
+    """Use source context, not a personal asset list, to distinguish crypto.
+
+    Coinbase only exports crypto and USD. Mixed-asset brokers/manual CSVs
+    must use explicit -USD tickers for crypto; a bare ticker remains a stock
+    or fund, including symbols shared by crypto and equities such as QTUM.
+    """
+    symbol = (symbol or "").strip() or "USD"
+    if account in {"Coinbase", "Coinbase Pro"}:
+        symbol = symbol.upper()
+        symbol = SYMBOL_MAP.get(symbol, symbol)
+        if symbol != "USD" and not symbol.endswith("-USD"):
+            symbol += "-USD"
+    return symbol
 
 # Symbols that are really just cash (value = 1 per unit)
 CASH_SYMBOLS = {"USD"}

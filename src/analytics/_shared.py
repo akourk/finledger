@@ -20,6 +20,7 @@ a top-level ``analytics`` key.
 
 from __future__ import annotations
 
+from .. import clock
 import math
 import re
 from collections import defaultdict
@@ -1101,7 +1102,7 @@ def active_paycheck_deductions(retirement_meta: dict | None,
     """
     from datetime import date as _date
     rows = (retirement_meta or {}).get("paycheck_deductions") or []
-    current_year = _date.today().year
+    current_year = clock.today(fallback=_date.today).year
     latest: dict[str, dict] = {}
     for i, r in enumerate(rows):
         key = (r.get("label") or "").strip().lower()

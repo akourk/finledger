@@ -265,12 +265,12 @@ SOFT_GUARD_CASES = [
         ([{"action": "Buy"}],),
     ),
     (
-        "coinbase_bridge_endpoint",
-        D._check_coinbase_bridge_endpoint,
-        ([_snap(positions=[{"account_group": "Coinbase", "symbol": "USD",
-                            "value": 500.0}])],),
-        ([_snap(positions=[{"account_group": "Coinbase", "symbol": "USD",
-                            "value": 5.0}])],),
+        "broker_cash_balance",
+        D._check_broker_cash_balance,
+        ([{"date": "2025-01-01", "account_group": "Coinbase", "symbol": "USD",
+           "action": "Withdrawal", "amount": 500.0}],),
+        ([{"date": "2025-01-01", "account_group": "Coinbase", "symbol": "USD",
+           "action": "Deposit", "amount": 500.0}],),
     ),
     (
         "held_symbol_sector_coverage",

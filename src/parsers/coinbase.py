@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import csv
 import re
 from pathlib import Path
 
+from ._helpers import read_csv_rows
 from ._helpers import (
     Transaction, _date_dmy, _date_iso, _date_mdy, _date_ymd,
     _num, _txn,
@@ -33,7 +33,7 @@ def _read_coinbase_rows(filepath: Path) -> list[dict]:
             header_idx = i
             break
 
-    return list(csv.DictReader(lines[header_idx:]))
+    return list(read_csv_rows(lines[header_idx:], filepath.name, nonblank=('Transaction Type', 'Asset'), required=('Timestamp', 'Transaction Type', 'Asset', 'Quantity Transacted', 'Price at Transaction', 'Total (inclusive of fees and/or spread)'), line_offset=header_idx))
 
 
 def parse_coinbase(filepath: Path) -> list[Transaction]:
@@ -145,7 +145,7 @@ def parse_coinbase_pro(filepath: Path) -> list[Transaction]:
     raw_rows = []
 
     with open(filepath, newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
+        reader = read_csv_rows(f, filepath.name, nonblank=('type', 'amount/balance unit'), required=('type', 'time', 'amount', 'amount/balance unit', 'trade id'))
         for row in reader:
             row_type = (row.get("type") or "").strip()
             if not row_type:
@@ -160,6 +160,7 @@ def parse_coinbase_pro(filepath: Path) -> list[Transaction]:
             trade_id = (row.get("trade id") or "").strip()
 
             parsed = {
+                "_location": getattr(row.get("amount"), "location", filepath.name),
                 "_date": date,
                 "_unit": unit,
                 "_amount": amount,
@@ -186,6 +187,14 @@ def parse_coinbase_pro(filepath: Path) -> list[Transaction]:
     for trade_id, legs in match_groups.items():
         crypto_legs = [l for l in legs if l["_unit"] != "USD"]
         usd_legs = [l for l in legs if l["_unit"] == "USD"]
+
+        if (not usd_legs or not crypto_legs
+                or len({leg["_unit"] for leg in crypto_legs}) != 1):
+            raise ValueError(
+                f"{legs[0]['_location']}: unsupported Coinbase Pro trade; "
+                "each trade must pair one asset with USD. Crypto-to-crypto "
+                "trades need explicit USD valuations in manual adjustments."
+            )
 
         # Compute price from pairing
         usd_amount = sum(l["_amount"] for l in usd_legs) if usd_legs else 0.0
@@ -237,7 +246,12 @@ def parse_coinbase_pro(filepath: Path) -> list[Transaction]:
     # Process non-match rows (deposits, withdrawals, fees)
     for r in non_match_rows:
         amount = r["_amount"]
+        if r["_type"] == "match":
+            raise ValueError(f"{r['_location']}: Coinbase Pro match is missing a trade id")
         if r["_type"] == "fee":
+            if r["_unit"] != "USD":
+                raise ValueError(f"{r['_location']}: non-USD Coinbase Pro fees "
+                                 "need an explicit USD valuation")
             txns.append(_txn(
                 date=r["_date"],
                 account="Coinbase Pro",

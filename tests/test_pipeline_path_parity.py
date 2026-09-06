@@ -54,15 +54,15 @@ def _write_wrap_ordering_trap(tmp: Path) -> None:
               newline="", encoding="utf-8") as f:
         f.write("Account,Date,Type,Symbol,Quantity,Price,Amount,Description\n")
         # Cheap lot — the only one in the pool on the unwrap date.
-        f.write("Crypto Wallet,2024-01-10,Buy,CBETH,2,500,1000,cheap lot\n")
+        f.write("Crypto Wallet,2024-01-10,Buy,CBETH-USD,2,500,1000,cheap lot\n")
         # The unwrap is written BEFORE the same-day buy, so parse order
         # and the export's re-sort disagree about which comes first.
-        f.write("Crypto Wallet,2024-02-05,Unwrap Out,CBETH,2,,,unwrap out\n")
-        f.write("Crypto Wallet,2024-02-05,Unwrap In,ETH,2,,,unwrap in\n")
+        f.write("Crypto Wallet,2024-02-05,Unwrap Out,CBETH-USD,2,,,unwrap out\n")
+        f.write("Crypto Wallet,2024-02-05,Unwrap In,ETH-USD,2,,,unwrap in\n")
         # Expensive lot, same day.
-        f.write("Crypto Wallet,2024-02-05,Buy,CBETH,2,1500,3000,pricey lot\n")
+        f.write("Crypto Wallet,2024-02-05,Buy,CBETH-USD,2,1500,3000,pricey lot\n")
         # Realize the carried basis.
-        f.write("Crypto Wallet,2024-06-01,Sell,ETH,2,4000,8000,exit\n")
+        f.write("Crypto Wallet,2024-06-01,Sell,ETH-USD,2,4000,8000,exit\n")
         # --- Two lots simultaneously in the pool, priced 5x apart ------
         # Without this the `Lot Method,,,Crypto,HIFO` row below is INERT.
         # Every other consumption in this fixture has exactly ONE
@@ -153,9 +153,12 @@ def _export(workdir: Path) -> dict:
 
 
 @pytest.fixture
-def both_paths(isolated_workdir, stub_prices):
+def both_paths(isolated_workdir, stub_prices, monkeypatch):
     """Run the full pipeline, then ``--refresh-prices``, over one
     fixture."""
+    # These synthetic prices are fixed; refresh must not contact a live
+    # quote provider behind the historical-price fixture's stub.
+    monkeypatch.setattr("src.main.fetch_latest_close_batch", lambda symbols: {})
     _write_wrap_ordering_trap(isolated_workdir)
     for sym in ("CBETH-USD", "ETH-USD"):
         stub_prices.set(sym, {

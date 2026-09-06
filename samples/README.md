@@ -1,59 +1,45 @@
-# Sample portfolio
+# Fictional sample portfolio
 
-`portfolio.snapshot.json` is a **fully synthetic, fictional portfolio**. It is
-the only dataset that ships with this repository, and it is what the
-[live demo](https://akourk.github.io/finledger/) and the CI accessibility check
-are built from.
+`portfolio.snapshot.json` belongs to **Sam Sample**, an invented person. Every
+transaction, account balance, income figure, birthday, and budget entry is
+fictional. `prices.fixture.json` defines illustrative price curves, not observed
+market prices. Familiar public ticker names are labels for the example.
 
-**Nothing in it is real.** It belongs to "Sam Sample", a fictional person born
-1990-06-15 with an invented salary history. Every balance, trade, contribution
-and dollar figure is made up, and the round numbers are deliberate — they are
-meant to look synthetic at a glance. Real broker exports and the dashboards
-built from them never enter this repository: `data/` and `exports/` are
-gitignored, and a pre-commit hook blocks real figures from reaching a tracked
-file. See [Privacy](../README.md#privacy).
+The snapshot is fixed at **June 30, 2026**. Its eleven CSV inputs exercise broker
+parsing, transfers, FIFO/HIFO lots, an option exercise, a split followed by a
+sale, a custodial rollover, and a savings balance anchor. Five reconciliation
+checks match; one explicitly explained earlier-close statement difference
+shows how an auditable exception works.
 
-## What it is
-
-A [snapshot](../src/snapshot.py) — one JSON file bundling eleven CSVs, one per
-supported input format:
-
-```
-robinhood-1.csv           coinbase-1.csv            coinbase-pro-gdax-1.csv
-schwab-roth-ira-1.csv     vanguard-401k.csv         voya-401k-1.csv
-usaa-roth-ira.csv         apple-savings.csv         ExportedTransactions.csv
-manual-adjustments.csv    metadata.csv
-```
-
-That coverage is the point. The sample is not a minimal example; it is sized to
-exercise every parser and most of the interesting downstream paths — a
-custodial rollover that needs reconstructing, an option contract, crypto
-conversions, a savings account with a balance anchor, per-account lot methods,
-and `Reconcile *` rows so the Overview's reconciliation panel has something to
-check against.
-
-## Using it
-
-From a fresh checkout:
+Build and view the public demo safely:
 
 ```bash
-python -m src.main --import-snapshot samples/portfolio.snapshot.json
-python -m src.main
+uv sync --frozen --all-groups
+uv run --frozen python -m tools.build_demo
+# Open _site/index.html in your browser.
 ```
 
-The first command writes the eleven CSVs into `data/`; the second runs the
-pipeline and produces `exports/dashboard.html`. Existing files in `data/` are
-preserved unless you pass `--force` — so if you already have real data there,
-**import into a scratch directory instead** by setting the `FIN_*_DIR`
-environment variables (see `src/config.py`).
+The builder creates fresh temporary data, cache, and export directories; it
+never reads your `data/`, `cache/`, `exports/`, or environment-configured
+portfolio paths. It blocks network access and fails on any attempted pricing
+fallback. Only the final bannered page and a manifest of its input and output
+hashes enter `_site/`. Rebuilding reproduces the same artifact.
 
-## Regenerating it
+To edit the fictional transactions, change `tools/build_sample_snapshot.py`,
+then regenerate the checked-in snapshot:
 
 ```bash
-python tools/build_sample_snapshot.py
+uv run --frozen python -m tools.build_sample_snapshot
+uv run --frozen python -m tools.build_demo
+uv run --frozen python -m tools.privacy_guard scan --artifact _site
+npm ci
+npm test
 ```
 
-Re-run this after changing a parser, and then run the pipeline over the result
-to confirm the shipped snapshot still parses. The script's per-broker writer
-functions double as documentation of each broker's CSV format — they are the
-most readable statement of what each parser expects to receive.
+Statement target values are fixed fixtures, not values copied from the current
+pipeline output at build time. A financial regression therefore fails the
+build instead of silently teaching the sample to agree with itself.
+
+Do not replace sample fixtures with real exports, downloaded prices from a
+personal cache, or screenshots of a personal dashboard. See
+[Privacy](../docs/PRIVACY.md) for the repository and commit/push safeguards.

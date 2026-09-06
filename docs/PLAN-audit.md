@@ -1,5 +1,9 @@
 # Plan: full application audit
 
+> Historical record of the August 2026 audit. Counts, coverage and statuses below
+> describe that audit at the time, not the current suite or open backlog. See
+> [the current improvement plan](IMPLEMENTATION_PLAN.md) and CI for current work.
+
 Status: **executed 2026-08-05/06 — segments 1–7 and 9 complete**, with
 Segment 8's sweeps largely absorbed into the others. Results are in
 `AUDIT.md` (committed, sanitized) and `../audit/findings.md` (gitignored,

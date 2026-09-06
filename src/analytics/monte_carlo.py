@@ -24,6 +24,7 @@ Implementation notes:
 
 from __future__ import annotations
 
+from .. import clock
 import math
 import random
 from datetime import datetime
@@ -99,7 +100,7 @@ def compute_monte_carlo(
         return sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac
 
     bands = []
-    this_year = datetime.now().year
+    this_year = clock.now(fallback=datetime.now).year
     for y, vals in enumerate(paths):
         sv = sorted(vals)
         bands.append({

@@ -26,7 +26,7 @@ function renderCrypto() {
   // 1:1 structural match — see analytics/crypto.py).  The old in-JS
   // re-aggregation was a dead fallback for pre-analytics exports and a
   // recompute-divergence hazard; removed.
-  const byCoin = {};
+  const byCoin = Object.create(null);
   for (const c of (perCoin || [])) byCoin[c.symbol] = { ...c };
 
   const coinRows = Object.values(byCoin)
@@ -87,14 +87,14 @@ function renderCrypto() {
   const recentRows = recent.map(t => {
     const actionColor = ACTION_COLORS[t.action] || '';
     const actionSpan = actionColor
-      ? `<span style="color:${actionColor}">${t.action || ''}</span>`
-      : (t.action || '');
+      ? `<span style="color:${actionColor}">${_htmlEsc(t.action || '')}</span>`
+      : _htmlEsc(t.action || '');
     const rg = t.realized_gain;
     const rgStr = typeof rg === 'number'
       ? `<span class="${rg >= 0 ? 'positive' : 'negative'}">${fmtSigned(rg)}</span>`
       : '';
     return `<tr>
-      <td>${t.date || ''}</td>
+      <td>${_htmlEsc(t.date || '')}</td>
       <td><b>${symLabel(t.symbol)}</b></td>
       <td>${actionSpan}</td>
       <td class="num">${(t.quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
@@ -113,11 +113,11 @@ function renderCrypto() {
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
     .slice(0, 30)
     .map(t => `<tr>
-      <td>${t.date || ''}</td>
+      <td>${_htmlEsc(t.date || '')}</td>
       <td><b>${symLabel(t.symbol)}</b></td>
-      <td>${t.action}</td>
+      <td>${_htmlEsc(t.action)}</td>
       <td class="num">${(t.quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
-      <td>${(t.description || '').slice(0, 80)}</td>
+      <td>${_htmlEsc((t.description || '').slice(0, 80))}</td>
     </tr>`).join('');
 
   root.innerHTML = `

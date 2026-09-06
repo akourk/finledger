@@ -1,0 +1,6 @@
+#!/bin/sh
+# Git supplies refs on stdin. Inspect every outgoing commit, not only HEAD.
+set -eu
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+exec sh tools/run-privacy-guard.sh pre-push --remote "$2"

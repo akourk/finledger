@@ -21,7 +21,7 @@ const IRA_LIMIT_BY_YEAR = {
 // emitted `null` top-threshold sentinel back to Infinity.
 const _TAX_TABLES = DATA.tax_tables || {};
 function _loadBracketTable(emitted) {
-  const out = {};
+  const out = Object.create(null);
   for (const yr of Object.keys(emitted || {})) {
     out[yr] = {};
     for (const status of Object.keys(emitted[yr])) {
@@ -188,7 +188,7 @@ function computeRetirementContributionsByYear() {
   const pre = ANALYTICS.retirement_contributions_by_year;
   if (pre && typeof pre === 'object') return pre;
 
-  const rows = {};
+  const rows = Object.create(null);
   for (const t of txns) {
     const info = retirementContribInfo(t);
     if (!info.isContrib) continue;
@@ -205,7 +205,7 @@ function computeRetirementContributionsByYear() {
 
 function computeRetirementSummary() {
   // Current balance + basis per account group, filtered to retirement.
-  const byGroup = {};
+  const byGroup = Object.create(null);
   for (const h of holdingsByAccount) {
     if (!(h.account_group in RETIREMENT_GROUPS)) continue;
     if (!(h.account_group in byGroup)) byGroup[h.account_group] = { value: 0, basis: 0 };
@@ -229,7 +229,7 @@ function computePersonalRetirementRate(summary, contribsByYear) {
     if (firstYear === null || y < firstYear) firstYear = y;
   }
   if (total <= 0 || !firstYear) return null;
-  const years = Math.max(1, (new Date() - new Date(firstYear + '-01-01')) / (365.25 * 86400000));
+  const years = Math.max(1, (snapshotDate() - new Date(firstYear + '-01-01')) / (365.25 * 86400000));
   if (years < 1) return null;
   const ratio = summary.value / total;
   if (ratio <= 0) return null;
@@ -277,7 +277,7 @@ function _buildMonteCarloSection() {
     { label: 'P90 (Optimistic)', value: fmtMoneyShort(s.p90_final || 0), cls: 'positive' },
   ];
   const statsHtml = cards.map(c => `<div class="ds-card">
-    <div class="ds-label">${c.label}</div>
+    <div class="ds-label">${_htmlEsc(c.label)}</div>
     <div class="ds-value ${c.cls || ''}">${c.value}${c.sub || ''}</div>
   </div>`).join('');
 
@@ -421,7 +421,7 @@ function _buildFireSection(mcRoot, mc) {
     });
   }
   const statsHtml = cards.map(c => `<div class="ds-card">
-    <div class="ds-label">${c.label}</div>
+    <div class="ds-label">${_htmlEsc(c.label)}</div>
     <div class="ds-value ${c.cls || ''}">${c.value}${c.sub || ''}</div>
   </div>`).join('');
 
@@ -466,7 +466,7 @@ function currentAgeFromMeta() {
   const bd = RETIREMENT_META && RETIREMENT_META.birthday;
   if (!bd) return 0;
   const d = new Date(bd);
-  return Math.floor((new Date() - d) / (365.25 * 86400000));
+  return Math.floor((snapshotDate() - d) / (365.25 * 86400000));
 }
 
 function renderRetirement() {
@@ -478,7 +478,7 @@ function renderRetirement() {
   const personal = computePersonalRetirementRate(summary, contribs);
 
   // Auto-infer annual contribution from the last 12 months of retirement contribs.
-  const today = new Date();
+  const today = snapshotDate();
   const yrAgo = new Date(today); yrAgo.setFullYear(yrAgo.getFullYear() - 1);
   let last12 = 0;
   for (const t of txns) {
@@ -704,7 +704,7 @@ function _renderContribBarsContent(years, contribs, W, H) {
       if (val <= 0) continue;
       const h = (val / maxY) * plotH;
       const top = cursor - h;
-      parts.push(`<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${colors[key]}" rx="1.5" data-tip="${tip}"/>`);
+      parts.push(`<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${colors[key]}" rx="1.5" data-tip="${_htmlEsc(tip)}"/>`);
       cursor = top;
     }
     if ((r.total || 0) > 0) {

@@ -13,7 +13,7 @@ function renderPlanning() {
 
   // Trailing-12-months retirement contribution (auto-inferred default for
   // the scenario projection's annual-contribution input)
-  const today = new Date();
+  const today = snapshotDate();
   const yrAgo = new Date(today); yrAgo.setFullYear(yrAgo.getFullYear() - 1);
   let last12 = 0;
   for (const t of txns) {
@@ -94,20 +94,20 @@ function setRetirementProjectionAge(v) {
   const n = parseInt(v, 10);
   if (!isNaN(n) && n > 20 && n < 100) {
     retirementProjectionAge = n;
-    if (typeof renderPlanning === 'function') renderPlanning();
+    if (typeof renderPlanning === 'function') renderKeepingFocus(renderPlanning);
   }
 }
 function setRetirementAnnualContrib(v) {
   const n = parseFloat(v);
   if (!isNaN(n) && n >= 0) {
     retirementAnnualContrib = n;
-    if (typeof renderPlanning === 'function') renderPlanning();
+    if (typeof renderPlanning === 'function') renderKeepingFocus(renderPlanning);
   }
 }
 // MC scenario toggle also lives on Planning now
 function setMonteCarloScenario(s) {
   mcScenario = s;
-  if (typeof renderPlanning === 'function') renderPlanning();
+  if (typeof renderPlanning === 'function') renderKeepingFocus(renderPlanning);
 }
 
 registerTabRenderer('planning', renderPlanning);

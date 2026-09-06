@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .. import clock
 import math
 import re
 from collections import defaultdict
@@ -434,7 +435,7 @@ def _tax_rate_estimate(year_str: str, retirement_meta: dict,
     # contributors hit the cap mid-year and stop, so unbounded
     # extrapolation overstates the deduction).
     from datetime import date as _date
-    today = _date.today()
+    today = clock.today(fallback=_date.today)
     is_current_year = (yr == today.year)
     year_fraction = 1.0
     if is_current_year:
@@ -1023,7 +1024,7 @@ def _compute_harvest_lots(fifo_state: dict, holdings: list[dict],
     if not fifo_state or "lots" not in fifo_state:
         return []
     if today is None:
-        today = datetime.now().date()
+        today = clock.now(fallback=datetime.now).date()
 
     # Most-recent buy per symbol in the trailing 30 days (any account).
     cutoff = (today - timedelta(days=30)).isoformat()

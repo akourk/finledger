@@ -93,7 +93,7 @@ function _renderWaterfallContent(bars, W, H) {
     const tip = `<div class='tt-date'>${b.short}</div>`
       + _tipRow(color, tipName, (b.amt >= 0 ? '+' : '−') + fmtMoney(Math.abs(b.amt)))
       + (b.isTotal ? '' : _tipRow('', 'Running total', fmtMoney(b.end), true));
-    parts.push(`<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}" fill-opacity="${b.isTotal ? 0.9 : 0.75}" rx="1.5" data-tip="${tip}"/>`);
+    parts.push(`<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}" fill-opacity="${b.isTotal ? 0.9 : 0.75}" rx="1.5" data-tip="${_htmlEsc(tip)}"/>`);
     // Connector from this bar's running total to the next bar (dashed).
     if (i < n - 1) {
       const yr = yOf(b.end);
@@ -118,8 +118,8 @@ function _renderWaterfallContent(bars, W, H) {
 // Returns HTML for an `<div class="income-forecast">` block.
 function _buildCashFlowForecast(passiveProjected) {
   // Current salary = most recent salary-history entry on or before today
-  const today = new Date();
-  const salaries = (RETIREMENT_META.salary_history || []).filter(s => s.date && s.date <= today.toISOString().slice(0, 10));
+  const today = snapshotDate();
+  const salaries = (RETIREMENT_META.salary_history || []).filter(s => s.date && s.date <= SNAPSHOT_DATE);
   salaries.sort((a, b) => a.date.localeCompare(b.date));
   const currentSalary = salaries.length ? salaries[salaries.length - 1].amount : 0;
 
@@ -187,7 +187,7 @@ function _buildCashFlowForecast(passiveProjected) {
     items.push({ short: 'Budget', label: 'Living expenses (budget)', amt: -budgetAnnual, cls: 'negative' });
   }
   const rows = items.map(it => `<tr>
-    <td>${it.label}</td>
+    <td>${_htmlEsc(it.label)}</td>
     <td class="num"><span class="${it.cls}">${fmtSigned(it.amt)}</span></td>
   </tr>`).join('');
   const savingsNet = totalNet - budgetAnnual - paycheckOutflows;
@@ -233,7 +233,7 @@ function _buildPaycheckSection() {
   const cards = [
     { label: 'Take-Home / Paycheck', value: fmtMoney(p.take_home_per_paycheck),
       cls: 'positive',
-      title: `Estimated net pay per ${p.frequency_label} paycheck: gross − pre-tax benefits − 401(k) − est. federal income tax − payroll taxes − post-tax deductions.` },
+      title: `Estimated net pay per ${_htmlEsc(p.frequency_label)} paycheck: gross − pre-tax benefits − 401(k) − est. federal income tax − payroll taxes − post-tax deductions.` },
     { label: 'Take-Home / Year (est.)', value: fmtMoney(p.take_home_annual),
       title: p.take_home_pct != null ? `${p.take_home_pct.toFixed(1)}% of gross salary.` : '' },
     { label: 'Payroll Taxes / Year', value: fmtMoney(p.taxes_annual),
@@ -281,7 +281,7 @@ function _buildPaycheckSection() {
   return `
     <div class="section-header" style="margin-top:24px;">
       <h2><span style="color:var(--accent);">Paycheck</span></h2>
-      <span class="as-of-hint" style="margin-left:auto;">Gross → deductions → take-home, ${p.frequency_label} — from the <b>Paycheck Deduction</b> rows in data/metadata.csv.</span>
+      <span class="as-of-hint" style="margin-left:auto;">Gross → deductions → take-home, ${_htmlEsc(p.frequency_label)} — from the <b>Paycheck Deduction</b> rows in data/metadata.csv.</span>
     </div>
     ${_renderStatCards(cards)}
     <div class="panel">
@@ -293,7 +293,7 @@ function _buildPaycheckSection() {
         Wage-only view: bonuses, dividends, and realized gains are excluded here (the Tax tab covers the full picture).
         Federal tax is the estimated <b>liability</b> on wages${p.is_projection ? ' (current-year projection)' : ''}, not your actual withholding — compare it against your W-4 withholding to spot over/under-withholding.${(p.withholding && p.withholding.length) ? '  The extra-withholding line is a voluntary prepayment of the year-end bill — the Tax tab credits it against the estimated tax on realized gains.' : ''}
         The 401(k) line is your employee deferral derived from actual contribution transactions (projected at YTD pace, capped at the IRS limit).
-        Payroll-tax lines are your pay-stub amounts × ${p.frequency} pay periods.
+        Payroll-tax lines are your pay-stub amounts × ${_htmlEsc(p.frequency)} pay periods.
         Pre-tax benefit lines also reduce the AGI / MAGI used for Roth eligibility on the Tax tab.
       </div>
     </div>`;
@@ -382,9 +382,9 @@ function renderIncome() {
   // Straight from the precomputed analytics (compute_income_analytics).
   // Empty arrays render the empty-state cleanly — no JS recompute needed.
   const inc = ANALYTICS.income || {};
-  const byYear = {};
-  const byMonth = {};
-  const bySource = {};
+  const byYear = Object.create(null);
+  const byMonth = Object.create(null);
+  const bySource = Object.create(null);
   const total = inc.total || 0;
   for (const r of (inc.by_year || [])) byYear[r.year] = r;
   for (const p of (inc.by_month || [])) {
@@ -394,7 +394,7 @@ function renderIncome() {
   for (const s of (inc.by_source || [])) bySource[s.source] = s;
 
   // Stat cards
-  const ytdKey = String(new Date().getFullYear());
+  const ytdKey = String(snapshotYear());
   const ytd = (byYear[ytdKey] && byYear[ytdKey].total) || 0;
   const allTimeDiv = Object.values(byYear).reduce((s, r) => s + r.dividends, 0);
   const allTimeInt = Object.values(byYear).reduce((s, r) => s + r.interest, 0);
@@ -453,9 +453,9 @@ function renderIncome() {
     .slice(0, 30)
     .map(([src, s]) => {
       const acctColor = ACCOUNT_COLORS[s.account] || '';
-      const acctSpan = s.account && acctColor ? `<span style="color:${acctColor}">${s.account}</span>` : (s.account || '');
+      const acctSpan = s.account && acctColor ? `<span style="color:${acctColor}">${_htmlEsc(s.account)}</span>` : _htmlEsc(s.account || '');
       return `<tr>
-        <td><b>${src}</b></td>
+        <td><b>${_htmlEsc(src)}</b></td>
         <td>${acctSpan}</td>
         <td class="num">${fmtMoney(s.dividends)}</td>
         <td class="num">${fmtMoney(s.interest)}</td>

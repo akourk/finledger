@@ -1,0 +1,28 @@
+{
+  "description": "Illustrative synthetic price curves, not observed market data. Public ticker labels provide familiar examples only.",
+  "start": "2020-01-01",
+  "as_of": "2026-06-30",
+  "symbols": {
+    "AAPL": [130, 340, "Technology"],
+    "MSFT": [200, 480, "Technology"],
+    "VOO": [300, 560, "ETFs"],
+    "VTI": [170, 320, "ETFs"],
+    "BND": [75, 78, "ETFs"],
+    "SPY": [320, 610, "ETFs"],
+    "VXUS": [50, 75, "ETFs"],
+    "SMH": [50, 300, "ETFs"],
+    "TWTR": [30, 54.2, "Communication Services"],
+    "XLNX": [90, 150, "Technology"],
+    "AMD": [50, 160, "Technology"],
+    "FXAIX": [120, 230, "Mutual Funds"],
+    "VFIAX": [180, 310, "Mutual Funds"],
+    "USSPX": [90, 170, "Mutual Funds"],
+    "VANG TARGET 2055": [90, 145, "Mutual Funds"],
+    "BTC-USD": [12000, 100000, "Cryptocurrency"],
+    "ETH-USD": [400, 3500, "Cryptocurrency"],
+    "CBETH-USD": [440, 3900, "Cryptocurrency"],
+    "ADA-USD": [0.15, 0.8, "Cryptocurrency"],
+    "MATIC-USD": [0.3, 0.65, "Cryptocurrency"]
+  },
+  "splits": {"SMH": [["2023-05-05", 2.0]]}
+}

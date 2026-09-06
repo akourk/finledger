@@ -3,6 +3,8 @@
 import argparse
 import sys
 from datetime import datetime
+from .clock import now
+from .accounts import configure_accounts, write_account_mapping_starter
 
 from .analytics import build_analytics
 from .basis import (
@@ -10,14 +12,14 @@ from .basis import (
     compute_cash_summary, state_to_holdings,
 )
 from .config import (
-    ACCOUNT_GROUPS, ACCOUNT_TYPES, CASH_SYMBOLS, CRYPTO_SYMBOLS,
-    DATA_DIR, EXPORT_DIR, SYMBOL_MAP,
+    ACCOUNT_GROUPS, ACCOUNT_TYPES, CASH_SYMBOLS,
+    DATA_DIR, EXPORT_DIR, normalize_symbol,
 )
 from .dashboard import generate_dashboard
 from .export import deduplicate, export_json
 from .history import compute_history
 from .normalize import normalize_action
-from .parsers import parse_all_files
+from .parsers import parse_all_files, validate_ingestion
 from .prices import (
     apply_option_intrinsic_floor,
     build_display_map,
@@ -30,6 +32,25 @@ from .prices import (
 from .metadata import parse_metadata
 from .scanner import rename_data_files, scan_data_files
 from .sectors import enrich_holdings, save_cache as save_sector_cache
+
+
+def _publish_dashboard(txns, output_path, **payload):
+    """Validate and build both artifacts before replacing the previous pair."""
+    import tempfile
+    from pathlib import Path
+    from .io_safe import replace_files
+
+    output_path = Path(output_path)
+    dashboard_path = output_path.parent / "dashboard.html"
+    if output_path == dashboard_path:
+        raise ValueError("JSON output path must differ from dashboard.html")
+    with tempfile.TemporaryDirectory(prefix="fin-output-") as directory:
+        staged_json = Path(directory) / "transactions.json"
+        staged_html = Path(directory) / "dashboard.html"
+        export_json(txns, staged_json, **payload)
+        generate_dashboard(staged_json, staged_html)
+        replace_files({output_path: staged_json.read_bytes(),
+                       dashboard_path: staged_html.read_bytes()})
 
 def _usaa_position_before_date(txns: list[dict], symbol: str, asof_date: str) -> float:
     bal = 0.0
@@ -224,14 +245,30 @@ def _refresh_prices_only(args) -> None:
     # account-type splits and cost-basis total disagreed with the full
     # pipeline's on identical data.
     retirement_meta = parse_metadata(DATA_DIR)
-    if retirement_meta.get("account_groups"):
-        ACCOUNT_GROUPS.update(retirement_meta["account_groups"])
-    if retirement_meta.get("account_types"):
-        ACCOUNT_TYPES.update(retirement_meta["account_types"])
-
     print(f"Loading previous export from {output_path}...")
     data = _json.loads(output_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Previous export must be a JSON object")
+    _json.dumps(data, allow_nan=False)
+    # Refresh must not turn a previously rejected/partial import into an
+    # apparently clean dashboard. Re-parse with the full pipeline to repair it.
+    prior_analytics = data.get("analytics", {})
+    if not isinstance(prior_analytics, dict):
+        raise ValueError("Previous export has malformed analytics")
+    issues = prior_analytics.get("data_health", [])
+    if not isinstance(issues, list) or any(not isinstance(issue, dict) for issue in issues):
+        raise ValueError("Previous export has malformed data-health findings")
+    rejected_import = [issue for issue in issues
+                       if issue.get("kind") in {"parser_produced_no_rows", "parser_dropped_rows"}]
+    if rejected_import:
+        raise ValueError("Previous export contains import errors; run the full pipeline")
     txns               = data.get("transactions", []) or []
+    validate_ingestion(txns, findings=[])
+    if data.get("count") != len(txns):
+        raise ValueError("Previous export transaction count is inconsistent; run the full pipeline")
+    if any(not isinstance(txn.get("symbol"), str) or not txn["symbol"] for txn in txns):
+        raise ValueError("Previous export contains missing normalized symbols; run the full pipeline")
+    configure_accounts(txns, retirement_meta)
     sector_of_existing = data.get("sector_of", {}) or {}
     print(f"  {len(txns)} transactions, {len(sector_of_existing)} symbol sectors")
 
@@ -317,7 +354,7 @@ def _refresh_prices_only(args) -> None:
     fetch_latest_close_batch(refresh_set)
 
     # Build last_prices: txn-fallback + cache lookup at today's date.
-    today_str = datetime.now().date().isoformat()
+    today_str = now(fallback=datetime.now).date().isoformat()
     last_prices: dict[str, float] = {}
     for txn in txns:
         price = float(txn.get("price", 0) or 0)
@@ -400,7 +437,8 @@ def _refresh_prices_only(args) -> None:
                                  fifo_state=fifo_state)
 
     from .pipeline_stages import build_annotated_basis_totals
-    export_json(txns, output_path, holdings=holdings,
+    _maybe_assert_invariants(txns, holdings_by_account, history, analytics, cash)
+    _publish_dashboard(txns, output_path, holdings=holdings,
                 holdings_by_account=holdings_by_account,
                 history=history,
                 basis_methods=basis_methods,
@@ -413,11 +451,8 @@ def _refresh_prices_only(args) -> None:
     print(f"\nExported {len(txns)} transactions to {output_path}")
 
     dashboard_path = output_path.parent / "dashboard.html"
-    generate_dashboard(output_path, dashboard_path)
     print(f"Dashboard: {dashboard_path}")
 
-    _maybe_assert_invariants(txns, holdings_by_account, history, analytics,
-                             cash)
 
 
 def _maybe_assert_invariants(txns, holdings_by_account, history, analytics,
@@ -440,7 +475,7 @@ def main():
     parser = argparse.ArgumentParser(description="Personal portfolio tracker")
     parser.add_argument(
         "--dry-run", action="store_true",
-        help="Preview file renames without making changes",
+        help="Preview requested operations; never write files or fetch prices",
     )
     parser.add_argument(
         "--skip-rename", action="store_true",
@@ -480,7 +515,37 @@ def main():
         "--force", action="store_true",
         help="Allow --import-snapshot to overwrite existing files in data/.",
     )
+    parser.add_argument(
+        "--init-account-mappings", action="store_true",
+        help="Write data/account-mappings.csv with suggested account mappings "
+             "for review; copy reviewed rows into metadata.csv",
+    )
     args = parser.parse_args()
+
+    # Dry run takes precedence over EVERY operation, including snapshots and
+    # refresh mode. Return before even creating a missing data directory.
+    if args.dry_run:
+        print("Dry run: no files, caches, snapshots, or exports will be changed.")
+        if args.import_snapshot:
+            print("Would validate and import the requested snapshot.")
+        elif args.export_snapshot:
+            print("Would export a private CSV snapshot.")
+        elif args.init_account_mappings:
+            print("Would write a starter account-mappings.csv for review.")
+        elif args.refresh_prices:
+            print("Would refresh prices and rebuild the dashboard.")
+        elif DATA_DIR.exists() and not args.skip_rename:
+            rename_data_files(DATA_DIR, dry_run=True)
+        return
+
+    if args.init_account_mappings:
+        txns = parse_all_files(DATA_DIR)
+        validate_ingestion(txns)
+        write_account_mapping_starter(txns, parse_metadata(DATA_DIR),
+                                     DATA_DIR / "account-mappings.csv")
+        print("Wrote data/account-mappings.csv. Review every Account Type, "
+              "then copy the rows into data/metadata.csv.")
+        return
 
     if args.export_snapshot:
         from pathlib import Path
@@ -552,6 +617,7 @@ def main():
     # --- Step 3: Parse ---
     print("\nParsing transactions...")
     txns = parse_all_files(DATA_DIR)
+    validate_ingestion(txns)
     print(f"\nTotal raw transactions: {len(txns)}")
 
     # --- Step 4: Deduplicate ---
@@ -600,34 +666,11 @@ def main():
     # birthday / salary / bonus / target / annual-expense data the
     # dashboard's Retirement, Planning, Income, and Tax tabs consume.
     retirement_meta = parse_metadata(DATA_DIR)
-    if retirement_meta.get("account_groups"):
-        ACCOUNT_GROUPS.update(retirement_meta["account_groups"])
-    if retirement_meta.get("account_types"):
-        ACCOUNT_TYPES.update(retirement_meta["account_types"])
+    configure_accounts(txns, retirement_meta)
 
-    # --- Step 4b: Normalize symbols ---
+    # Broker-aware normalization keeps same-named equities and crypto distinct.
     for txn in txns:
-        sym = (txn.get("symbol") or "").strip()
-
-        # Empty symbol → USD (cash movement)
-        if not sym:
-            sym = "USD"
-
-        # Explicit remap (e.g. ETH2 → ETH-USD)
-        sym = SYMBOL_MAP.get(sym, sym)
-
-        # Crypto tickers get -USD suffix
-        if sym in CRYPTO_SYMBOLS:
-            sym = f"{sym}-USD"
-
-        txn["symbol"] = sym
-
-    # --- Step 4c: Add account_group and account_type ---
-    for txn in txns:
-        origin = txn.get("account", "")
-        group = ACCOUNT_GROUPS.get(origin, origin)
-        txn["account_group"] = group
-        txn["account_type"] = ACCOUNT_TYPES.get(group, "Taxable")
+        txn["symbol"] = normalize_symbol(txn.get("symbol", ""), txn["account"])
 
     # --- Step 4d: Normalize actions ---
     for txn in txns:
@@ -802,7 +845,7 @@ def main():
     all_symbols_ever.update(option_underlyings(all_symbols_ever))
     earliest_date = min((t.get("date", "") for t in txns if t.get("date")),
                         default="")
-    today_str = datetime.now().date().isoformat()
+    today_str = now(fallback=datetime.now).date().isoformat()
     # Populate anchors for any scaled proxy-map entries that need them,
     # using each mapped symbol's first observed txn price.  Must run
     # BEFORE ensure_coverage so the resulting `anchor_date` is within
@@ -969,7 +1012,8 @@ def main():
     from pathlib import Path
     output_path = Path(output_path)
     from .pipeline_stages import build_annotated_basis_totals
-    export_json(txns, output_path, holdings=holdings,
+    _maybe_assert_invariants(txns, holdings_by_account, history, analytics, cash)
+    _publish_dashboard(txns, output_path, holdings=holdings,
                 holdings_by_account=holdings_by_account,
                 history=history,
                 basis_methods=basis_methods,
@@ -983,12 +1027,13 @@ def main():
 
     # --- Step 6: Dashboard ---
     dashboard_path = output_path.parent / "dashboard.html"
-    generate_dashboard(output_path, dashboard_path)
     print(f"Dashboard: {dashboard_path}")
 
-    _maybe_assert_invariants(txns, holdings_by_account, history, analytics,
-                             cash)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, OSError) as exc:
+        print(f"Import/export failed: {exc}", file=sys.stderr)
+        sys.exit(1)

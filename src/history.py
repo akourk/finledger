@@ -13,6 +13,7 @@ in the price cache if you want to switch cadence — sampling density and
 fetch cost are decoupled (the cache stores every trading day either way).
 """
 
+from . import clock
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
@@ -239,7 +240,7 @@ def compute_history(txns: list[dict],
         return []
 
     first = min(dates)
-    today = datetime.now().date().isoformat()
+    today = clock.now(fallback=datetime.now).date().isoformat()
     last  = max(max(dates), today)
     samples = _sample_dates(first, last, cadence)
 
@@ -722,7 +723,7 @@ def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
         return []
 
     first = min(t["date"] for t in dated)
-    today = datetime.now().date().isoformat()
+    today = clock.now(fallback=datetime.now).date().isoformat()
     last = max(max(t["date"] for t in dated), today)
 
     # Per-day txn buckets (end-of-day balances; intra-day order is

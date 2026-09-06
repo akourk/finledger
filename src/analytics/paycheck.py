@@ -49,6 +49,7 @@ Semantics / limits (documented in the panel footnote too):
 
 from __future__ import annotations
 
+from .. import clock
 from datetime import date as _date
 
 from ._shared import active_paycheck_deductions, federal_tax_from_brackets
@@ -70,7 +71,7 @@ def compute_paycheck(retirement_meta: dict | None,
     401(k) deferral and the filing status already resolved there.
     """
     rm = retirement_meta or {}
-    year = _date.today().year
+    year = clock.today(fallback=_date.today).year
     rows = active_paycheck_deductions(rm, year)
     if not rows:
         return None
@@ -80,7 +81,7 @@ def compute_paycheck(retirement_meta: dict | None,
     # Current base salary (latest effective salary-history row).
     salary = 0.0
     for s in rm.get("salary_history") or []:
-        if s.get("date") and s["date"] <= _date.today().isoformat():
+        if s.get("date") and s["date"] <= clock.today(fallback=_date.today).isoformat():
             salary = float(s.get("amount", 0) or 0)
     if salary <= 0:
         return None

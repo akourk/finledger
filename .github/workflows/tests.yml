@@ -3,47 +3,68 @@ name: tests
 on:
   push:
   pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   pytest:
     runs-on: ubuntu-latest
     strategy:
-      # Report BOTH legs.  With the default fail-fast, the first failure
-      # cancels the other job — so a 3.10-only failure hid a separate
-      # 3.12-only one, and fixing the first just revealed the second a
-      # push later.  Two failures found in one run beats two round trips.
       fail-fast: false
       matrix:
-        # 3.10 backs the README's "Python 3.10+" claim; 3.12 covers current.
         python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
-      # The app has no runtime dependency beyond yfinance, and yfinance is
-      # imported lazily inside functions that the test suite stubs out — so
-      # the tests run fully offline.  We install yfinance anyway as cheap
-      # insurance against any lazy-import path a test might reach.
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip pytest yfinance
-
-      # tests/test_dashboard_consistency.py renders the real dashboard
-      # bundle under node and asserts relations between the figures it
-      # displays.  Without node those tests SKIP, which reads as green —
-      # so node is installed explicitly rather than left to whatever the
-      # runner image happens to ship.
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
+      - name: Install locked Python dependencies
+        run: |
+          python -m pip install uv==0.10.9
+          uv sync --frozen --all-groups
+      - name: Check tracked public files
+        run: uv run --frozen python -m tools.privacy_guard scan --scope tracked
+      - name: Run Python and cross-language regressions
+        run: uv run --frozen python -m pytest tests/ -q -rs
 
-      # conftest.py sets FIN_ASSERT_INVARIANTS=1, so the high-severity
-      # data-health checks are promoted to hard errors during the run.
-      # `-rs` prints a reason line for every skip, so a suite that stops
-      # running is visible in the log instead of reading as green.
-      - name: Run tests
-        run: python -m pytest tests/ -q -rs
+  demo:
+    needs: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install locked validation dependencies
+        run: |
+          python -m pip install uv==0.10.9
+          uv sync --frozen --all-groups
+          npm ci --no-audit --no-fund
+      - name: Build exclusively from generated fictional inputs
+        run: uv run --frozen python -m tools.build_demo
+      - name: Check the exact public artifact for private data
+        run: uv run --frozen python -m tools.privacy_guard scan --artifact _site
+      - name: Validate ordinary browser interactions
+        run: npm run test:browser
+      - name: Validate accessibility of the final bannered page
+        run: npm run test:a11y
+      - name: Verify reproducibility
+        run: |
+          uv run --frozen python -m tools.build_demo --output /tmp/finledger-repeat
+          diff _site/index.html /tmp/finledger-repeat/index.html
+          diff _site/provenance.json /tmp/finledger-repeat/provenance.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-demo
+          path: _site
+          if-no-files-found: error
+          retention-days: 7

@@ -16,6 +16,7 @@ Output:
 
 from __future__ import annotations
 
+from .. import clock
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -48,7 +49,7 @@ def compute_income_calendar(txns: list[dict],
                 value_by_sym[sym] += v
 
     # Per-symbol income history (last 4 quarters)
-    today = datetime.now().date()
+    today = clock.now(fallback=datetime.now).date()
     one_year_ago = (today - timedelta(days=365)).isoformat()
     today_iso = today.isoformat()
 

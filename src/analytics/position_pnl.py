@@ -79,6 +79,7 @@ disagree, and where realized gain sits outside the column.
 
 from __future__ import annotations
 
+from .. import clock
 from datetime import date, datetime, timedelta
 
 from ..config import CASH_SYMBOLS, contract_multiplier
@@ -240,7 +241,7 @@ def compute_position_pnl(fifo_state: dict | None,
     if not holdings_by_account:
         return None
 
-    as_of_d = _parse_date(as_of or "") or datetime.now().date()
+    as_of_d = _parse_date(as_of or "") or clock.now(fallback=datetime.now).date()
     as_of_iso = as_of_d.isoformat()
     boundaries = window_start_dates(as_of_d)
 

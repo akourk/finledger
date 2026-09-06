@@ -117,13 +117,9 @@ class TestRejectionsAreReported:
     """
 
     def test_non_numeric_amount_is_reported(self, isolated_workdir, capsys):
-        _meta(isolated_workdir, "Annual Expenses,2024-01-01,50k,,")
-        out = capsys.readouterr().out
-        assert "WARNING" in out
-        assert "Annual Expenses" in out and "50k" in out, (
-            "the message must name the row, or the user cannot find it in a "
-            "60-row file"
-        )
+        with pytest.raises(ValueError, match="metadata.csv: row 2, column Amount"):
+            _meta(isolated_workdir, "Annual Expenses,2024-01-01,50k,,")
+        assert "50k" not in capsys.readouterr().out
 
     @pytest.mark.parametrize("row,needle", [
         ("Retirement Age,,20,,", "Retirement Age"),
@@ -189,15 +185,10 @@ class TestSilentCoercion:
     accident — and so the blast radius is written down next to it.
     """
 
-    def test_non_numeric_amount_becomes_zero(self, isolated_workdir):
-        """A typo'd Annual Expenses silently becomes 0.
-
-        That figure is multiplied by 25 for the FI number on the Planning
-        tab, so a fat-fingered row quietly reports a $0 FI target rather
-        than refusing to guess.
-        """
-        m = _meta(isolated_workdir, "Annual Expenses,2024-01-01,50k,,")
-        assert m["annual_expenses"][0]["amount"] == 0.0
+    def test_non_numeric_amount_cannot_become_zero(self, isolated_workdir):
+        """Reject the input instead of publishing a plausible but false FI target."""
+        with pytest.raises(ValueError, match="invalid number"):
+            _meta(isolated_workdir, "Annual Expenses,2024-01-01,50k,,")
 
     def test_malformed_date_is_stored_unvalidated(self, isolated_workdir):
         """Dates are kept as raw strings. Consumers slice `date[:4]` for
@@ -206,12 +197,9 @@ class TestSilentCoercion:
         m = _meta(isolated_workdir, "Annual Expenses,not-a-date,50000,,")
         assert m["annual_expenses"][0]["date"] == "not-a-date"
 
-    def test_account_group_override_still_applies_around_bad_rows(
-        self, isolated_workdir
-    ):
-        """The important robustness property: one bad row must not cost
-        the rows around it."""
-        m = _meta(isolated_workdir,
+    def test_bad_numeric_row_rejects_whole_metadata(self, isolated_workdir):
+        """An incomplete metadata import must never reach the dashboard."""
+        with pytest.raises(ValueError, match="metadata.csv: row 2"):
+            _meta(isolated_workdir,
                   "Annual Expenses,not-a-date,abc,,",
                   "Account Group,,,Schwab Roth IRA,Roth IRA")
-        assert m["account_groups"]["Schwab Roth IRA"] == "Roth IRA"

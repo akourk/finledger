@@ -331,14 +331,14 @@ function renderHistControls() {
   const maxDate = history.length ? history[history.length - 1].date : '';
   const customRangeHtml = historyRange === 'custom' ? `
     <span class="hist-label" style="margin-left:12px;">From:</span>
-    <input type="date" class="hist-date" min="${minDate}" max="${maxDate}"
+    <input type="date" class="hist-date" min="${_htmlEsc(minDate)}" max="${_htmlEsc(maxDate)}"
            aria-label="History chart range: from date"
-           value="${historyCustomStart || minDate}"
+           value="${_htmlEsc(historyCustomStart || minDate)}"
            onchange="setHistoryCustomStart(this.value)">
     <span class="hist-label">To:</span>
-    <input type="date" class="hist-date" min="${minDate}" max="${maxDate}"
+    <input type="date" class="hist-date" min="${_htmlEsc(minDate)}" max="${_htmlEsc(maxDate)}"
            aria-label="History chart range: to date"
-           value="${historyCustomEnd || maxDate}"
+           value="${_htmlEsc(historyCustomEnd || maxDate)}"
            onchange="setHistoryCustomEnd(this.value)">
   ` : '';
 
@@ -354,9 +354,9 @@ function renderHistControls() {
       const sk = field + ':' + k;
       const cls = 'tbtn' + (historySelection.has(sk) ? ' active' : '');
       const color = seriesColorFor(sk);
-      const esc = k.replace(/'/g, "\\'");
-      return `<button class="${cls}" onclick="toggleHistorySeries('${field}:${esc}')">` +
-        `<span class="pill-swatch" style="background:${color}"></span>${k}</button>`;
+      const handler = 'toggleHistorySeries(' + _jsString(field + ':' + k) + ')';
+      return `<button class="${cls}" onclick="${_htmlEsc(handler)}">` +
+        `<span class="pill-swatch" style="background:${color}"></span>${_htmlEsc(k)}</button>`;
     }).join('');
     // "all / none" bulk toggles at the end
     const allBtn = `<button class="tbtn" style="font-size:0.72rem;opacity:0.7;" onclick="setHistoryGroupAll('${field}', true)">all</button>`;
@@ -722,7 +722,7 @@ function renderHistory() {
   for (let i = 0; i < xTicks; i++) {
     const idx = Math.round((i * (n - 1)) / (xTicks - 1 || 1));
     const x = xOf(idx);
-    parts.push(`<text class="axis-label" x="${x}" y="${H - 8}" text-anchor="middle">${hist[idx].date.slice(0, 7)}</text>`);
+    parts.push(`<text class="axis-label" x="${x}" y="${H - 8}" text-anchor="middle">${_htmlEsc(hist[idx].date.slice(0, 7))}</text>`);
   }
   // Axis lines
   parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + plotH}"/>`);
@@ -756,8 +756,8 @@ function renderHistory() {
   // Legend
   legend.innerHTML = allSeries.map(s => {
     const muted = seriesHidden.has(s.key) ? ' muted' : '';
-    return `<span class="legend-item${muted}" data-series="${s.key.replace(/"/g, '&quot;')}">
-      <span class="legend-swatch" style="background:${s.colorResolved}"></span>${s.key}
+    return `<span class="legend-item${muted}" data-series="${_htmlEsc(s.key)}">
+      <span class="legend-swatch" style="background:${s.colorResolved}"></span>${_htmlEsc(s.key)}
     </span>`;
   }).join('');
   legend.onclick = e => {
@@ -792,11 +792,11 @@ function renderHistory() {
     const rows = series.map(s => {
       const v = s.points[idx].value;
       return `<div class="tt-row">
-        <span class="tt-name"><span class="tt-swatch" style="background:${s.colorResolved}"></span>${s.key}</span>
+        <span class="tt-name"><span class="tt-swatch" style="background:${s.colorResolved}"></span>${_htmlEsc(s.key)}</span>
         <span>${formatMoney(v)}</span>
       </div>`;
     }).join('');
-    tooltip.innerHTML = `<div class="tt-date">${hist[idx].date}</div>${rows}`;
+    tooltip.innerHTML = `<div class="tt-date">${_htmlEsc(hist[idx].date)}</div>${rows}`;
     tooltip.style.display = 'block';
 
     const wrapRect = document.getElementById('chartWrap').getBoundingClientRect();
@@ -840,7 +840,7 @@ function _renderComposition(svg, tooltip, legend, hist) {
 
   // Categories ordered by lifetime magnitude; fold the long tail (mostly
   // relevant for sectors) into "Other" so the stack stays legible.
-  const totals = {};
+  const totals = Object.create(null);
   hist.forEach(h => {
     const m = h[field] || {};
     for (const k in m) if (typeof m[k] === 'number') totals[k] = (totals[k] || 0) + m[k];
@@ -874,7 +874,7 @@ function _renderComposition(svg, tooltip, legend, hist) {
   const xTicks = Math.min(6, n);
   for (let i = 0; i < xTicks; i++) {
     const idx = Math.round((i * (n - 1)) / (xTicks - 1 || 1));
-    parts.push(`<text class="axis-label" x="${xOf(idx)}" y="${H - 8}" text-anchor="middle">${hist[idx].date.slice(0, 7)}</text>`);
+    parts.push(`<text class="axis-label" x="${xOf(idx)}" y="${H - 8}" text-anchor="middle">${_htmlEsc(hist[idx].date.slice(0, 7))}</text>`);
   }
   parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + plotH}"/>`);
   parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t + plotH}" x2="${W - PAD.r}" y2="${PAD.t + plotH}"/>`);
@@ -906,7 +906,7 @@ function _renderComposition(svg, tooltip, legend, hist) {
   // Legend (top-of-stack category listed first).  No click-to-hide in
   // composition mode — hiding a band would misrepresent the stack.
   legend.innerHTML = [...drawCats].reverse().map(c =>
-    `<span class="legend-item"><span class="legend-swatch" style="background:${catColor(c)}"></span>${catLabel(c)}</span>`
+    `<span class="legend-item"><span class="legend-swatch" style="background:${catColor(c)}"></span>${_htmlEsc(catLabel(c))}</span>`
   ).join('');
   legend.onclick = null;
 
@@ -925,11 +925,11 @@ function _renderComposition(svg, tooltip, legend, hist) {
       const v = valAt(h, c);
       const pct = total > 0 ? (v / total * 100) : 0;
       return `<div class="tt-row">
-        <span class="tt-name"><span class="tt-swatch" style="background:${catColor(c)}"></span>${catLabel(c)}</span>
+        <span class="tt-name"><span class="tt-swatch" style="background:${catColor(c)}"></span>${_htmlEsc(catLabel(c))}</span>
         <span>${formatMoney(v)} <span style="color:var(--text-dim);">${pct.toFixed(0)}%</span></span>
       </div>`;
     }).join('');
-    tooltip.innerHTML = `<div class="tt-date">${h.date} · total ${formatMoney(total)}</div>${rows}`;
+    tooltip.innerHTML = `<div class="tt-date">${_htmlEsc(h.date)} · total ${formatMoney(total)}</div>${rows}`;
     tooltip.style.display = 'block';
     const wrapRect = document.getElementById('chartWrap').getBoundingClientRect();
     let tx = ev.clientX - wrapRect.left + 12;
@@ -951,9 +951,7 @@ function formatAxisMoney(v) {
   if (Math.abs(v) >= 1e3) return '$' + (v / 1e3).toFixed(0) + 'k';
   return '$' + Math.round(v);
 }
-function formatMoney(v) {
-  return '$' + (v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+function formatMoney(v) { return fmtMoney(v); }
 
 // Re-render on resize (SVG dimensions change)
 let _histResizeRaf = null;

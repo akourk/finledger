@@ -11,6 +11,8 @@ data/*
 # Local PII denylist consumed by the githooks/pre-commit guard —
 # real emails / account ids / figures.  Must never be committed.
 .pii-denylist.txt
+# Content fingerprints of locally verified synthetic assets; never publish.
+.privacy-receipts.json
 
 # Generated artifacts
 exports/
@@ -61,3 +63,10 @@ Thumbs.db
 # content — but it sits in the repo root where a stray `git add -A`
 # would take it.
 *.stackdump
+
+# Build and browser tooling stay local; public files are explicitly staged.
+node_modules/
+_site/
+*.egg-info/
+build/
+dist/

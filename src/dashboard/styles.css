@@ -3157,3 +3157,24 @@
         rgba(0, 0, 0, 0.45) 0 2px,
         rgba(0, 0, 0, 0) 2px 5px);
   }
+
+/* Controls are real buttons while retaining the compact table design. */
+.lot-disclosure { font: inherit; color: inherit; background: transparent; border: 0; padding: 3px 2px; cursor: pointer; text-align: left; }
+.lot-disclosure:hover { color: var(--accent); }
+th .col-x { font: inherit; background: transparent; border: 0; cursor: pointer; }
+th:focus-within .col-x { opacity: 1; }
+.render-error { border: 1px solid var(--yellow); margin-bottom: 16px; }
+.section-header { flex-wrap: wrap; min-width: 0; }
+.section-header > * { min-width: 0; }
+@media (max-width: 720px) {
+  .section-header { gap: 8px; }
+  .section-header .toggle-group { flex-wrap: wrap; margin-left: 0; }
+  .section-header .total-value { font-size: 0.9rem; white-space: normal; overflow-wrap: anywhere; }
+  #holdingsHeader .total-value { flex-basis: 100%; margin-left: 0; }
+  .top-bar-summary { flex-wrap: wrap; gap: 8px 16px; }
+  .top-bar-summary .tb-label { font-size: 0.62rem; }
+  .top-bar-title .subtitle { font-size: 0.66rem; }
+  .tabnav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+  .tabnav .tab-btn { flex: 0 0 auto; padding: 10px 12px; }
+  .as-of-hint { overflow-wrap: anywhere; }
+}

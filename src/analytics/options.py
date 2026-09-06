@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from .. import clock
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -123,7 +124,7 @@ def compute_options_analytics(txns: list[dict]) -> dict:
             # is a reliable account label for the contract.
             contract_account[sym] = t.get("account_group", "")
 
-    today_str = datetime.now().date().isoformat()
+    today_str = clock.now(fallback=datetime.now).date().isoformat()
     today_d = _parse_iso(today_str)
 
     open_contracts: list[dict] = []

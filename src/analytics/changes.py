@@ -12,6 +12,7 @@ once per run so the JS just reads it.
 
 from __future__ import annotations
 
+from .. import clock
 import json
 from pathlib import Path
 from typing import Optional
@@ -81,7 +82,7 @@ def compute_changes(txns: list[dict],
         cur_by_sym[h["symbol"]] = cur_by_sym.get(h["symbol"], 0.0) + (h.get("value") or 0)
 
     payload = {
-        "generated":       datetime.now().isoformat(timespec="seconds"),
+        "generated":       clock.now(fallback=datetime.now).isoformat(timespec="seconds"),
         "txn_count":       cur_txn_count,
         "value":           round(cur_value, 2),
         "cost_basis":      round(cur_basis, 2),

@@ -30,8 +30,8 @@
 
 const PPNL = ANALYTICS.position_pnl || null;
 const PPNL_WINDOWS = (PPNL && PPNL.windows) || [];
-const PPNL_WINDOW_LABEL = {};
-const PPNL_WINDOW_START = {};
+const PPNL_WINDOW_LABEL = Object.create(null);
+const PPNL_WINDOW_START = Object.create(null);
 for (const w of PPNL_WINDOWS) {
   PPNL_WINDOW_LABEL[w.key] = w.label;
   PPNL_WINDOW_START[w.key] = w.start_date;
@@ -121,12 +121,12 @@ function boardCols(cfg) {
     cols.push({
       key: 'w_pnl_' + w.key, num: true, fmt: 'signed', winStart: true,
       label: solo ? `${w.label} open P&L` : `${w.label} P&L`,
-      title: `Open P&L since the close on ${w.start_date}`,
+      title: `Open P&L since the close on ${_htmlEsc(w.start_date)}`,
     });
     cols.push({
       key: 'w_pct_' + w.key, num: true, fmt: 'pct',
       label: solo ? `${w.label} open P&L %` : `${w.label} %`,
-      title: `Open P&L since the close on ${w.start_date}, against the position's value then`,
+      title: `Open P&L since the close on ${_htmlEsc(w.start_date)}, against the position's value then`,
     });
   }
   return cols.concat(BOARD_TAIL_COLS);
@@ -190,7 +190,7 @@ function boardFmt(col, row, cfg) {
     // only the shares still open.
     const hits = (row.traded_in || []).filter(w => (cfg.wins || []).includes(w));
     const badge = hits.length
-      ? ` <span class="board-traded" title="Traded within ${hits.map(w => PPNL_WINDOW_LABEL[w] || w).join(', ')}. Those columns cover only the shares still open — realized gain on shares sold is not included.">&bull;</span>`
+      ? ` <span class="board-traded" title="Traded within ${_htmlEsc(hits.map(w => PPNL_WINDOW_LABEL[w] || w).join(', '))}. Those columns cover only the shares still open — realized gain on shares sold is not included.">&bull;</span>`
       : '';
     return symLabel(v) + badge;
   }
@@ -248,8 +248,8 @@ function boardPaneHtml(paneIdx) {
 
   const chips = PPNL_WINDOWS.map(w =>
     `<button class="tbtn board-chip${cfg.wins.includes(w.key) ? ' active' : ''}"
-             title="Open P&amp;L since the close on ${w.start_date} — toggles independently of the others"
-             onclick="toggleBoardPaneWindow(${paneIdx}, '${w.key}')">${w.label}</button>`
+             title="Open P&amp;L since the close on ${_htmlEsc(w.start_date)} — toggles independently of the others"
+             onclick="${_htmlEsc('toggleBoardPaneWindow(' + paneIdx + ', ' + _jsString(w.key) + ')')}">${_htmlEsc(w.label)}</button>`
   ).join('');
 
   const head = cols.map(c => {
@@ -259,7 +259,7 @@ function boardPaneHtml(paneIdx) {
     const sortAttr = active ? ` aria-sort="${cfg.asc ? 'ascending' : 'descending'}"` : '';
     return `<th scope="col" class="${c.num ? 'num ' : ''}board-th${active ? ' sorted' : ''}${c.winStart ? ' board-wstart' : ''}"${tip}${sortAttr}
                 tabindex="0"
-                onclick="setBoardPaneSort(${paneIdx}, '${c.key}')"
+                onclick="${_htmlEsc('setBoardPaneSort(' + paneIdx + ', ' + _jsString(c.key) + ')')}"
                 >${_htmlEsc(c.label)}<span class="arrow">${arrow}</span></th>`;
   }).join('');
 

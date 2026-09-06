@@ -31,9 +31,9 @@ Conventions (documented for future hand entry):
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
+from ._helpers import read_csv_rows
 from ._helpers import Transaction, _date_mdy, _num, _txn
 
 _ACTION_MAP = {"PURCHASE": "Buy", "BUY": "Buy", "SELL": "Sell", "SALE": "Sell"}
@@ -42,7 +42,7 @@ _ACTION_MAP = {"PURCHASE": "Buy", "BUY": "Buy", "SELL": "Sell", "SALE": "Sell"}
 def parse_robinhood_apex(filepath: Path) -> list[Transaction]:
     txns: list[Transaction] = []
     with open(filepath, newline="", encoding="utf-8-sig") as f:
-        for row in csv.DictReader(f):
+        for row in read_csv_rows(f, filepath.name, nonblank=('Security Description', 'Transaction Description'), required=('Date', 'Security Description', 'Transaction Description', 'Quantity', 'Price', 'Amount')):
             sec = " ".join((row.get("Security Description") or "").split())
             raw_action = (row.get("Transaction Description") or "").strip()
             if not sec or not raw_action:

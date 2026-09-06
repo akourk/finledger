@@ -238,38 +238,33 @@ class TestPartialDropWarning:
                 fn("definitely-not-a-date")
 
 
-class TestHasUnreadData:
-    """The heuristic on its own, including its deliberate blind spot."""
+class TestSubstantiveRows:
+    """Count actual parsed CSV rows, including one-row files and preambles."""
 
-    def test_comment_and_blank_lines_do_not_count_as_data(self,
-                                                          isolated_workdir):
-        from src.parsers import _has_unread_data
+    def test_comment_and_blank_lines_do_not_count_as_data(self, isolated_workdir):
+        from src.parsers import parse_report
+        _write(isolated_workdir, "manual-adjustments.csv",
+               "# c\n" * 20 + "\n" * 20
+               + "Account,Date,Type,Symbol,Quantity,Price,Amount,Description\n")
+        assert parse_all_files(isolated_workdir / "data") == []
+        assert parse_report() == []
 
-        p = _write(isolated_workdir, "x.csv",
-                   "# c\n" * 20 + "\n" * 20 + "Account,Date\n")
-        assert _has_unread_data(p) is False
+    def test_a_populated_file_has_transactions(self, isolated_workdir):
+        _write(isolated_workdir, "robinhood.csv", ROBINHOOD_CSV)
+        assert len(parse_all_files(isolated_workdir / "data")) == 12
 
-    def test_a_populated_file_counts_as_data(self, isolated_workdir):
-        from src.parsers import _has_unread_data
+    def test_a_long_preamble_without_data_is_valid(self, isolated_workdir):
+        from src.parsers import parse_report
+        _write(isolated_workdir, "voya-401k.csv",
+               "plan name\ndate range\n\n\n\n\n"
+               "Activity Date,Fund,Activity,# of Units,Unit Price,Amount\n")
+        assert parse_all_files(isolated_workdir / "data") == []
+        assert parse_report() == []
 
-        p = _write(isolated_workdir, "x.csv", ROBINHOOD_CSV)
-        assert _has_unread_data(p) is True
-
-    def test_a_long_preamble_with_no_rows_stays_below_the_threshold(
-        self, isolated_workdir
-    ):
-        """Voya writes six lines before its header. The allowance is set
-        above that on purpose, so an empty Voya export cannot warn."""
-        from src.parsers import _has_unread_data
-
-        p = _write(isolated_workdir, "x.csv",
-                   "plan name\ndate range\n\"\n\"\n\"\n\"\nActivity Date,Fund\n")
-        assert _has_unread_data(p) is False
-
-    def test_missing_file_is_not_treated_as_data(self, isolated_workdir):
-        from src.parsers import _has_unread_data
-
-        assert _has_unread_data(isolated_workdir / "data" / "nope.csv") is False
+    def test_missing_data_is_blocked_by_validation(self, isolated_workdir):
+        from src.parsers import validate_ingestion
+        with pytest.raises(ValueError, match="No valid transactions"):
+            validate_ingestion(parse_all_files(isolated_workdir / "data"))
 
 
 class TestTierThreeReachesTheDashboard:

@@ -8,7 +8,7 @@
 // =========================================================================
 let asOfDate = history.length
   ? history[history.length - 1].date
-  : new Date().toISOString().slice(0, 10);
+  : SNAPSHOT_DATE;
 const LATEST_DATE = asOfDate;
 
 function isAsOfLatest() { return asOfDate === LATEST_DATE; }
@@ -19,7 +19,7 @@ function getAsOfSnapshot() {
   for (let i = history.length - 1; i >= 0; i--) {
     if (history[i].date <= asOfDate) return history[i];
   }
-  return history[0];
+  return null;
 }
 
 // Position list shaped like holdings_by_account (enriches with
@@ -54,7 +54,7 @@ function asOfHoldingsByAccount() {
 function asOfHoldingsByAsset() {
   if (isAsOfLatest()) return holdingsByAsset;
   const rows = asOfHoldingsByAccount();
-  const agg = {};
+  const agg = Object.create(null);
   for (const r of rows) {
     const k = r.symbol;
     if (!agg[k]) agg[k] = {
@@ -113,7 +113,7 @@ function setAsOfDate(date) {
   const latest = history[history.length - 1].date;
   const opts = [...history].reverse().map(h => {
     const label = h.date === latest ? `${h.date} (latest)` : h.date;
-    return `<option value="${h.date}">${label}</option>`;
+    return `<option value="${_htmlEsc(h.date)}">${_htmlEsc(label)}</option>`;
   }).join('');
   document.querySelectorAll('.as-of-picker').forEach(sel => {
     sel.innerHTML = opts;
@@ -158,7 +158,7 @@ function renderPricesAsOf() {
   // a close without saying so is what makes a broker reconciliation
   // disagree at 11am and then differently again after the bell.
   const live = (ANALYTICS.header_summary || {}).prices_provisional;
-  el.innerHTML = ` · prices as of ${when}`
+  el.innerHTML = ` · prices as of ${_htmlEsc(when)}`
     + (live ? ' <span class="tb-provisional">· provisional</span>' : '');
   el.title = 'Oldest price fetch across held positions — the marks '
            + 'behind this snapshot are no fresher than this.'
@@ -225,7 +225,7 @@ renderTopBarSummary();
 // --- Number formatters (used by stats, basis table, etc.) ---
 // Minus sign goes BEFORE the $ (US convention: -$100, not $-100).
 function fmtMoney(v, digits = 2) {
-  if (v == null || isNaN(v)) return '—';
+  if (v == null || !Number.isFinite(Number(v))) return '—';
   const n = Math.abs(v);
   const sign = v < 0 ? '-' : '';
   return sign + '$' + n.toLocaleString(undefined, {
@@ -233,7 +233,7 @@ function fmtMoney(v, digits = 2) {
   });
 }
 function fmtSigned(v) {
-  if (v == null || isNaN(v)) return '—';
+  if (v == null || !Number.isFinite(Number(v))) return '—';
   if (v >= 0) return '+' + fmtMoney(v);
   return fmtMoney(v);   // fmtMoney already produces "-$100"
 }
@@ -284,10 +284,14 @@ const SECTOR_COLORS = {
   'Other': '#9ca3af',
 };
 
+// Imported account names may be ordinary Object prototype names.
+// Lookup tables must never treat those inherited properties as data.
+for (const palette of [ACCOUNT_COLORS, TYPE_COLORS, SECTOR_COLORS]) Object.setPrototypeOf(palette, null);
+
 // --- Tab router ---
 // Each tab has a render function; first-activation is when the tab
 // content actually gets built (keeps initial load fast).
-const TAB_RENDERERS = {};   // name -> function
+const TAB_RENDERERS = Object.create(null);   // name -> function
 const TAB_RENDERED = new Set();   // names that have been rendered at least once
 
 function registerTabRenderer(name, fn) {
@@ -313,12 +317,31 @@ function activateTab(name, opts) {
   });
   panel.classList.add('active');
   // Lazy render on first activation
-  if (!TAB_RENDERED.has(name) && TAB_RENDERERS[name]) {
-    try { TAB_RENDERERS[name](); } catch (e) { console.error('tab render failed', name, e); }
-    TAB_RENDERED.add(name);
+  if ((!TAB_RENDERED.has(name) && TAB_RENDERERS[name]) || name === 'overview') {
+    panel.querySelector('[data-render-error]')?.remove();
+    try {
+      if (!TAB_RENDERED.has(name) && TAB_RENDERERS[name]) TAB_RENDERERS[name]();
+      if (name === 'overview' && typeof renderHistory === 'function') renderHistory();
+      TAB_RENDERED.add(name);
+    } catch (e) {
+      TAB_RENDERED.delete(name);
+      console.error('tab render failed', name, e);
+      const error = document.createElement('div');
+      error.className = 'render-error panel';
+      error.setAttribute('role', 'alert');
+      error.setAttribute('data-render-error', name);
+      const message = document.createElement('p');
+      message.textContent = 'This section could not be displayed. Retry, or regenerate the dashboard if the problem continues.';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'tbtn';
+      retry.setAttribute('data-render-retry', name);
+      retry.textContent = 'Retry section';
+      retry.addEventListener('click', () => activateTab(name));
+      error.append(message, retry);
+      panel.prepend(error);
+    }
   }
-  // Always re-call the Overview tab's chart render so resize/layout is right
-  if (name === 'overview' && typeof renderHistory === 'function') renderHistory();
   // Most tables do not exist until their tab first renders, so the
   // scroll-region measurement has to run after, not once at load.
   if (typeof applyScrollRegionFocus === 'function') applyScrollRegionFocus();
@@ -404,6 +427,7 @@ window.addEventListener('resize', applyScrollRegionFocus);
 // already listen for.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
+  if (e.target.closest && e.target.closest('button, input, select, a')) return;
   const th = e.target.closest && e.target.closest('th[tabindex="0"]');
   if (!th) return;
   e.preventDefault();
@@ -466,7 +490,7 @@ function setHoldingsView(view) {
 
 // Group an array of holdings rows by a single key field → [{key, value}, ...]
 function groupBy(rows, key) {
-  const out = {};
+  const out = Object.create(null);
   for (const row of rows) {
     const k = row[key] || 'Unknown';
     if (!out[k]) out[k] = { [key]: k, value: 0 };
@@ -477,7 +501,7 @@ function groupBy(rows, key) {
 
 // Same as groupBy but also rolls up cost_basis and unrealized_gain.
 function groupByBasisAware(rows, key) {
-  const out = {};
+  const out = Object.create(null);
   for (const row of rows) {
     const k = row[key] || 'Unknown';
     if (!out[k]) out[k] = { [key]: k, value: 0, cost_basis: 0, unrealized_gain: 0, _anyBasis: false, _groups: new Set() };
@@ -512,11 +536,11 @@ function groupByBasisAware(rows, key) {
 // with no combined filter) simply has no return, and says so.
 // ---------------------------------------------------------------------
 const PERF_BY_GROUPSET = (() => {
-  const m = {};
+  const m = Object.create(null);
   for (const [name, entry] of Object.entries(ANALYTICS_PERF)) {
     const fg = entry && entry.filter_groups;
     if (!Array.isArray(fg) || !fg.length) continue;   // Total has none
-    const key = [...fg].sort().join(' ');
+    const key = [...fg].sort().join('\u0000');
     // First writer wins: individual accounts are registered last in
     // build_analytics, so a combined filter (Retirement, Taxable) keeps
     // the name a reader would expect when the sets coincide.
@@ -527,7 +551,7 @@ const PERF_BY_GROUPSET = (() => {
 
 function perfForGroups(groups) {
   if (!groups || !groups.size) return null;
-  return PERF_BY_GROUPSET[[...groups].sort().join(' ')] || null;
+  return PERF_BY_GROUPSET[[...groups].sort().join('\u0000')] || null;
 }
 
 // Attach the performance columns to a grouped row.  `unrealized %` is
@@ -541,8 +565,10 @@ function withPerformance(rows) {
                         && typeof r.unrealized_gain === 'number')
       ? +((r.unrealized_gain / cb) * 100).toFixed(2) : null;
     const hit = perfForGroups(r._groups);
-    const sum = hit && hit.entry.summary;
-    const mw = hit && hit.entry.money_weighted;
+    const historical = !isAsOfLatest() && r._groups.size
+      ? historicalGroupPerformance(r._groups, getAsOfSnapshot()?.date || asOfDate) : null;
+    const sum = isAsOfLatest() ? (hit && hit.entry.summary) : (historical && historical.summary);
+    const mw = isAsOfLatest() ? (hit && hit.entry.money_weighted) : (historical && historical.money_weighted);
     r.twr_cum = sum && sum.cumulative != null ? +(sum.cumulative * 100).toFixed(2) : null;
     r.twr_ann = sum && sum.annualized != null ? +(sum.annualized * 100).toFixed(2) : null;
     r.xirr    = mw && mw.annualized != null ? +(mw.annualized * 100).toFixed(2) : null;
@@ -556,19 +582,18 @@ function withPerformance(rows) {
 }
 
 // Display labels for the holdings table's performance columns.  The
-// original columns keep their raw field names (that is the existing
-// convention in this table); only the additions get prose.
+// base columns use fieldLabel(); performance terms carry short explanations.
 const HOLDINGS_COL_LABEL = {
-  unrealized_pct: 'unrealized %',
-  twr_cum: 'twr cum %',
-  twr_ann: 'twr ann %',
-  xirr: 'xirr %',
+  unrealized_pct: 'Unrealized %',
+  twr_cum: 'TWR total %',
+  twr_ann: 'TWR annual %',
+  xirr: 'XIRR annual %',
 };
 // Four different questions, which is the whole reason to show all four.
 const HOLDINGS_COL_TIP = {
   unrealized_pct: 'Gain on what you hold right now, over its cost basis. '
     + 'Says nothing about money already realized or withdrawn.',
-  twr_cum: 'Time-weighted return over this group&#39;s own life, compounded. '
+  twr_cum: 'Time-weighted return from this group&#39;s first snapshot through the selected date, compounded. '
     + 'Contribution timing removed — it measures the investments, not the saving.',
   twr_ann: 'The same time-weighted return, per year. Hover a value for the span '
     + 'it was measured over — each group&#39;s window is its own.',
@@ -608,7 +633,7 @@ function renderHoldings() {
   hRow.innerHTML = cols.map(col => {
     const cls = numCols.has(col) ? ' class="num"' : '';
     const arrow = holdingsSortCol === col ? (holdingsSortAsc ? ' ▲' : ' ▼') : '';
-    const label = HOLDINGS_COL_LABEL[col] || col;
+    const label = HOLDINGS_COL_LABEL[col] || fieldLabel(col);
     const tip = HOLDINGS_COL_TIP[col] ? ` title="${HOLDINGS_COL_TIP[col]}"` : '';
     const sorted = holdingsSortCol === col
       ? ` aria-sort="${holdingsSortAsc ? 'ascending' : 'descending'}"` : '';
@@ -641,29 +666,28 @@ function renderHoldings() {
       if (val == null || val === '') html = '';
       else if (numCols.has(col)) {
         const n = typeof val === 'number' ? val : parseFloat(val);
-        if (isNaN(n)) html = val;
+        if (!Number.isFinite(n)) html = _htmlEsc(val);
         else {
           const fmt = col === 'quantity'
             ? n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })
-            : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-              + (HOLDINGS_PCT_COLS.has(col) ? '%' : '');
+            : (HOLDINGS_PCT_COLS.has(col) ? n.toFixed(2) + '%' : fmtMoney(n));
           const c = n < 0 ? 'negative' : (n > 0 ? 'positive' : '');
           // A return is only meaningful with the span it was measured
           // over, and each filter's span is its own.
           const t = (HOLDINGS_SPAN_COLS.has(col) && row._perfSpan)
-            ? ` title="Measured ${row._perfSpan}"` : '';
+            ? ` title="Measured ${_htmlEsc(row._perfSpan)}"` : '';
           html = `<span class="${c}"${t}>${fmt}</span>`;
         }
       } else if (col === 'symbol') {
         html = symLabel(val);
       } else if (col === 'account_group' && ACCOUNT_COLORS[val]) {
-        html = `<span style="color:${ACCOUNT_COLORS[val]}">${val}</span>`;
+        html = `<span style="color:${ACCOUNT_COLORS[val]}">${_htmlEsc(val)}</span>`;
       } else if (col === 'account_type' && TYPE_COLORS[val]) {
-        html = `<span style="color:${TYPE_COLORS[val]}">${val}</span>`;
+        html = `<span style="color:${TYPE_COLORS[val]}">${_htmlEsc(val)}</span>`;
       } else if (col === 'sector' && SECTOR_COLORS[val]) {
-        html = `<span style="color:${SECTOR_COLORS[val]}">${val}</span>`;
+        html = `<span style="color:${SECTOR_COLORS[val]}">${_htmlEsc(val)}</span>`;
       } else {
-        html = String(val);
+        html = _htmlEsc(val);
       }
       return `<td${cls}>${html}</td>`;
     }).join('') + '</tr>';
@@ -743,6 +767,7 @@ document.getElementById('holdingsHeaderRow').addEventListener('click', e => {
   if (holdingsSortCol === col) holdingsSortAsc = !holdingsSortAsc;
   else { holdingsSortCol = col; holdingsSortAsc = true; }
   renderHoldings();
+  dataControl(document.getElementById('holdingsHeaderRow'), 'hcol', col)?.focus({ preventScroll: true });
 });
 
 renderHoldings();
@@ -762,16 +787,17 @@ renderHoldings();
 // symbol held in two accounts (e.g., AAPL in Robinhood + Roth IRA)
 // would double-count.  Walk the per-txn realized_gain (annotated by
 // the FIFO basis walker) instead.
-const REALIZED_BY_ACCT_SYM = (() => {
-  const m = {};
+function realizedByAccountSymbol(cutoff) {
+  const m = Object.create(null);
   for (const t of txns) {
+    if (cutoff && (!t.date || t.date > cutoff)) continue;
     const rg = t.realized_gain;
     if (typeof rg !== 'number' || rg === 0) continue;
-    const k = (t.account_group || '') + '||' + (t.symbol || '');
+    const k = JSON.stringify([t.account_group || '', t.symbol || '']);
     m[k] = (m[k] || 0) + rg;
   }
   return m;
-})();
+}
 
 let byAssetSortCol = 'value';
 let byAssetSortAsc = false;
@@ -787,11 +813,11 @@ const byAssetCountPill = document.getElementById('byAssetCountPill');
 const _byAssetGroups = [...new Set(holdingsByAccount.map(r => r.account_group).filter(Boolean))].sort();
 byAssetGroupSelect.innerHTML =
   '<option value="">All account groups</option>' +
-  _byAssetGroups.map(g => `<option value="${g}">${g}</option>`).join('');
+  _byAssetGroups.map(g => `<option value="${_htmlEsc(g)}">${_htmlEsc(g)}</option>`).join('');
 const _byAssetSectors = [...new Set(holdingsByAsset.map(r => r.sector).filter(Boolean))].sort();
 byAssetSectorSelect.innerHTML =
   '<option value="">All sectors</option>' +
-  _byAssetSectors.map(s => `<option value="${s}">${s}</option>`).join('');
+  _byAssetSectors.map(s => `<option value="${_htmlEsc(s)}">${_htmlEsc(s)}</option>`).join('');
 
 byAssetSearchInput.addEventListener('input', () => {
   byAssetSearch = byAssetSearchInput.value.toLowerCase().trim();
@@ -813,7 +839,7 @@ byAssetSectorSelect.addEventListener('change', () => {
 // Rows expand only at the LATEST as-of date — the lot export describes
 // today's pool, not a historical snapshot.
 // =========================================================================
-const LOTS_BY_KEY = {};
+const LOTS_BY_KEY = Object.create(null);
 for (const p of ((ANALYTICS.lots || {}).positions || [])) {
   LOTS_BY_KEY[(p.account_group || '') + '||' + (p.symbol || '')] = p;
 }
@@ -826,7 +852,7 @@ function lotTermCell(p, l) {
   if (l.is_long_term) return '<span class="positive" title="Long-term (held > 1 year)">LT</span>';
   if (l.days_to_lt == null) return '—';
   const imminent = l.days_to_lt <= 60;
-  return `<span${imminent ? ' style="color:var(--yellow);"' : ''} title="Long-term on ${l.lt_eligible_date}">${l.days_to_lt}d → LT</span>`;
+  return `<span${imminent ? ' style="color:var(--yellow);"' : ''} title="Long-term on ${_htmlEsc(l.lt_eligible_date)}">${l.days_to_lt}d → LT</span>`;
 }
 
 function lotOriginCell(origin) {
@@ -840,7 +866,7 @@ function lotOriginCell(origin) {
 function lotDetailHtml(p, colspan) {
   const fmtQty = q => q.toLocaleString(undefined, { maximumFractionDigits: 8 });
   const rows = (p.lots || []).map(l => `<tr>
-      <td>${l.date || '—'}</td>
+      <td>${_htmlEsc(l.date || '—')}</td>
       <td class="num">${fmtQty(l.qty)}</td>
       <td class="num">${l.basis_per_share != null ? fmtMoney(l.basis_per_share, 2) : '—'}</td>
       <td class="num">${fmtMoney(l.cost_basis)}</td>
@@ -878,8 +904,9 @@ function lotDetailHtml(p, colspan) {
 }
 
 function renderByAssetTable() {
+  const realizedToDate = realizedByAccountSymbol(isAsOfLatest() ? null : getAsOfSnapshot()?.date || asOfDate);
   const rows = asOfHoldingsByAccount().map(r => {
-    const realized = REALIZED_BY_ACCT_SYM[(r.account_group || '') + '||' + (r.symbol || '')] || 0;
+    const realized = realizedToDate[JSON.stringify([r.account_group || '', r.symbol || ''])] || 0;
     const value = (typeof r.value === 'number') ? r.value : null;
     const cb = (typeof r.cost_basis === 'number') ? r.cost_basis : null;
     const unreal = (value != null && cb != null) ? +(value - cb).toFixed(2) : null;
@@ -926,7 +953,7 @@ function renderByAssetTable() {
     const sorted = byAssetSortCol === col
       ? ` aria-sort="${byAssetSortAsc ? 'ascending' : 'descending'}"` : '';
     return `<th scope="col"${cls} data-bcol="${col}"${sorted} tabindex="0" role="columnheader"
-      >${col}<span class="arrow">${arrow}</span></th>`;
+      >${fieldLabel(col)}<span class="arrow">${arrow}</span></th>`;
   }).join('');
 
   filtered.sort((a, b) => {
@@ -950,33 +977,35 @@ function renderByAssetTable() {
     const lp = isAsOfLatest() ? LOTS_BY_KEY[lotKey] : null;
     const expandable = !!(lp && ((lp.lots && lp.lots.length) || lp.micro));
     const expanded = expandable && lotsExpanded.has(lotKey);
-    let rowHtml = `<tr${expandable ? ` class="lot-toggle" data-lotkey="${lotKey}"` : ''}>` + cols.map(col => {
+    let rowHtml = `<tr${expandable ? ` class="lot-toggle" data-lotkey="${_htmlEsc(lotKey)}"` : ''}>` + cols.map(col => {
       const cls = numCols.has(col) ? ' class="num"' : '';
       const val = row[col];
       let html = '';
       if (val == null || val === '') html = '';
       else if (numCols.has(col)) {
         const n = typeof val === 'number' ? val : parseFloat(val);
-        if (isNaN(n)) html = String(val);
+        if (!Number.isFinite(n)) html = _htmlEsc(val);
         else {
           const fmt = col === 'quantity'
             ? n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })
             : (col === 'pct_return'
               ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%'
-              : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+              : fmtMoney(n));
           const c = n < 0 ? 'negative' : (n > 0 ? 'positive' : '');
           html = `<span class="${c}">${fmt}</span>`;
         }
       } else if (col === 'symbol') {
         const chev = expandable
           ? `<span class="lot-chev">${expanded ? '▾' : '▸'}</span>` : '';
-        html = chev + symLabel(val);
+        html = expandable
+          ? `<button type="button" class="lot-disclosure" data-lotkey="${_htmlEsc(lotKey)}" aria-expanded="${expanded}" aria-label="${_htmlEsc('Lots for ' + val + ' in ' + row.account_group)}">${chev}${symLabel(val)}</button>`
+          : symLabel(val);
       } else if (col === 'account_group' && ACCOUNT_COLORS[val]) {
-        html = `<span style="color:${ACCOUNT_COLORS[val]}">${val}</span>`;
+        html = `<span style="color:${ACCOUNT_COLORS[val]}">${_htmlEsc(val)}</span>`;
       } else if (col === 'sector' && SECTOR_COLORS[val]) {
-        html = `<span style="color:${SECTOR_COLORS[val]}">${val}</span>`;
+        html = `<span style="color:${SECTOR_COLORS[val]}">${_htmlEsc(val)}</span>`;
       } else {
-        html = String(val);
+        html = _htmlEsc(val);
       }
       return `<td${cls}>${html}</td>`;
     }).join('') + '</tr>';
@@ -998,6 +1027,7 @@ document.getElementById('byAssetHeaderRow').addEventListener('click', e => {
   if (byAssetSortCol === col) byAssetSortAsc = !byAssetSortAsc;
   else { byAssetSortCol = col; byAssetSortAsc = false; }  // numeric cols default desc
   renderByAssetTable();
+  dataControl(document.getElementById('byAssetHeaderRow'), 'bcol', col)?.focus({ preventScroll: true });
 });
 
 // Toggle a row's per-lot detail.  Delegated — rows re-render on every
@@ -1009,6 +1039,9 @@ document.getElementById('byAssetTbody').addEventListener('click', e => {
   if (lotsExpanded.has(k)) lotsExpanded.delete(k);
   else lotsExpanded.add(k);
   renderByAssetTable();
+  const disclosure = [...document.querySelectorAll('button.lot-disclosure')].find(b => b.dataset.lotkey === k);
+  if (disclosure) disclosure.focus({ preventScroll: true });
+  applyScrollRegionFocus();
 });
 
 renderByAssetTable();

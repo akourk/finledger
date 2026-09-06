@@ -46,10 +46,10 @@ account.  Supporting that needs a per-file account hint.
 
 from __future__ import annotations
 
-import csv
 import re
 from pathlib import Path
 
+from ._helpers import read_csv_rows, skip_informational_row
 from ._helpers import Transaction, _date_mdy, _num, _txn
 
 
@@ -128,9 +128,10 @@ def parse_sfcu(filepath: Path) -> list[Transaction]:
     checked: list[tuple[float, float]] = []
 
     with open(filepath, newline="", encoding="utf-8-sig") as f:
-        for row in csv.DictReader(f):
+        for row in read_csv_rows(f, filepath.name, required=('Posting Date', 'Amount', 'Transaction Type')):
             status = (row.get("Posting Status") or "").strip().lower()
             if status in _PENDING_STATUSES:
+                skip_informational_row()
                 continue
 
             raw_date = ((row.get("Posting Date") or "").strip()
@@ -142,6 +143,7 @@ def parse_sfcu(filepath: Path) -> list[Transaction]:
 
             raw_amount = _num(row.get("Amount", ""))
             if raw_amount == 0:
+                skip_informational_row()
                 # Zero-dollar informational rows (status changes,
                 # notices) move no money and would only add ledger noise.
                 continue

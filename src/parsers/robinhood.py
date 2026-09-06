@@ -9,10 +9,10 @@ helpers this parser calls into.
 
 from __future__ import annotations
 
-import csv
 import re
 from pathlib import Path
 
+from ._helpers import read_csv_rows
 from ._helpers import (
     Transaction, _date_dmy, _date_iso, _date_mdy, _date_ymd,
     _num, _txn,
@@ -37,12 +37,14 @@ def _parse_option_qty(raw: str, default: float = 1.0) -> float:
     s = (raw or "").strip()
     if not s:
         return default
-    try:
-        return abs(float(s))
-    except ValueError:
-        pass
-    m = re.match(r"\s*([+-]?\d+(?:\.\d+)?)", s)
-    return abs(float(m.group(1))) if m else default
+    # S is the broker's documented short/surrender marker, not an
+    # invitation to accept arbitrary numeric prefixes such as '1typo'.
+    if s.endswith("S"):
+        s = s[:-1]
+    from ._helpers import CSVValue
+    checked = CSVValue(s, "Robinhood", 0, "Quantity")
+    checked.location = getattr(raw, "location", "Robinhood Quantity")
+    return abs(_num(checked))
 
 
 _OPTION_ACTIONS = {"BTO", "STC", "OEXP", "OEXCS"}
@@ -136,7 +138,7 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
     # First pass: read everything so we can pair OEXCS with OCC.
     rows: list[tuple[str, dict]] = []
     with open(filepath, newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
+        reader = read_csv_rows(f, filepath.name, nonblank=('Trans Code',), required=('Activity Date', 'Trans Code', 'Instrument', 'Quantity', 'Price', 'Amount'))
         for row in reader:
             try:
                 date = _date_mdy(row["Activity Date"])
@@ -228,7 +230,9 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
             continue
 
         qty_raw = (row.get("Quantity", "") or "").strip()
-        qty = _num(row.get("Quantity", ""))
+        qty = (_parse_option_qty(row.get("Quantity", ""), default=0.0)
+               if action in {"MRGS", "SOFF", "SPR", "CIL", "LIQ"}
+               else _num(row.get("Quantity", "")))
         amount = _num(row.get("Amount", ""))
 
         # ── Merger / spinoff / CIL handling ────────────────────────────

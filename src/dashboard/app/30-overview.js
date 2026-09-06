@@ -77,7 +77,7 @@ function renderAnnualBreakdown() {
   // Year-end snapshots: pick the last snapshot of each calendar year.
   // For the current year, that's "today" (latest snapshot), which is
   // a valid year-end-so-far.
-  const yearEndSnaps = {};
+  const yearEndSnaps = Object.create(null);
   for (const h of history) {
     const y = (h.date || '').slice(0, 4);
     if (y) yearEndSnaps[y] = h;
@@ -87,7 +87,7 @@ function renderAnnualBreakdown() {
   // Per-year-per-account contribution events (net cash_flow).  Walk
   // txns once.  For accounts the user filters out we still walk
   // them — the cost is negligible vs the cleanliness of data flow.
-  const contribByYearAcct = {};
+  const contribByYearAcct = Object.create(null);
   for (const t of txns) {
     const y = (t.date || '').slice(0, 4);
     const acct = t.account_group;
@@ -97,7 +97,7 @@ function renderAnnualBreakdown() {
     contribByYearAcct[y][acct] = (contribByYearAcct[y][acct] || 0) + cf;
   }
   // Cumulative contributions per account by year-end.
-  const cumContribByAcct = {};
+  const cumContribByAcct = Object.create(null);
   for (const a of accounts) cumContribByAcct[a] = {};
   for (const a of accounts) {
     let running = 0;
@@ -108,7 +108,7 @@ function renderAnnualBreakdown() {
   }
 
   // Target lookup from metadata.csv (Type=Target rows).
-  const targetsByYear = {};
+  const targetsByYear = Object.create(null);
   for (const t of (RETIREMENT_META.targets || [])) {
     targetsByYear[t.year] = t.amount;
   }
@@ -176,7 +176,7 @@ function renderAnnualBreakdown() {
     const cellTint = _acctTint(a, TINT_CELL);
     const contribTint = _acctTint(a, TINT_CONTRIB);
     h1 += `<th scope="colgroup" colspan="${colspan}" class="ab-acct-head${expanded ? ' ab-expanded' : ''}" data-acct="${_htmlEsc(a)}" style="background:${headTint};color:${acctColor};border-bottom:2px solid ${acctColor};" title="Click to ${expanded ? 'collapse' : 'expand'} contribution columns">
-      <span class="ab-acct-arrow">${arrow}</span>${_htmlEsc(label)}
+      <button type="button" class="lot-disclosure" id="annual-${_htmlEsc(encodeURIComponent(a))}" aria-expanded="${expanded}"><span class="ab-acct-arrow">${arrow}</span>${_htmlEsc(label)}</button>
     </th>`;
     if (expanded) {
       h2 += `<th scope="col" class="num ab-sub" style="background:${contribTint};" title="Net cash flow into this account this year">contr.</th>
@@ -194,7 +194,7 @@ function renderAnnualBreakdown() {
     ? 'Click to hide Target comparison columns'
     : 'Click to show Target columns (year-end Sum vs target)';
   h1 += `<th scope="colgroup" colspan="3" class="ab-sum-head ab-sum-toggle${sumExpanded ? ' ab-expanded' : ''}" title="${sumTip}">
-    <span class="ab-acct-arrow">${sumArrow}</span>Sum
+    <button type="button" id="annual-sum" class="lot-disclosure" aria-expanded="${sumExpanded}"><span class="ab-acct-arrow">${sumArrow}</span>Sum</button>
   </th>`;
   h2 += `<th scope="col" class="num ab-sub">Σ</th>
          <th scope="col" class="num ab-sub">Δ%</th>
@@ -319,11 +319,11 @@ function renderAnnualBreakdown() {
   // Wire account-header clicks for expand/collapse.  Delegated so the
   // single re-render hands off cleanly.
   host.querySelectorAll('.ab-acct-head').forEach(el => {
-    el.addEventListener('click', () => _toggleAnnualExpand(el.dataset.acct));
+    el.addEventListener('click', () => renderKeepingFocus(() => _toggleAnnualExpand(el.dataset.acct)));
   });
   // Sum header click reveals/hides the Target group.
   const sumToggle = host.querySelector('.ab-sum-toggle');
-  if (sumToggle) sumToggle.addEventListener('click', _toggleAnnualSumExpand);
+  if (sumToggle) sumToggle.addEventListener('click', () => renderKeepingFocus(_toggleAnnualSumExpand));
 }
 
 function renderTopHoldings() {
@@ -345,7 +345,7 @@ function renderTopHoldings() {
     const ugStr = ug == null ? '—'
       : `<span class="${ug >= 0 ? 'positive' : 'negative'}">${fmtSigned(ug)}</span>`;
     const sectorColor = SECTOR_COLORS[h.sector] || '#9ca3af';
-    const sectorStr = h.sector ? `<span style="color:${sectorColor}">${h.sector}</span>` : '';
+    const sectorStr = h.sector ? `<span style="color:${sectorColor}">${_htmlEsc(h.sector)}</span>` : '';
     return `<tr>
       <td><b>${symLabel(h.symbol)}</b></td>
       <td>${sectorStr}</td>
@@ -381,14 +381,14 @@ function renderRecentTransactions() {
   body.innerHTML = rows.map(t => {
     const actionColor = ACTION_COLORS[t.action] || '';
     const actionSpan = actionColor
-      ? `<span style="color:${actionColor}">${t.action || ''}</span>`
-      : (t.action || '');
+      ? `<span style="color:${actionColor}">${_htmlEsc(t.action || '')}</span>`
+      : _htmlEsc(t.action || '');
     const acctColor = ACCOUNT_COLORS[t.account_group] || '';
     const acctSpan = acctColor
-      ? `<span style="color:${acctColor}">${t.account_group || ''}</span>`
-      : (t.account_group || '');
+      ? `<span style="color:${acctColor}">${_htmlEsc(t.account_group || '')}</span>`
+      : _htmlEsc(t.account_group || '');
     return `<tr>
-      <td>${t.date || ''}</td>
+      <td>${_htmlEsc(t.date || '')}</td>
       <td>${acctSpan}</td>
       <td>${symLabel(t.symbol || '')}</td>
       <td>${actionSpan}</td>
@@ -567,7 +567,7 @@ const _RECON_DRILLABLE = new Set(['income', 'other_income',
                                   'realized', 'section_1256']);
 
 function _reconIncomeKindByAction() {
-  const m = {};
+  const m = Object.create(null);
   for (const a of ((DATA.action_catalog || {}).actions || [])) {
     if (a.income) m[a.name] = a.income;
   }
@@ -699,7 +699,7 @@ function renderOverviewStatus() {
       </div>`);
     }
     if (haveIssues) {
-      const byCat = {};
+      const byCat = Object.create(null);
       for (const i of issues) {
         const c = i.category || 'Other';
         (byCat[c] = byCat[c] || []).push(i);
@@ -812,8 +812,8 @@ function renderOverviewStatus() {
         ? (dVal > 0 ? 'positive' : 'negative') : '';
       const dTitle = hasExp
         ? ` title="raw Δ ${fmtD(r.delta)}; expected ${fmtD(r.expected)}"` : '';
-      let html = `<tr${drillable ? ` class="recon-clickable" onclick="toggleReconRow(${i})" title="Click to see the transactions composing fin's figure"` : ''}>
-        <td>${chev}${_htmlEsc(r.account_group || '')}</td>
+      let html = `<tr${drillable ? ' class="recon-clickable"' : ''}>
+        <td>${drillable ? `<button type="button" class="lot-disclosure" id="recon-disclosure-${i}" aria-expanded="${reconExpanded.has(i)}" onclick="renderKeepingFocus(() => toggleReconRow(${i}))">${chev}${_htmlEsc(r.account_group || '')}</button>` : _htmlEsc(r.account_group || '')}</td>
         <td${r.note ? ` title="${_htmlEsc(r.note)}" class="recon-noted"` : ''}>${_htmlEsc(r.label || '')}</td>
         <td style="text-align:right;">${fmtN(r.reported)}</td>
         <td style="text-align:right;">${fmtN(r.computed)}</td>
@@ -1091,14 +1091,8 @@ registerTabRenderer('overview', () => {
   renderRecentTransactions();
   renderAllocation();
 });
-// Overview is active on initial load, so render its lazy bits now.
-if (document.getElementById('tab-overview').classList.contains('active')) {
-  renderOverviewStatus();
-  renderTopHoldings();
-  renderRecentTransactions();
-  renderAllocation();
-  TAB_RENDERED.add('overview');
-}
+// The initial tab is activated after the whole bundle initializes, so
+// failed renderers use the same visible error/retry path as later tabs.
 // Concentration renders into the Holdings tab's container.  Holdings
 // content is built eagerly at load (not via the lazy tab router), so
 // render this once here too — the container is simply hidden until the
@@ -1126,7 +1120,7 @@ function _renderStatCards(cards, extraClass) {
     const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
     const titleAttr = c.title ? ` title="${_htmlEsc(c.title)}"` : '';
     const note = c.note ? `<div class="stat-note">${c.note}</div>` : '';
-    return `<div class="${cls}"${titleAttr}><div class="label">${c.label}</div><div class="value">${c.value}</div>${note}</div>`;
+    return `<div class="${cls}"${titleAttr}><div class="label">${c.htmlLabel ? c.label : _htmlEsc(c.label)}</div><div class="value">${c.value}</div>${note}</div>`;
   }).join('') + '</div>';
 }
 
@@ -1147,6 +1141,6 @@ function _renderAccountChip(account, active, onclickJs, label) {
   // the colored-text pattern across all tabs.  Active chips inherit
   // the white-on-purple .tbtn.active styling, no inline color needed.
   const styleAttr = (!active && color) ? ` style="color:${color};"` : '';
-  return `<button class="tbtn${active ? ' active' : ''}"${styleAttr} onclick="${onclickJs}">${text}</button>`;
+  return `<button class="tbtn${active ? ' active' : ''}"${styleAttr} id="chip-${_htmlEsc(encodeURIComponent(onclickJs))}" aria-pressed="${active}" onclick="${_htmlEsc(onclickJs)}">${_htmlEsc(text)}</button>`;
 }
 

@@ -19,6 +19,7 @@ steady 12% with no drawdown >5%.
 
 from __future__ import annotations
 
+from .. import clock
 from datetime import date, datetime, timedelta
 
 
@@ -229,7 +230,7 @@ def compute_drawdown(history: list[dict],
     # the slice itself rules out early-portfolio noise.
     pseudo = [{"date": d, "v": v} for d, v in stat_points]
     val_fn = lambda h: h["v"]
-    today = datetime.now().date()
+    today = clock.now(fallback=datetime.now).date()
     latest_iso = stat_points[-1][0]
     latest_year = latest_iso[:4] if latest_iso else ""
     max_dd = stats["max_drawdown"]

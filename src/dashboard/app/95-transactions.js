@@ -61,7 +61,14 @@ function renderStats() {
   // Current drawdown — peak-to-trough decline as of latest snapshot.
   // Shown only when latest is in view (the as-of snapshot is what most
   // users default to).  0 means "at all-time high".
-  const dd = (ANALYTICS.drawdown && ANALYTICS.drawdown.current_drawdown_pct) || 0;
+  const snap = getAsOfSnapshot();
+  const selectedDate = snap?.date || asOfDate;
+  const selectedHistory = history.filter(h => h.date <= selectedDate);
+  const valueAt = h => (h.total || 0) + _rolloverBridgeAdjustment(h.date, null);
+  const peak = Math.max(0, ...selectedHistory.map(valueAt));
+  const dd = isAsOfLatest()
+    ? ((ANALYTICS.drawdown && ANALYTICS.drawdown.current_drawdown_pct) || 0)
+    : (peak > 0 && snap ? (valueAt(snap) - peak) / peak : 0);
   const ddPct = dd * 100;
   const atAth = ddPct >= -0.005;
   // At an all-time high there is no "peak" to be down from, so the
@@ -88,11 +95,11 @@ function renderStats() {
     { label: 'Realized P&L', value: fmtSigned(realized) + lifeTag, cls: gainCls(realized) },
     { label: 'Net Contributed', value: fmtMoney(netContrib) },
     { label: 'Income', value: fmtMoney(income) + lifeTag },
-    { label: 'Current Drawdown', value: ddDisplay, cls: ddCls },
+    { label: isAsOfLatest() ? 'Current Drawdown' : 'Drawdown at selected date', value: ddDisplay, cls: ddCls },
   ];
   el.innerHTML = cards.map(c => {
     const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
-    return `<div class="${cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
+    return `<div class="${cls}"><div class="label">${_htmlEsc(c.label)}</div><div class="value">${c.value}</div></div>`;
   }).join('');
 }
 renderStats();
@@ -110,15 +117,15 @@ function renderFilterBar() {
     let popover = '';
     if (isOpen) {
       const btns = filterValues[field].map(v => {
-        const esc = String(v).replace(/"/g, '&quot;');
+        const esc = _htmlEsc(v);
         const cls = filterState[field].has(String(v)) ? 'tbtn active' : 'tbtn';
-        return `<button class="${cls}" data-field="${field}" data-val="${esc}">${v}</button>`;
+        return `<button class="${cls}" data-field="${_htmlEsc(field)}" data-val="${esc}" aria-pressed="${filterState[field].has(String(v))}">${_htmlEsc(v)}</button>`;
       }).join('');
-      popover = `<div class="popover" data-popover="${field}">${btns}</div>`;
+      popover = `<div class="popover" id="filter-${_htmlEsc(encodeURIComponent(field))}" role="group" aria-label="${_htmlEsc(fieldLabel(field))} choices" data-popover="${_htmlEsc(field)}">${btns}</div>`;
     }
 
     return `<div style="position:relative;display:inline-block;">` +
-      `<button class="fbtn${hasCls}" data-toggle="${field}">${field}${badge}</button>` +
+      `<button class="fbtn${hasCls}" data-toggle="${_htmlEsc(field)}" aria-expanded="${isOpen}" ${isOpen ? `aria-controls="filter-${_htmlEsc(encodeURIComponent(field))}"` : ''}>${_htmlEsc(fieldLabel(field))}${badge}</button>` +
       popover + `</div>`;
   }).join('');
 }
@@ -133,6 +140,10 @@ filterBar.addEventListener('click', e => {
     openPopover = openPopover === field ? null : field;
     renderFilterBar();
     renderColToggle();
+    const target = openPopover
+      ? dataControl(filterBar, 'popover', field)?.querySelector('button')
+      : dataControl(filterBar, 'toggle', field);
+    target?.focus({ preventScroll: true });
     return;
   }
   // Click on a value toggle inside a popover
@@ -145,8 +156,18 @@ filterBar.addEventListener('click', e => {
     else { selected.add(val); }
     renderFilterBar();
     renderTable();
+    [...filterBar.querySelectorAll('[data-val]')].find(b => b.dataset.field === field && b.dataset.val === val)?.focus({ preventScroll: true });
     return;
   }
+});
+
+filterBar.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !openPopover) return;
+  e.preventDefault();
+  const field = openPopover;
+  openPopover = null;
+  renderFilterBar();
+  dataControl(filterBar, 'toggle', field)?.focus({ preventScroll: true });
 });
 
 // Close filter popover on outside click.
@@ -172,7 +193,7 @@ function renderColToggle() {
   colWrap.innerHTML =
     `<span class="label">show:</span>` +
     hidden.map(col =>
-      `<button class="col-chip" data-col="${col}" title="Show ${col} column">${col}</button>`
+      `<button class="col-chip" data-col="${_htmlEsc(col)}" title="Show ${_htmlEsc(fieldLabel(col))} column">${_htmlEsc(fieldLabel(col))}</button>`
     ).join('');
 }
 renderColToggle();
@@ -185,6 +206,7 @@ colWrap.addEventListener('click', e => {
   renderColToggle();
   renderHeader();
   renderTable();
+  dataControl(headerRow, 'col', col)?.focus({ preventScroll: true });
 });
 
 // --- Header ---
@@ -198,8 +220,8 @@ function renderHeader() {
     const arrow = sortCol === col ? (sortAsc ? ' ▲' : ' ▼') : '';
     const sorted = sortCol === col
       ? ` aria-sort="${sortAsc ? 'ascending' : 'descending'}"` : '';
-    return `<th scope="col"${cls} data-col="${col}"${sorted} tabindex="0" role="columnheader">${col}<span class="arrow">${arrow}</span>` +
-      `<span class="col-x" data-hide="${col}" title="Hide ${col} column">×</span></th>`;
+    return `<th scope="col"${cls} data-col="${_htmlEsc(col)}"${sorted} tabindex="0" role="columnheader">${_htmlEsc(fieldLabel(col))}<span class="arrow">${arrow}</span>` +
+      `<button type="button" class="col-x" data-hide="${_htmlEsc(col)}"${vis.length === 1 ? ' disabled' : ''} aria-label="Hide ${_htmlEsc(fieldLabel(col))} column" title="Hide ${_htmlEsc(fieldLabel(col))} column">×</button></th>`;
   }).join('');
 }
 renderHeader();
@@ -210,6 +232,7 @@ headerRow.addEventListener('click', e => {
   if (x) {
     e.stopPropagation();
     const col = x.dataset.hide;
+    if (visibleCols().length <= 1) return;
     colVisible[col] = false;
     // If we just hid the active sort column, snap the sort back to the
     // first visible column so the table doesn't sort by an invisible
@@ -221,6 +244,7 @@ headerRow.addEventListener('click', e => {
     renderColToggle();
     renderHeader();
     renderTable();
+    dataControl(colWrap, 'col', col)?.focus({ preventScroll: true });
     return;
   }
   const th = e.target.closest('th');
@@ -230,6 +254,7 @@ headerRow.addEventListener('click', e => {
   else { sortCol = col; sortAsc = true; }
   renderHeader();
   renderTable();
+  dataControl(headerRow, 'col', col)?.focus({ preventScroll: true });
 });
 
 // --- Search ---
@@ -269,8 +294,8 @@ dateToInput.addEventListener('input', () => {
 document.querySelectorAll('.date-range-group .date-quick').forEach(btn => {
   btn.addEventListener('click', () => {
     const key = btn.dataset.range;
-    const today = new Date();
-    const isoDate = (d) => d.toISOString().slice(0, 10);
+    const today = snapshotDate();
+    const isoDate = calendarIso;
     const todayIso = isoDate(today);
     if (key === 'all') {
       _setDateRange('', '', 'all');
@@ -297,10 +322,10 @@ function formatCell(val, col) {
   if (val == null || val === '') return '';
   if (NUMERIC_FIELDS.has(col)) {
     const n = typeof val === 'number' ? val : parseFloat(val);
-    if (isNaN(n)) return val;
+    if (!Number.isFinite(n)) return _htmlEsc(val);
     const formatted = col === 'quantity'
       ? n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })
-      : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      : fmtMoney(n);
     const cls = n < 0 ? 'negative' : (n > 0 ? 'positive' : '');
     return `<span class="${cls}">${formatted}</span>`;
   }
@@ -309,12 +334,12 @@ function formatCell(val, col) {
     return symLabel(s);
   }
   if (col === 'action' && ACTION_COLORS[s]) {
-    return `<span style="color:${ACTION_COLORS[s]}">${s}</span>`;
+    return `<span style="color:${ACTION_COLORS[s]}">${_htmlEsc(s)}</span>`;
   }
   if (col === 'account_group' && ACCOUNT_COLORS[s]) {
-    return `<span style="color:${ACCOUNT_COLORS[s]}">${s}</span>`;
+    return `<span style="color:${ACCOUNT_COLORS[s]}">${_htmlEsc(s)}</span>`;
   }
-  return s;
+  return _htmlEsc(s);
 }
 
 function renderTable() {
@@ -386,7 +411,5 @@ renderTable();
 // original symptom this block fixes.
 (function initTab() {
   const name = location.hash.slice(1);
-  if (name && document.getElementById('tab-' + name)) {
-    activateTab(name, { replace: false });
-  }
+  activateTab(name && document.getElementById('tab-' + name) ? name : 'overview', { replace: false });
 })();

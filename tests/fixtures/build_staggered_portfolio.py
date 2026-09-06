@@ -178,6 +178,8 @@ def build(tmp: Path) -> None:
         f.write("Account Group,,,Voya 401K,Rollover IRA\n")
         f.write("Account Type,,,Robinhood,Taxable\n")
         f.write("Account Type,,,Rollover IRA,Retirement\n")
+        f.write("Account Group,,,Apple Savings,Apple Savings\n")
+        f.write("Account Type,,,Apple Savings,Savings\n")
         # A per-account lot-relief override, so the ANNOTATED walk and the
         # pure-FIFO comparison table produce different realized gains.
         # The dashboard has two sources for "Realized" and they are only

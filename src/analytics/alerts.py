@@ -20,6 +20,7 @@ Sources we pull from (each runs as a small classifier here):
 
 from __future__ import annotations
 
+from .. import clock
 from datetime import datetime, timedelta
 
 
@@ -105,7 +106,7 @@ def compute_alerts(txns: list[dict],
         if latest:
             try:
                 latest_d = datetime.strptime(latest, "%Y-%m-%d").date()
-                age = (datetime.now().date() - latest_d).days
+                age = (clock.now(fallback=datetime.now).date() - latest_d).days
                 if age > 30:
                     alerts.append({
                         "kind":     "stale_data",

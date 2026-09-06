@@ -58,6 +58,7 @@ Weekend / holiday lookups walk backward to the most recent prior trading
 day within a 7-day window.
 """
 
+from . import clock
 import json
 import math
 import re
@@ -107,11 +108,11 @@ def _now_utc() -> datetime:
 
     The single clock seam for freshness reasoning — tests monkeypatch
     this rather than adding a freezegun dependency.  ``_today`` derives
-    from it, so pinning one pins both.  (The ``datetime.now()`` calls
+    from it, so pinning one pins both.  (The ``clock.now(fallback=datetime.now)`` calls
     elsewhere in this module stamp ``last_fetch`` in naive local time;
     that format is what the dashboard parses, so leave it alone.)
     """
-    return datetime.now(timezone.utc)
+    return clock.now(timezone.utc, fallback=datetime.now)
 
 
 def _today() -> date:
@@ -121,7 +122,7 @@ def _today() -> date:
     ``covered_end`` is capped at this date, and settle horizons are
     compared against it.
     """
-    return _now_utc().astimezone().date()
+    return clock.as_of_date() or _now_utc().astimezone().date()
 
 
 # ---------------------------------------------------------------------------
@@ -1113,7 +1114,7 @@ def fetch_latest_close_batch(symbols: list[str], *,
     # Expand proxies, dedupe, drop unfetchable
     targets: list[str] = []
     seen: set[str] = set()
-    now = datetime.now()
+    now = clock.now(fallback=datetime.now)
     for sym in symbols:
         if _classify_no_fetch(sym):
             continue
@@ -1721,7 +1722,7 @@ def revalidate_stale_caches(symbols: list[str], *,
     global _meta_dirty, _splits_dirty
     meta = _load_meta()
     last = meta.get("last_deep_refresh")
-    now = datetime.now()
+    now = clock.now(fallback=datetime.now)
     if not force and last:
         try:
             age_days = (now.date() - _parse_iso(last)).days
@@ -1829,7 +1830,7 @@ def ensure_coverage(symbols: list[str], start, end, *,
     prices = _load_prices()
     start_d = _parse_iso(start)
     end_d   = _parse_iso(end)
-    now     = datetime.now()
+    now     = clock.now(fallback=datetime.now)
     overrides = symbol_end_overrides or {}
 
     # Expand proxied symbols to their proxies, dedupe.  A mapped symbol

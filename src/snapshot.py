@@ -36,6 +36,8 @@ Schema (v1)::
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from .clock import now
+from .io_safe import replace_files
 
 SNAPSHOT_VERSION = 1
 
@@ -53,18 +55,19 @@ def export_snapshot(data_dir: Path, out_path: Path) -> dict:
 
     files: dict[str, str] = {}
     for p in sorted(data_dir.iterdir()):
+        if p.is_symlink() and p.suffix.lower() == ".csv":
+            raise ValueError("Refusing to follow symbolic links when exporting a snapshot")
         if p.is_file() and p.suffix.lower() == ".csv":
             files[p.name] = p.read_text(encoding="utf-8-sig")
 
     bundle = {
         "version": SNAPSHOT_VERSION,
-        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "exported_at": now(timezone.utc, fallback=datetime.now).isoformat(timespec="seconds"),
         "file_count": len(files),
         "files": files,
     }
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+    replace_files({out_path: json.dumps(bundle, indent=2, allow_nan=False).encode("utf-8")})
     return bundle
 
 
@@ -77,33 +80,51 @@ def import_snapshot(snapshot_path: Path, data_dir: Path,
     accidentally clobbering local edits with a stale snapshot.
     """
     bundle = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    if not isinstance(bundle, dict):
+        raise ValueError("Snapshot must be a JSON object")
     version = bundle.get("version")
-    if version != SNAPSHOT_VERSION:
+    if type(version) is not int or version != SNAPSHOT_VERSION:
         raise ValueError(
             f"Unsupported snapshot version: {version} "
             f"(this build expects v{SNAPSHOT_VERSION})"
         )
 
-    files = bundle.get("files") or {}
+    files = bundle.get("files")
     if not isinstance(files, dict):
         raise ValueError("Snapshot 'files' field is malformed (expected dict)")
 
-    data_dir.mkdir(parents=True, exist_ok=True)
+    if "file_count" in bundle and (type(bundle["file_count"]) is not int
+                                  or bundle["file_count"] != len(files)):
+        raise ValueError("Snapshot file_count does not match files")
+    # Validate the complete bundle before creating the destination or writing
+    # any file. A malformed later entry must not partially restore a ledger.
+    canonical_names = set()
+    for name, content in files.items():
+        if (not isinstance(name, str) or not name or "/" in name
+                or "\\" in name or ".." in name or ":" in name
+                or any(ord(char) < 32 for char in name)
+                or Path(name).suffix.lower() != ".csv"):
+            raise ValueError("Snapshot filenames must be flat CSV filenames")
+        if name.casefold() in canonical_names:
+            raise ValueError("Snapshot contains duplicate case-insensitive filenames")
+        canonical_names.add(name.casefold())
+        if not isinstance(content, str):
+            raise ValueError(f"Snapshot {name}: CSV content must be text")
+        if (data_dir / name).is_symlink():
+            raise ValueError("Refusing a symbolic-link snapshot destination")
+
     written: list[str] = []
     skipped: list[str] = []
+    pending = {}
 
     for name, content in files.items():
-        # Defense against path traversal — refuse anything with a
-        # separator or parent reference in the filename.  CSV exports
-        # are flat by definition.
-        if "/" in name or "\\" in name or ".." in name:
-            raise ValueError(f"Refusing suspicious filename in snapshot: {name!r}")
-
         target = data_dir / name
         if target.exists() and not overwrite:
             skipped.append(name)
             continue
-        target.write_text(content, encoding="utf-8")
+        pending[target] = content.encode("utf-8")
         written.append(name)
+
+    replace_files(pending)
 
     return {"written": written, "skipped": skipped, "total": len(files)}

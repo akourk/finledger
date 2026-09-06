@@ -19,6 +19,7 @@ from __future__ import annotations
 
 # Re-export everything from _shared so existing imports still work
 # (e.g. `from src.analytics import classify_retirement_contribution`).
+from .. import clock
 from ._shared import (
     # The frozensets are DEFAULTS kept for back-compat; the functions are
     # the live classification (user `Account Type` metadata unioned with
@@ -279,7 +280,7 @@ def build_analytics(txns: list[dict], history: list[dict],
     # employee 401(k) deferral (and projection flag) from here.
     from datetime import date as _date_today
     _current_rate_est = (tax.get("rate_estimates_by_year") or {}).get(
-        str(_date_today.today().year))
+        str(clock.today(fallback=_date_today.today).year))
 
     # Latest annual-expenses figure (drives FIRE + income expense
     # coverage).  Most-recent entry wins, matching the FI-threshold rule.

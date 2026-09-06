@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import csv
 import re
 from pathlib import Path
 
+from ._helpers import read_csv_rows
 from ._helpers import (
     Transaction, _date_dmy, _date_iso, _date_mdy, _date_ymd,
     _num, _txn,
@@ -31,7 +31,7 @@ def parse_schwab(filepath: Path) -> list[Transaction]:
     account = _schwab_account_from_filename(filepath)
 
     with open(filepath, newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
+        reader = read_csv_rows(f, filepath.name, nonblank=('Action',), required=('Date', 'Action', 'Symbol', 'Quantity', 'Price', 'Amount'))
         for row in reader:
             action = (row.get("Action") or "").strip()
             if not action:

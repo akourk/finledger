@@ -478,10 +478,12 @@ change to the cache shows up as a readable diff.
 The renderer concatenates a template, a stylesheet, thirteen JavaScript modules
 and the full JSON payload into a single self-contained HTML file — around 1 MB
 for the sample portfolio, with ten tabs, a dozen charts and every transaction
-inlined. No build step, no bundler, no dependency manifest, no CDN.
+inlined. No browser runtime dependencies or CDN. Python and Node dependency
+manifests lock the generation and validation tools, not assets needed to view
+the resulting file.
 
-This is the decision most likely to be read as unwillingness to learn React, so
-it is worth arguing properly.
+The trade-off is portable output in exchange for explicitly managed frontend
+state and rendering. Behavioral and parity tests protect those boundaries.
 
 **The artifact has to survive being moved.** The output is a financial record.
 Its realistic lifecycle includes being emailed to an accountant, dropped in a
@@ -492,7 +494,7 @@ reference works in none of them reliably. The same property makes the privacy
 story simple to state and simple to verify: the page makes **zero network
 requests at view time**, which anyone can confirm by opening the network tab.
 
-**Nothing here needs a framework's core value.** A framework's central offering
+**Frontend trade-offs.** A framework's central offering
 is efficiently reconciling a mutable view with changing state. This view has no
 changing state. The data is a frozen snapshot, baked in at generation time —
 tabs render once, lazily, on first activation, and re-render wholesale on a
@@ -655,3 +657,21 @@ debuggable, and debugging is what gets harder when there is more data. The
 no-build-step decision would survive too. The one thing I would revisit
 regardless of scale is the two lot walkers: the tests that pin them together are
 good, but they are compensating for a structure that should not need them.
+
+## Validated publication and reproducible demonstration
+
+The public artifact is built by `tools/build_demo.py` using independently generated
+fictional transactions and illustrative price curves at a fixed sample date. All
+input/cache/output paths are temporary and network access is disabled. Embedded
+provenance and the artifact manifest identify source and output hashes. CI tests
+the final bannered artifact before Pages can deploy it.
+
+The ordinary pipeline requires explicit account classifications and valid, finite
+numeric input before output publication. JSON and HTML are prepared together; a
+failed parse, invariant, or render does not replace the last usable output. See
+[Usage](USAGE.md) and [Privacy](PRIVACY.md) for operational details.
+
+The snapshot clock keeps archived dashboards anchored to their data. Historical
+holdings cut off realized activity at the selected date, and monthly risk ratios
+aggregate calendar-month observations before annualizing. These contracts are
+covered by behavioral parity tests rather than source-text assertions alone.

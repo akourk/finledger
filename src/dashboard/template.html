@@ -100,7 +100,7 @@
           <thead><tr id="topHoldingsHead"></tr></thead><tbody id="topHoldingsBody"></tbody>
         </table>
       </div>
-      <div class="panel-foot"><a onclick="activateTab('holdings')">View all holdings →</a></div>
+      <div class="panel-foot"><a href="#holdings" onclick="activateTab('holdings')">View all holdings →</a></div>
     </div>
     <div class="panel" id="recentTxnsPanel">
       <h3>Recent Transactions</h3>
@@ -110,7 +110,7 @@
           <thead><tr id="recentTxnsHead"></tr></thead><tbody id="recentTxnsBody"></tbody>
         </table>
       </div>
-      <div class="panel-foot"><a onclick="activateTab('transactions')">View all transactions →</a></div>
+      <div class="panel-foot"><a href="#transactions" onclick="activateTab('transactions')">View all transactions →</a></div>
     </div>
   </div>
 
@@ -157,7 +157,7 @@
     <select id="asOfPickerHoldings" class="as-of-picker"
             onchange="setAsOfDate(this.value)"></select>
     <button class="tbtn as-of-reset" onclick="setAsOfDate(null)">Latest</button>
-    <span class="as-of-hint">Holdings tables reflect FIFO state on the selected date.  Lot Method Comparison below is always lifetime.</span>
+    <span class="as-of-hint">Holdings and returns reflect the selected snapshot; open lots appear at the latest date.  Lot Method Comparison below is always lifetime.</span>
   </div>
   <div class="section-header" id="holdingsHeader">
     <h2><span style="color:var(--accent);">Holdings<span class="as-of-label"></span></span></h2>

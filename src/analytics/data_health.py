@@ -20,6 +20,7 @@ dicts.  Rendered as a collapsible panel on the Overview tab.
 
 from __future__ import annotations
 
+from .. import clock
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -28,7 +29,7 @@ from ..basis import txn_external_cash_flow
 
 
 def _check_future_dated(txns: list[dict]) -> list[dict]:
-    today = datetime.now().date().isoformat()
+    today = clock.now(fallback=datetime.now).date().isoformat()
     future = [t for t in txns if t.get("date", "") > today]
     if not future:
         return []
@@ -128,7 +129,7 @@ def _check_lots_holdings_basis_parity(analytics: dict,
 
 
 def _check_open_options_past_expiration(analytics: dict) -> list[dict]:
-    today = datetime.now().date().isoformat()
+    today = clock.now(fallback=datetime.now).date().isoformat()
     opts = (analytics.get("options") or {}).get("open_contracts", []) or []
     expired = [o for o in opts
                if (o.get("expiry") or "") and o.get("expiry") < today]
@@ -218,7 +219,7 @@ def _check_held_symbol_price_health(holdings_by_account: list[dict],
         elif (fc > 0 or is_tomb) and sym in proxied:
             orphan_meta.append(sym)
 
-    today = datetime.now().date()
+    today = clock.now(fallback=datetime.now).date()
     stale = []
     for sym in sorted(held):
         if sym in proxied:
@@ -884,36 +885,28 @@ def _check_unbridged_retirement_distribution(txns: list[dict],
     }]
 
 
-def _check_coinbase_bridge_endpoint(history: list[dict]) -> list[dict]:
-    """The Coinbase USD bridge should end at ~$0 in the latest
-    snapshot — the user has $0 USD wallet by construction (validated
-    by reconciliation).  A non-trivial latest balance signals the
-    bridge walker is over- or under-counting somewhere.
+def _check_broker_cash_balance(txns: list[dict]) -> list[dict]:
+    """Cash may legitimately remain in a brokerage wallet.
 
-    Threshold $50: forgives natural cents-level drift across
-    thousands of txns plus any genuine small-balance edge cases.
-    Anything bigger than that is structural."""
-    if not history:
-        return []
-    last = history[-1]
-    cb_usd = next((p for p in last.get("positions", [])
-                   if p.get("account_group") == "Coinbase"
-                   and p.get("symbol") == "USD"), None)
-    if not cb_usd:
-        return []
-    val = float(cb_usd.get("value") or 0)
-    if val < 50:
+    Check impossible negative reconstructed cash before valuation clamps it
+    to zero. Positive balances are reconciled against the user's declared
+    statement values by the reconciliation panel; no personal wallet's
+    historical zero balance is a universal target.
+    """
+    from ..cash_bridge import all_series
+    bad = [(group, day, value)
+           for group, series in all_series(txns).items()
+           for day, value in series if value < -0.01]
+    if not bad:
         return []
     return [{
-        "kind": "coinbase_bridge_endpoint_drift",
+        "kind": "negative_broker_cash",
         "severity": "warn",
         "category": "Reconciliation",
-        "message": (f"Latest snapshot's Coinbase implicit USD bridge "
-                    f"is ${val:,.2f} — expected ≈ $0 since the "
-                    "reconciliation guarantees the natural flow ends "
-                    "at zero.  Indicates a missed marker or mis-"
-                    "classified action in coinbase.usd_effect."),
-        "count": 1,
+        "message": "Reconstructed broker cash is negative; check missing funding or incorrectly classified cash movements.",
+        "details": [f"{group} on {day}: ${value:,.2f}"
+                    for group, day, value in sorted(bad, key=lambda item: item[2])[:5]],
+        "count": len(bad),
     }]
 
 
@@ -1084,7 +1077,7 @@ def compute_data_health(txns: list[dict],
     issues.extend(_check_net_contributed_monotonicity(history))
     issues.extend(_check_twr_sanity_bounds(analytics))
     issues.extend(_check_unbridged_retirement_distribution(txns, analytics))
-    issues.extend(_check_coinbase_bridge_endpoint(history))
+    issues.extend(_check_broker_cash_balance(txns))
     issues.extend(_check_held_symbol_sector_coverage(holdings_by_account))
     issues.sort(key=lambda r: (_SEVERITY_RANK.get(r["severity"], 9),
                                r.get("category", ""), r.get("kind", "")))

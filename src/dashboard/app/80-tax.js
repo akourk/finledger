@@ -82,7 +82,7 @@ function _bracketsFor(table, year, status) {
 // and portfolio income for a given year.  Returns an object suitable for
 // displaying the assumptions.
 function estimateTaxRates(year) {
-  const y = String(year || new Date().getFullYear());
+  const y = String(year || snapshotYear());
   const yNum = parseInt(y, 10);
 
   // Prefer the precomputed Python estimate (handles end-of-year
@@ -177,28 +177,28 @@ let taxLongRate = null;
 
 function setTaxShortRate(v) {
   const n = parseFloat(v);
-  if (!isNaN(n) && n >= 0 && n <= 1) { taxShortRate = n; renderTax(); }
+  if (!isNaN(n) && n >= 0 && n <= 1) { taxShortRate = n; renderKeepingFocus(renderTax); }
 }
 function setTaxLongRate(v) {
   const n = parseFloat(v);
-  if (!isNaN(n) && n >= 0 && n <= 1) { taxLongRate = n; renderTax(); }
+  if (!isNaN(n) && n >= 0 && n <= 1) { taxLongRate = n; renderKeepingFocus(renderTax); }
 }
 function resetTaxRatesToEstimate() {
-  const y = taxYearFilter === 'all' ? new Date().getFullYear() : parseInt(taxYearFilter, 10);
+  const y = taxYearFilter === 'all' ? snapshotYear() : parseInt(taxYearFilter, 10);
   const e = estimateTaxRates(y);
   taxShortRate = e.marginalShort;
   taxLongRate = e.marginalLong;
-  renderTax();
+  renderKeepingFocus(renderTax);
 }
-let taxYearFilter = String(new Date().getFullYear());
+let taxYearFilter = String(snapshotYear());
 function setTaxYearFilter(v) {
   taxYearFilter = v;
   // Refresh estimate when year changes
-  const y = v === 'all' ? new Date().getFullYear() : parseInt(v, 10);
+  const y = v === 'all' ? snapshotYear() : parseInt(v, 10);
   const e = estimateTaxRates(y);
   taxShortRate = e.marginalShort;
   taxLongRate = e.marginalLong;
-  renderTax();
+  renderKeepingFocus(renderTax);
 }
 
 // "Approaching Long-Term Status" — interaction state.
@@ -226,18 +226,18 @@ function _setLtSort(key) {
     // desc (biggest first feels right for value/unrealized).
     _ltSortDir = (key === 'symbol' || key === 'account' || key === 'next_lt') ? 1 : -1;
   }
-  renderTax();
+  renderKeepingFocus(renderTax);
 }
 
 function _setLtAccountFilter(name) {
   _ltAccountFilter = (name === 'all' || !name) ? null : name;
-  renderTax();
+  renderKeepingFocus(renderTax);
 }
 
 function _toggleLtAsset(key) {
   if (_ltExpanded.has(key)) _ltExpanded.delete(key);
   else _ltExpanded.add(key);
-  renderTax();
+  renderKeepingFocus(renderTax);
 }
 
 // Harvest Candidates — which rows are showing per-lot detail
@@ -246,7 +246,7 @@ const _harvestExpanded = new Set();
 function _toggleHarvest(key) {
   if (_harvestExpanded.has(key)) _harvestExpanded.delete(key);
   else _harvestExpanded.add(key);
-  renderTax();
+  renderKeepingFocus(renderTax);
 }
 
 // Classify a closing txn into short-term / long-term / Section 1256.
@@ -439,8 +439,11 @@ function _buildBracketSection(year) {
 // [[key, header], ...].  Triggers a browser download of a .csv file.
 function _downloadCsv(filename, columns, rows) {
   const esc = (v) => {
-    const s = (v == null) ? '' : String(v);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    let s = (v == null) ? '' : String(v);
+    // Spreadsheet apps must treat imported text as text, including
+    // strings that resemble formulas. Numeric losses stay numeric.
+    if (typeof v === 'string' && /^[\s]*[=+@-]/.test(s)) s = "'" + s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const lines = [columns.map(c => esc(c[1])).join(',')];
   for (const r of rows) lines.push(columns.map(c => esc(r[c[0]])).join(','));
@@ -484,7 +487,7 @@ function renderTax() {
   // Auto-populate tax rates from the estimator on first render (using
   // the filtered year, or current year if "all").  User can still
   // override in the UI.
-  const estYear = taxYearFilter === 'all' ? new Date().getFullYear() : parseInt(taxYearFilter, 10);
+  const estYear = taxYearFilter === 'all' ? snapshotYear() : parseInt(taxYearFilter, 10);
   const est = estimateTaxRates(estYear);
   if (taxShortRate === null) taxShortRate = est.marginalShort;
   if (taxLongRate === null) taxLongRate = est.marginalLong;
@@ -492,7 +495,7 @@ function renderTax() {
   // Aggregate
   let totalST = 0, totalLT = 0;
   let total1256gain = 0;
-  const byYear = {};
+  const byYear = Object.create(null);
   for (const t of filtered) {
     const c = classifyRealized(t);
     totalST += c.st;
@@ -528,7 +531,7 @@ function renderTax() {
   const yearPills = ['all', ...allYears].map(y => {
     const cls = 'tbtn' + (taxYearFilter === y ? ' active' : '');
     const lbl = y === 'all' ? 'All Years' : y;
-    return `<button class="${cls}" onclick="setTaxYearFilter('${y}')">${lbl}</button>`;
+    return `<button class="${cls}" id="tax-year-${_htmlEsc(y)}" aria-pressed="${taxYearFilter === y}" onclick="${_htmlEsc('setTaxYearFilter(' + _jsString(y) + ')')}">${lbl}</button>`;
   }).join('');
 
   // Gains table by year — §1256 column only shown if any year has any
@@ -551,7 +554,7 @@ function renderTax() {
   // Per-symbol breakdown (who's driving the tax bill).  Shows ST / LT /
   // §1256 components + est. tax contribution per symbol.  Filtered by
   // the current year selector.
-  const bySym = {};
+  const bySym = Object.create(null);
   for (const t of filtered) {
     const sym = t.symbol || '(unknown)';
     const c = classifyRealized(t);
@@ -608,14 +611,14 @@ function renderTax() {
                + Math.abs(g.lt_loss || 0) * (taxLongRate || 0);
     const splitNote = `<div style="color:var(--text-dim);font-size:0.75rem;">ST ${fmtMoney(g.st_loss)} · LT ${fmtMoney(g.lt_loss)}</div>`;
     const washCell = g.wash_risk
-      ? `<span style="color:var(--yellow);" title="Bought within the last 30 days (${g.last_buy_date}) — selling at a loss now would be disallowed as a wash sale.">⚠ bought ${g.last_buy_date}</span>`
+      ? `<span style="color:var(--yellow);" title="Bought within the last 30 days (${_htmlEsc(g.last_buy_date)}) — selling at a loss now would be disallowed as a wash sale.">⚠ bought ${_htmlEsc(g.last_buy_date)}</span>`
       : '<span style="color:var(--text-dim);">—</span>';
     const netGreen = (g.position_unrealized || 0) > 0
       ? ` <span style="color:var(--text-dim);font-size:0.75rem;" title="The position overall is UP ${fmtMoney(g.position_unrealized)} — only the lots below are down.  Specific-lot harvesting still works.">net +</span>` : '';
     let expansion = '';
     if (expanded) {
       const lotRows = (g.lots || []).map(l => `<tr>
-        <td style="padding-left:24px;color:var(--text-dim);">↳ ${l.date || '—'}</td>
+        <td style="padding-left:24px;color:var(--text-dim);">↳ ${_htmlEsc(l.date || '—')}</td>
         <td class="num">${fmtHQty(l.qty)}</td>
         <td class="num">${fmtMoney(l.cost_basis)}</td>
         <td class="num">${l.value != null ? fmtMoney(l.value) : '—'}</td>
@@ -632,9 +635,9 @@ function renderTax() {
         </table>
       </td></tr>`;
     }
-    return `<tr class="lt-asset-row" onclick="_toggleHarvest('${key.replace(/'/g, "\\'")}')">
-      <td><span class="ab-acct-arrow">${arrow}</span> <b>${symLabel(g.symbol)}</b>${netGreen}</td>
-      <td><span style="color:${ACCOUNT_COLORS[g.account_group] || ''};">${g.account_group}</span></td>
+    return `<tr class="lt-asset-row">
+      <td><button type="button" class="lot-disclosure" id="harvest-${_htmlEsc(encodeURIComponent(key))}" data-tax-disclosure="harvest" aria-expanded="${expanded}" onclick="${_htmlEsc('_toggleHarvest(' + _jsString(key) + ')')}"><span class="ab-acct-arrow">${arrow}</span> <b>${symLabel(g.symbol)}</b></button>${netGreen}</td>
+      <td><span style="color:${ACCOUNT_COLORS[g.account_group] || ''};">${_htmlEsc(g.account_group)}</span></td>
       <td class="num">${fmtHQty(g.qty)}</td>
       <td class="num">${fmtMoney(g.value)}</td>
       <td class="num"><span class="negative">${fmtSigned(g.loss)}</span>${splitNote}</td>
@@ -645,7 +648,7 @@ function renderTax() {
 
   // Wash sale detection: find sells at a loss with a matching buy within 30 days.
   // For each (symbol, account_group), scan pairs of txns.
-  const buysBySym = {};  // symbol -> [{date, date_obj}]
+  const buysBySym = Object.create(null);  // symbol -> [{date, date_obj}]
   for (const t of txns) {
     if (t.action !== 'Buy' && t.action !== 'Reinvest' && t.action !== 'Contribution') continue;
     if (!t.symbol || !t.date) continue;
@@ -671,10 +674,10 @@ function renderTax() {
     }
   }
   const washRows = washSales.map(w => `<tr>
-    <td>${w.date}</td>
+    <td>${_htmlEsc(w.date)}</td>
     <td><b>${symLabel(w.symbol)}</b></td>
     <td class="num"><span class="negative">${fmtSigned(w.loss)}</span></td>
-    <td>${w.offending_buy_date}</td>
+    <td>${_htmlEsc(w.offending_buy_date)}</td>
   </tr>`).join('');
 
   // ---- Approaching Long-Term Status -------------------------------
@@ -788,7 +791,7 @@ function renderTax() {
     const nextCell = fully
       ? '<span style="color:var(--green);font-weight:600;">✓ Fully LT</span>'
       : `<b${imminent ? ' style="color:var(--yellow);"' : ''}>${a.next_lt_days}d</b>`
-      + ` <div style="color:var(--text-dim);font-size:0.78rem;">→ ${a.next_lt_date}</div>`;
+      + ` <div style="color:var(--text-dim);font-size:0.78rem;">→ ${_htmlEsc(a.next_lt_date)}</div>`;
     const ugCls = a.total_unrealized > 0 ? 'positive' : (a.total_unrealized < 0 ? 'negative' : '');
     const rowBg = imminent ? ' style="background:rgba(245,158,11,0.04);"' : '';
 
@@ -802,9 +805,9 @@ function renderTax() {
         const lUgCls = l.unrealized_gain == null ? '' : (l.unrealized_gain > 0 ? 'positive' : (l.unrealized_gain < 0 ? 'negative' : ''));
         const statusCell = l.is_long_term
           ? `<span style="color:var(--green);">LT · held ${l.days_held}d</span>`
-          : `<b${lImm ? ' style="color:var(--yellow);"' : ''}>${l.days_to_lt}d</b> <span style="color:var(--text-dim);font-size:0.78rem;">→ ${l.lt_eligible_date}</span>`;
+          : `<b${lImm ? ' style="color:var(--yellow);"' : ''}>${l.days_to_lt}d</b> <span style="color:var(--text-dim);font-size:0.78rem;">→ ${_htmlEsc(l.lt_eligible_date)}</span>`;
         return `<tr>
-          <td style="padding-left:24px;color:var(--text-dim);">↳ ${l.open_date}</td>
+          <td style="padding-left:24px;color:var(--text-dim);">↳ ${_htmlEsc(l.open_date)}</td>
           <td class="num">${fmtQ(l.qty)}</td>
           <td class="num">${fmtMoney(l.cost_basis)}</td>
           <td class="num">${l.value != null ? fmtMoney(l.value) : '—'}</td>
@@ -823,9 +826,9 @@ function renderTax() {
       </td></tr>`;
     }
 
-    return `<tr class="lt-asset-row" onclick="_toggleLtAsset('${a.key.replace(/'/g, "\\'")}')"${rowBg}>
-      <td><span class="ab-acct-arrow">${arrow}</span> <b>${symLabel(a.symbol)}</b></td>
-      <td><span style="color:${ACCOUNT_COLORS[a.account_group] || ''};">${a.account_group}</span></td>
+    return `<tr class="lt-asset-row"${rowBg}>
+      <td><button type="button" class="lot-disclosure" id="lt-${_htmlEsc(encodeURIComponent(a.key))}" data-tax-disclosure="long-term" aria-expanded="${expanded}" onclick="${_htmlEsc('_toggleLtAsset(' + _jsString(a.key) + ')')}"><span class="ab-acct-arrow">${arrow}</span> <b>${symLabel(a.symbol)}</b></button></td>
+      <td><span style="color:${ACCOUNT_COLORS[a.account_group] || ''};">${_htmlEsc(a.account_group)}</span></td>
       <td>${qtyCell}</td>
       <td>${nextCell}</td>
       <td class="num">${a.total_value ? fmtMoney(a.total_value) : '—'}</td>
@@ -861,7 +864,7 @@ function renderTax() {
       ${_renderAccountChip(null, !_ltAccountFilter, "_setLtAccountFilter('all')", 'All')}
       ${ltAccounts.map(acct => _renderAccountChip(
         acct, _ltAccountFilter === acct,
-        `_setLtAccountFilter('${acct.replace(/'/g, "\\'")}')`
+        `_setLtAccountFilter(${_jsString(acct)})`
       )).join('')}
     </div>` : '';
 
@@ -873,7 +876,7 @@ function renderTax() {
     const aCls = active ? 'style="color:var(--accent);"' : 'style="color:var(--text-dim);opacity:0.75;"';
     const sortAttr = active
       ? ` aria-sort="${_ltSortDir > 0 ? 'ascending' : 'descending'}"` : '';
-    return `<th scope="col" class="${cls || ''}"${sortAttr} tabindex="0" style="cursor:pointer;user-select:none;" onclick="_setLtSort('${key}')">${label} <span ${aCls}>${arrow}</span></th>`;
+    return `<th scope="col" id="lt-sort-${key}" class="${cls || ''}"${sortAttr} tabindex="0" style="cursor:pointer;user-select:none;" onclick="_setLtSort('${key}')">${label} <span ${aCls}>${arrow}</span></th>`;
   }
   const ltHeadHtml = `<tr>
     ${_sortHdr('symbol', 'Symbol')}
@@ -940,12 +943,12 @@ function renderTax() {
           <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);">
             <div style="color:var(--text-dim);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Override (used for the tables below)</div>
             <label style="font-size:0.85rem;color:var(--text-dim);">Short-term:
-              <input type="number" value="${(taxShortRate * 100).toFixed(1)}" step="0.5" min="0" max="50"
-                     style="width:60px;" oninput="setTaxShortRate(this.value/100)"/>%
+              <input type="number" id="taxShortRate" value="${(taxShortRate * 100).toFixed(1)}" step="0.5" min="0" max="50"
+                     style="width:60px;" oninput="if(this.value !== '') setTaxShortRate(this.value/100)"/>%
             </label>
             <label style="margin-left:14px;font-size:0.85rem;color:var(--text-dim);">Long-term:
-              <input type="number" value="${(taxLongRate * 100).toFixed(1)}" step="0.5" min="0" max="50"
-                     style="width:60px;" oninput="setTaxLongRate(this.value/100)"/>%
+              <input type="number" id="taxLongRate" value="${(taxLongRate * 100).toFixed(1)}" step="0.5" min="0" max="50"
+                     style="width:60px;" oninput="if(this.value !== '') setTaxLongRate(this.value/100)"/>%
             </label>
             <button class="tbtn" style="margin-left:10px;font-size:0.74rem;padding:3px 8px;"
                     onclick="resetTaxRatesToEstimate()">Reset</button>

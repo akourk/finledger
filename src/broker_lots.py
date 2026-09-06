@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from .parsers._helpers import CSVValue, read_csv_rows
 
 # The account group the Coinbase tax-center report describes.
 _REPORT_ACCOUNT_GROUP = "Coinbase"
@@ -44,11 +45,8 @@ _LOT_ID_COL = "tax lot id"
 
 
 def _norm_symbol(asset: str) -> str:
-    from .config import CRYPTO_SYMBOLS, SYMBOL_MAP
-    a = SYMBOL_MAP.get(asset, asset)
-    if (a in CRYPTO_SYMBOLS or asset in CRYPTO_SYMBOLS) and not a.endswith("-USD"):
-        return a + "-USD"
-    return a
+    from .config import normalize_symbol
+    return normalize_symbol(asset, "Coinbase")
 
 
 def _iso(s: str) -> str:
@@ -76,10 +74,8 @@ def _pdate(s: str):
 
 
 def _num(s: str) -> float:
-    try:
-        return float((s or "0").replace(",", "").replace("$", ""))
-    except ValueError:
-        return 0.0
+    from .parsers._helpers import _num as finite_number
+    return finite_number(s)
 
 
 def _is_gainloss_file(path: Path) -> bool:
@@ -157,10 +153,11 @@ def _parse_gainloss(path: Path) -> list[dict]:
 
     def _get(r, name):
         i = col.get(name)
-        return r[i] if (i is not None and i < len(r)) else ""
+        value = r[i] if (i is not None and i < len(r)) else ""
+        return CSVValue(value, path.name, row_number, name)
 
     out: list[dict] = []
-    for r in rows[hdr_idx + 1:]:
+    for row_number, r in enumerate(rows[hdr_idx + 1:], hdr_idx + 2):
         if len(r) < len(hdr) - 2:
             continue
         qty = _num(_get(r, "amount"))
@@ -275,13 +272,15 @@ def _parse_1099b_rows(path: Path) -> list[dict]:
     except OSError:
         return []
     out: list[dict] = []
+    row_numbers = {id(row): i for i, row in enumerate(rows, 1)}
     for tag, bcols, r in _iter_1099_rows(rows):
         if tag != "1099-B":
             continue
 
         def g(name: str) -> str:
             i = bcols.get(name)
-            return r[i].strip() if (i is not None and i < len(r)) else ""
+            value = r[i].strip() if (i is not None and i < len(r)) else ""
+            return CSVValue(value, path.name, row_numbers[id(r)], name)
 
         desc = " ".join(g("description").split())   # collapse wrap-artifact spaces
         shares = _num(g("shares"))
@@ -412,6 +411,7 @@ def load_robinhood_1099_income(data_dir: Path) -> list[dict]:
         want = {"1099-DIV": "ordinary div", "1099-INT": "int income"}
         total = 0.0
         found_col = False
+        row_numbers = {id(row): number for number, row in enumerate(rows, 1)}
         for tag, cols, r in _iter_1099_rows(rows):
             col = want.get(tag)
             if col is None:
@@ -420,7 +420,7 @@ def load_robinhood_1099_income(data_dir: Path) -> list[dict]:
             if i is None or i >= len(r):
                 continue
             found_col = True
-            total += _num(r[i])
+            total += _num(CSVValue(r[i], p.name, row_numbers[id(r)], col))
         if found_col:
             out.append({
                 "kind": "income",
@@ -700,7 +700,7 @@ def load_acquisition_lots(data_dir: Path) -> list[dict] | None:
             continue
         found = True
         with open(p, newline="", encoding="utf-8-sig") as f:
-            for r in csv.DictReader(f):
+            for r in read_csv_rows(f, p.name):
                 typ = (r.get("Transaction Type") or "").strip()
                 if typ not in _ACQ_TYPES:
                     continue

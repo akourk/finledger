@@ -4,6 +4,8 @@ import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
+from .clock import now
+from .io_safe import replace_files
 
 
 def _txn_hash(txn: dict) -> str:
@@ -114,7 +116,7 @@ def export_json(txns: list[dict], output_path: Path, *,
     from .analytics.tax import tax_tables_to_json as _tax_tables
 
     data = {
-        "generated": datetime.now().isoformat(timespec="seconds"),
+        "generated": now(fallback=datetime.now).isoformat(timespec="seconds"),
         "count": len(txns_ordered),
         "holdings": holdings or [],
         "holdings_by_account": holdings_by_account or [],
@@ -139,12 +141,5 @@ def export_json(txns: list[dict], output_path: Path, *,
         "transactions": txns_ordered,
     }
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write: stream to a .tmp file, then os.replace into place.
-    # Prevents readers from seeing a partially-written JSON if they
-    # race with the pipeline.
-    import os
-    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, output_path)
+    payload = json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False)
+    replace_files({Path(output_path): payload.encode("utf-8")})

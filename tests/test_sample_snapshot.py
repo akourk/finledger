@@ -59,9 +59,11 @@ PREVIOUSLY_ORPHANED = {
 
 
 @pytest.fixture
-def sample_data(isolated_workdir):
+def sample_data(isolated_workdir, monkeypatch):
     """Restore the sample snapshot into an isolated `data/` directory."""
     from src.snapshot import import_snapshot
+    from tools.build_sample_snapshot import AS_OF_DATE
+    monkeypatch.setenv("FIN_AS_OF_DATE", AS_OF_DATE.isoformat())
 
     result = import_snapshot(SAMPLE, isolated_workdir / "data", overwrite=True)
     assert result["written"], "snapshot import wrote nothing"
@@ -161,9 +163,9 @@ class TestSampleParsesCleanly:
             assert not missing, f"row missing {sorted(missing)}: {t}"
 
     def test_dates_are_iso_and_not_in_the_future(self, txns):
-        from datetime import date
+        from tools.build_sample_snapshot import AS_OF_DATE
 
-        today = date.today().isoformat()
+        today = AS_OF_DATE.isoformat()
         for t in txns:
             d = t.get("date", "")
             assert len(d) == 10 and d[4] == "-" and d[7] == "-", (
@@ -209,7 +211,8 @@ class TestSampleDrivesAFullRun:
 
         from src.prices import ensure_coverage
 
-        today = date.today()
+        from tools.build_sample_snapshot import AS_OF_DATE
+        today = AS_OF_DATE
         series = {(today - timedelta(days=n)).isoformat(): self.UNDERLYING_PRICE
                   for n in range(0, 400, 7)}
         stub_prices.set("AAPL", series)

@@ -24,7 +24,7 @@ def detect_broker(filepath: Path) -> str:
         return "manual"
     # metadata.csv is the canonical name; retirement-data.csv is the
     # legacy name kept for backwards compat (see src/metadata.py).
-    if name in ("metadata.csv", "retirement-data.csv"):
+    if name in ("metadata.csv", "retirement-data.csv", "account-mappings.csv"):
         return "skip"
 
     # Broker REFERENCE reports — Coinbase's tax-center "raw transactions"
@@ -125,7 +125,12 @@ def _detect_by_headers(filepath: Path) -> str:
         if "timestamp" in header and "transaction type" in header and "asset" in header:
             return "coinbase"
 
-        # Coinbase Pro: "portfolio", "trade id", "product", "side", "size", "price", "fee"
+        # Coinbase Pro/GDAX account ledger (the supported paired-leg format).
+        if "amount/balance unit" in header and "trade id" in header and "time" in header:
+            return "coinbase_pro"
+
+        # Other Pro exports are identified so the parser can report their
+        # unsupported columns explicitly instead of silently omitting them.
         if "trade id" in header and "product" in header and "side" in header:
             return "coinbase_pro"
 

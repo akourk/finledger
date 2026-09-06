@@ -1975,18 +1975,23 @@ qualitatively: the mechanism, the files, the bug class.  "Coinbase
 reconciles closer under HIFO" — not the specific figure.  When in doubt,
 strip every `$amount` / `N.NN` before committing.
 
-**Mechanical backstop:** `githooks/pre-commit` (enabled via
-`git config core.hooksPath githooks`) blocks any commit whose staged
-additions contain a token from `.pii-denylist.txt` (gitignored, local
-list of real emails / account ids / distinctive figures).  It fires on
-every commit regardless of author — add new real figures to the
-denylist as they come up; never bypass with `--no-verify` unless the
-user explicitly asks.
+**Mechanical backstops:** enable `githooks/` using `sh tools/install-hooks.sh`.
+Pre-commit scans the complete index, commit-msg scans the actual message, and
+pre-push scans every outgoing commit tree and message, including intermediate
+versions. Matching private values are never printed. Maintain the ignored local
+`.pii-denylist.txt`; generic rules and artifact provenance checks also run in CI.
+Never bypass hooks. Before every commit and push, follow the explicit review and
+scan steps in [docs/PRIVACY.md](docs/PRIVACY.md).
+
+Public builds must use `tools/build_demo.py` in isolated directories with its
+fixed date, fictional input generation and disabled network access. Never feed
+a personal pipeline output into Pages. Automated scans cannot establish that an
+arbitrary financial value or screenshot is fictional; review provenance too.
 
 ## Adding sample data
 
 `tools/build_sample_snapshot.py` builds `samples/portfolio.snapshot.json`
 from a fully-fictional synthetic portfolio (Sam Sample, b. 1990-06-15,
-mostly index funds + a bit of crypto).  Re-run it after parser changes
+mostly index funds + a bit of crypto).  The generator uses a fixed sample date; rerun it after parser changes
 to make sure the shipped snapshot still works.  The script's
 per-broker writers double as per-broker CSV format documentation.

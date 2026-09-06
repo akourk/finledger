@@ -77,7 +77,14 @@ def generate_dashboard(json_path: Path, output_path: Path) -> None:
     # before splicing app.js into the template — this keeps the JSON
     # at the same call site (DATA = __JSON_DATA__) it's been at all
     # along, so the JS doesn't need any structural changes.
-    app_js = app_js.replace(_DATA_MARKER, json.dumps(data, ensure_ascii=False))
+    # HTML parses script end tags before JavaScript interprets strings.
+    # Escape every '<' (plus HTML-sensitive peers and JS line separators)
+    # so a broker description can never terminate the surrounding script.
+    payload = json.dumps(data, ensure_ascii=False, allow_nan=False)
+    for char, escaped in (("<", "\\u003c"), (">", "\\u003e"), ("&", "\\u0026"),
+                          ("\u2028", "\\u2028"), ("\u2029", "\\u2029")):
+        payload = payload.replace(char, escaped)
+    app_js = app_js.replace(_DATA_MARKER, payload)
 
     for marker, replacement in (
         (_STYLES_MARKER, styles),

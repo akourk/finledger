@@ -29,8 +29,8 @@ function _setOptAccountFilter(v) {
 // or null for "lifetime" (no filter).  YYYY values map to the full
 // calendar year; relative keys anchor on today's date and walk back.
 function _optWindowRange() {
-  const today = new Date();
-  const isoToday = today.toISOString().slice(0, 10);
+  const today = snapshotDate();
+  const isoToday = SNAPSHOT_DATE;
   const w = _optWindow;
   if (!w || w === 'lifetime') return null;
   if (/^\d{4}$/.test(w)) return [`${w}-01-01`, `${w}-12-31`];
@@ -41,14 +41,14 @@ function _optWindowRange() {
   else if ((m = w.match(/^(\d+)mo$/))) start.setMonth(start.getMonth() - parseInt(m[1], 10));
   else if ((m = w.match(/^(\d+)d$/))) start.setDate(start.getDate() - parseInt(m[1], 10));
   else return null;
-  return [start.toISOString().slice(0, 10), isoToday];
+  return [calendarIso(start), isoToday];
 }
 
 function _optWindowLabel() {
   const w = _optWindow;
   if (!w || w === 'lifetime') return 'Lifetime';
   if (/^\d{4}$/.test(w)) return w;
-  if (w === 'ytd') return `${new Date().getFullYear()} YTD`;
+  if (w === 'ytd') return `${snapshotYear()} YTD`;
   let m;
   if ((m = w.match(/^(\d+)y$/))) return `Last ${m[1]} year${m[1] === '1' ? '' : 's'}`;
   if ((m = w.match(/^(\d+)mo$/))) return `Last ${m[1]} month${m[1] === '1' ? '' : 's'}`;
@@ -279,7 +279,7 @@ function renderOptions() {
       ${_renderAccountChip(null, !_optAccountFilter, "_setOptAccountFilter('all')", 'All')}
       ${optAccounts.map(acct =>
         _renderAccountChip(acct, _optAccountFilter === acct,
-          `_setOptAccountFilter('${acct.replace(/'/g, "\\'")}')`)
+          `_setOptAccountFilter(${_jsString(acct)})`)
       ).join('')}
     </div>` : '';
   const optYears = [...new Set(allClosed.map(c => (c.close_date || '').slice(0, 4)).filter(Boolean))]
@@ -395,13 +395,13 @@ function renderOptions() {
     const dteStr = o.dte == null ? '—'
       : (o.dte < 0 ? `<span class="negative">${o.dte}</span>` : `<span class="${o.dte <= 7 ? 'negative' : ''}">${o.dte}</span>`);
     return `<tr>
-      <td><b>${o.underlying || ''}</b></td>
-      <td>${o.expiry || '—'}</td>
+      <td><b>${_htmlEsc(o.underlying || '')}</b></td>
+      <td>${_htmlEsc(o.expiry || '—')}</td>
       <td class="num">${dteStr}</td>
       <td>${otype}</td>
       <td class="num">${o.strike != null ? fmtMoney(o.strike, 2) : '—'}</td>
       <td class="num">${o.qty}</td>
-      <td>${o.open_date || '—'}</td>
+      <td>${_htmlEsc(o.open_date || '—')}</td>
       <td class="num">${o.entry_price != null ? fmtMoney(o.entry_price, 2) : '—'}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="${openCols.length}" style="color:var(--text-dim);padding:12px;">No open contracts.</td></tr>`;
@@ -421,12 +421,12 @@ function renderOptions() {
         : null);
     const rCls = c.realized > 0 ? 'positive' : (c.realized < 0 ? 'negative' : '');
     return `<tr>
-      <td>${c.close_date || ''}</td>
-      <td><b>${underlying}</b></td>
-      <td>${expiry}</td>
+      <td>${_htmlEsc(c.close_date || '')}</td>
+      <td><b>${_htmlEsc(underlying)}</b></td>
+      <td>${_htmlEsc(expiry)}</td>
       <td>${otype}</td>
       <td class="num">${strike != null ? fmtMoney(strike, 2) : '—'}</td>
-      <td>${(c.action || '').replace('Option ', '')}</td>
+      <td>${_htmlEsc((c.action || '').replace('Option ', ''))}</td>
       <td class="num">${c.qty}</td>
       <td class="num">${fmtMoney(c.proceeds)}</td>
       <td class="num">${fmtMoney(c.basis)}</td>
@@ -441,7 +441,7 @@ function renderOptions() {
     const rCls = s.realized > 0 ? 'positive' : (s.realized < 0 ? 'negative' : '');
     const wr = s.trades > 0 ? ((s.wins / s.trades) * 100).toFixed(0) + '%' : '—';
     return `<tr>
-      <td><b>${u}</b></td>
+      <td><b>${_htmlEsc(u)}</b></td>
       <td class="num">${s.trades}</td>
       <td class="num">${wr}</td>
       <td class="num"><span class="${rCls}">${fmtSigned(s.realized)}</span></td>
@@ -522,7 +522,7 @@ function renderOptions() {
 function _tipRow(color, name, value, bold) {
   const sw = color ? `<span class='tt-swatch' style='background:${color}'></span>` : '';
   const st = bold ? " style='font-weight:600;'" : '';
-  return `<div class='tt-row'${st}><span class='tt-name'>${sw}${name}</span><span>${value}</span></div>`;
+  return `<div class='tt-row'${st}><span class='tt-name'>${sw}${_htmlEsc(name)}</span><span>${value}</span></div>`;
 }
 
 // Attach the custom hover tooltip to discrete bars (contributions,
@@ -649,7 +649,7 @@ function _buildMiniLineChartContent(points, W, H, color, yFmt, id) {
   for (let i = 0; i < xTicks; i++) {
     const idx = Math.round((i * (n - 1)) / (xTicks - 1 || 1));
     const x = xOf(idx);
-    parts.push(`<text class="axis-label" x="${x}" y="${H - 8}" text-anchor="middle">${(points[idx].date || '').slice(0, 7)}</text>`);
+    parts.push(`<text class="axis-label" x="${x}" y="${H - 8}" text-anchor="middle">${_htmlEsc((points[idx].date || '').slice(0, 7))}</text>`);
   }
   parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + plotH}"/>`);
   parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t + plotH}" x2="${W - PAD.r}" y2="${PAD.t + plotH}"/>`);
@@ -681,7 +681,7 @@ function _buildMiniLineChartContent(points, W, H, color, yFmt, id) {
       dot.setAttribute('cx', x); dot.setAttribute('cy', y); dot.setAttribute('r', 4);
       if (tip) {
         tip.innerHTML =
-          `<div class="tt-date">${points[idx].date || ''}</div>` +
+          `<div class="tt-date">${_htmlEsc(points[idx].date || '')}</div>` +
           `<div class="tt-row"><span class="tt-name"><span class="tt-swatch" style="background:${color}"></span>Value</span>` +
           `<span>${fmtMoney(points[idx].value)}</span></div>`;
         tip.style.display = 'block';

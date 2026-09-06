@@ -4,6 +4,19 @@ const txns = DATA.transactions || [];
 const holdingsByAsset = DATA.holdings || [];
 const holdingsByAccount = DATA.holdings_by_account || [];
 const history = DATA.history || [];
+
+// A generated dashboard is a dated artifact: visiting it later must not
+// silently move tax years, age projections or trailing activity windows.
+const SNAPSHOT_DATE = String(DATA.as_of || DATA.snapshot_date
+  || (history.length && history[history.length - 1].date)
+  || DATA.generated || '1970-01-01').slice(0, 10);
+function snapshotDate() { return new Date(SNAPSHOT_DATE + 'T12:00:00'); }
+function snapshotYear() { return Number(SNAPSHOT_DATE.slice(0, 4)); }
+function calendarIso(date) {
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')].join('-');
+}
+
 // The lot-method COMPARISON table: four pure single-method what-if
 // walks.  Never publish a figure from this — see `basisTotals`.
 const basisMethods = DATA.basis_methods || {};
@@ -20,7 +33,7 @@ const cashSummary = DATA.cash_summary || {};
 // PREFER reading from here rather than recomputing — avoids drift
 // between views that display the same metric.
 const ANALYTICS = DATA.analytics || {};
-const ANALYTICS_PERF = ANALYTICS.performance_by_filter || {};
+const ANALYTICS_PERF = Object.assign(Object.create(null), ANALYTICS.performance_by_filter || {});
 
 // Rollover bridges now come from Python analytics (src/analytics.py).
 // The dashboard-side helper is just a shim that applies the bridge
@@ -38,12 +51,12 @@ const RETIREMENT_META = DATA.retirement_meta || {};
 
 // --- Symbol → sector lookup (covers every symbol ever seen, not just
 // current holdings).  Populated by main.py from sectors.get_sector().
-const SECTOR_OF = DATA.sector_of || {};
+const SECTOR_OF = Object.assign(Object.create(null), DATA.sector_of || {});
 // --- Symbol → short display name lookup.  One entry per proxy-mapped
 // symbol (multi-word fund names, ticker-format aliases); the display
 // defaults to the proxy ticker unless the proxy map entry has a
 // `display` override.  Unmapped symbols render as-is.
-const DISPLAY_OF = DATA.display_of || {};
+const DISPLAY_OF = Object.assign(Object.create(null), DATA.display_of || {});
 
 // HTML-escape helper for the few places we inject raw symbols into
 // attribute values (title="..." for tooltip).
@@ -52,6 +65,7 @@ function _htmlEsc(s) {
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
@@ -73,7 +87,7 @@ function symLabel(sym) {
 // txns + current holdings (every row carries both fields) — covers
 // every historical account group.
 const ACCOUNT_TYPE_OF = (() => {
-  const m = {};
+  const m = Object.create(null);
   for (const t of txns) {
     if (t.account_group && t.account_type) m[t.account_group] = t.account_type;
   }
@@ -83,3 +97,47 @@ const ACCOUNT_TYPE_OF = (() => {
   return m;
 })();
 
+
+// Serialize an argument as JavaScript, then escape the whole handler for
+// its quoted HTML attribute at the call site. HTML and JS are different
+// contexts: escaping apostrophes alone does not protect either boundary.
+function _jsString(value) { return JSON.stringify(String(value)); }
+function fieldLabel(field) {
+  const labels = {
+    account_group: 'Account', account_type: 'Account type', account: 'Source account',
+    cost_basis: 'Cost basis', unrealized_gain: 'Unrealized gain', realized_gain: 'Realized gain',
+    total_return: 'Total gain', pct_return: 'Gain / open basis %', cash_flow: 'Cash flow',
+    source_file: 'Source file', source: 'Source', source_row: 'Source row',
+    acquisition_date: 'Acquired', holding_period: 'Holding period',
+  };
+  return (Object.hasOwn(labels, field) ? labels[field] : '') || String(field).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+}
+
+// Preserve the actual editing control when a derived-results renderer
+// rebuilds its panel. Keeping the node preserves raw multi-digit input,
+// selection and composition state, and lets invalid intermediate input
+// remain editable without replacing it with the last accepted number.
+function renderKeepingFocus(render) {
+  const active = document.activeElement;
+  const id = active && active.id;
+  const editing = id && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
+  const start = editing ? active.selectionStart : null;
+  const end = editing ? active.selectionEnd : null;
+  render();
+  if (!id) return;
+  const replacement = document.getElementById(id);
+  if (!replacement || replacement === active) return;
+  if (editing) {
+    replacement.replaceWith(active);
+    active.focus({ preventScroll: true });
+    if (start != null && typeof active.setSelectionRange === 'function') active.setSelectionRange(start, end);
+  } else {
+    replacement.focus({ preventScroll: true });
+  }
+}
+
+// Compare imported data values without interpolating them into selectors.
+function dataControl(root, attribute, value) {
+  return [...root.querySelectorAll('[data-' + attribute + ']')]
+    .find(element => element.getAttribute('data-' + attribute) === value);
+}

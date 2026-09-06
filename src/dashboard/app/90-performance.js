@@ -99,7 +99,7 @@ function computeAnnualReturns(accountFilter) {
   // Fallback: old JS computation (kept for accounts not included in
   // the pre-computed filter set, e.g. a hypothetical multi-group combo).
   const filterSet = _resolveAccountFilter(accountFilter);
-  const byYear = {};
+  const byYear = Object.create(null);
   for (const h of history) {
     const y = yearOf(h.date);
     if (!y) continue;
@@ -455,6 +455,39 @@ function computeTimeWeightedReturnForWindow(accountFilter, startDate, endDate) {
   };
 }
 
+// Historical grouped holdings reuse the same Dietz walk, and solve XIRR
+// from the exported external-flow annotations over that exact cutoff.
+// The full-history analytics remain the authority for the latest view.
+function historicalGroupPerformance(groups, cutoff) {
+  const summary = computeTimeWeightedReturnForWindow(groups, null, cutoff);
+  if (!summary) return null;
+  const start = summary.start_date, end = summary.end_date;
+  const at = h => [...groups].reduce((total, group) => total + (h.by_account_group?.[group] || 0), 0)
+    + _rolloverBridgeAdjustment(h.date, groups);
+  const first = history.find(h => h.date === start);
+  const last = history.find(h => h.date === end);
+  if (!first || !last) return { summary, money_weighted: null };
+  const years = date => (new Date(date) - new Date(start)) / (365.25 * 86400000);
+  const flows = [[0, -at(first)]];
+  for (const txn of txns) {
+    if (txn.date <= start || txn.date > end || !groups.has(txn.account_group)) continue;
+    if (Number.isFinite(txn.cash_flow) && txn.cash_flow) flows.push([years(txn.date), -txn.cash_flow]);
+  }
+  flows.push([years(end), at(last)]);
+  const npv = rate => flows.reduce((total, [t, amount]) => total + amount / Math.pow(1 + rate, t), 0);
+  let lo = -0.9999, hi = 10, fLo = npv(lo), fHi = npv(hi);
+  let annualized = null;
+  if (flows.some(([, amount]) => amount < 0) && (fLo > 0) !== (fHi > 0)) {
+    for (let i = 0; i < 100; i++) {
+      const mid = (lo + hi) / 2, value = npv(mid);
+      if (Math.abs(value) < 1e-9) { lo = hi = mid; break; }
+      if ((value > 0) === (fLo > 0)) { lo = mid; fLo = value; } else hi = mid;
+    }
+    annualized = (lo + hi) / 2;
+  }
+  return { summary, money_weighted: annualized == null ? null : { annualized } };
+}
+
 // Per-year TWR for the selected filter.  Same sub-period chain-link
 // approach as computeTimeWeightedReturn, but computed year-by-year
 // using the previous year's final snapshot as the starting value (so
@@ -465,7 +498,7 @@ function computeAnnualTWR(accountFilter) {
   // (0.125), so convert.
   const perf = ANALYTICS_PERF[_analyticsFilterName(accountFilter)];
   if (perf && Array.isArray(perf.annual)) {
-    const out = {};
+    const out = Object.create(null);
     for (const r of perf.annual) {
       out[r.year] = r.twr_pct != null ? r.twr_pct / 100 : null;
     }
@@ -482,7 +515,7 @@ function computeAnnualTWR(accountFilter) {
   const valueFn = (h) => rawValueFn(h) + _rolloverBridgeAdjustment(h.date, filterSet);
 
   // Group snapshots by year
-  const byYear = {};
+  const byYear = Object.create(null);
   for (const h of history) {
     const y = yearOf(h.date);
     if (!y) continue;
@@ -490,7 +523,7 @@ function computeAnnualTWR(accountFilter) {
     byYear[y].push(h);
   }
   const years = Object.keys(byYear).sort();
-  const out = {};
+  const out = Object.create(null);
 
   for (let i = 0; i < years.length; i++) {
     const y = years[i];
@@ -580,7 +613,7 @@ function computePositionReturns() {
       pctReturn: p.pct_return != null ? p.pct_return : null,
     }));
   }
-  const perSym = {};
+  const perSym = Object.create(null);
   for (const t of txns) {
     const sym = t.symbol;
     if (!sym || sym === 'USD') continue;
@@ -670,7 +703,7 @@ function renderMultiLineChart(seriesArr, opts) {
     for (let i = 0; i < xTicks; i++) {
       const idx = Math.round((i * (n - 1)) / (xTicks - 1 || 1));
       const x = xOf(idx);
-      parts.push(`<text class="axis-label" x="${x}" y="${H - 8}" text-anchor="middle">${(firstSeries[idx].date || '').slice(0, 7)}</text>`);
+      parts.push(`<text class="axis-label" x="${x}" y="${H - 8}" text-anchor="middle">${_htmlEsc((firstSeries[idx].date || '').slice(0, 7))}</text>`);
     }
     parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + plotH}"/>`);
     parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t + plotH}" x2="${W - PAD.r}" y2="${PAD.t + plotH}"/>`);
@@ -717,10 +750,10 @@ function renderMultiLineChart(seriesArr, opts) {
       }).join('');
       if (tip) {
         const rows = seriesArr.map(s => `<div class="tt-row">
-          <span class="tt-name"><span class="tt-swatch" style="background:${s.color}"></span>${s.label}</span>
+          <span class="tt-name"><span class="tt-swatch" style="background:${s.color}"></span>${_htmlEsc(s.label)}</span>
           <span>${fmtMoney(s.points[idx].value)}</span>
         </div>`).join('');
-        tip.innerHTML = `<div class="tt-date">${seriesArr[0].points[idx].date || ''}</div>${rows}`;
+        tip.innerHTML = `<div class="tt-date">${_htmlEsc(seriesArr[0].points[idx].date || '')}</div>${rows}`;
         tip.style.display = 'block';
         const wrap = tip.parentElement.getBoundingClientRect();
         let tx = ev.clientX - wrap.left + 12;
@@ -740,7 +773,7 @@ function renderMultiLineChart(seriesArr, opts) {
   });
 
   const legend = seriesArr.map(s =>
-    `<span class="legend-item"><span class="legend-swatch" style="background:${s.color}"></span>${s.label}</span>`
+    `<span class="legend-item"><span class="legend-swatch" style="background:${s.color}"></span>${_htmlEsc(s.label)}</span>`
   ).join('');
   return `<div class="chart-wrap" style="padding:10px;position:relative;">
     <svg id="${id}" class="chart-svg" viewBox="0 0 800 ${height}"
@@ -788,7 +821,7 @@ function _buildDrawdownSection() {
     },
   ];
   const statsHtml = cards.map(c => `<div class="ds-card">
-    <div class="ds-label">${c.label}</div>
+    <div class="ds-label">${c.htmlLabel ? c.label : _htmlEsc(c.label)}</div>
     <div class="ds-value ${c.cls || ''}">${c.value}</div>
     ${c.sub ? `<div class="ds-sub">${_htmlEsc(c.sub)}</div>` : ''}
   </div>`).join('');
@@ -829,7 +862,7 @@ function _buildDrawdownSection() {
     for (let i = 0; i < xTicks; i++) {
       const idx = Math.round((i * (series.length - 1)) / (xTicks - 1 || 1));
       const x = xOf(idx);
-      parts.push(`<text class="axis-label" x="${x}" y="${H - 6}" text-anchor="middle">${(series[idx].date || '').slice(0, 7)}</text>`);
+      parts.push(`<text class="axis-label" x="${x}" y="${H - 6}" text-anchor="middle">${_htmlEsc((series[idx].date || '').slice(0, 7))}</text>`);
     }
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     svg.innerHTML = parts.join('');
@@ -966,9 +999,24 @@ function computeWindowedMetrics(filterKey, windowKey) {
   const MAG_CAP = 0.50;
   const periodReturns = [];
   const sigReturns = [];
-  for (let i = 1; i < windowed.length; i++) {
-    const prev = windowed[i - 1];
-    const curr = windowed[i];
+  // Keep only the last observation in each calendar month. Midmonth
+  // snapshots refine the charts/TWR, but are not extra monthly returns.
+  const byMonth = new Map();
+  const ratioHistory = [...windowed];
+  // A calendar-aligned window needs the preceding closing balance:
+  // January's return is measured from December's close, not February.
+  if (lowerIso && lowerIso.endsWith('-01')) {
+    const prior = history.filter(h => h.date < lowerIso).slice(-1)[0];
+    if (prior) ratioHistory.unshift(prior);
+  }
+  for (const h of ratioHistory) {
+    const month = h.date.slice(0, 7);
+    if (!byMonth.has(month) || h.date > byMonth.get(month).date) byMonth.set(month, h);
+  }
+  const monthly = [...byMonth.values()].sort((a, b) => a.date.localeCompare(b.date));
+  for (let i = 1; i < monthly.length; i++) {
+    const prev = monthly[i - 1];
+    const curr = monthly[i];
     const startV = valueAt(prev);
     const endV = valueAt(curr);
     if (startV <= 0) continue;
@@ -979,7 +1027,13 @@ function computeWindowedMetrics(filterKey, windowKey) {
       if (filterSet && !filterSet.has(t.account_group)) continue;
       if (typeof t.cash_flow === 'number') flow += t.cash_flow;
     }
-    const ret = (endV - startV - flow) / startV;
+    // Whole-portfolio ratios use the same cumulative contribution
+    // delta as Python's monthly_pnl. Filtered views read the pipeline's
+    // per-transaction external-flow decisions above.
+    if (!filterSet && typeof curr.net_contributed === 'number' && typeof prev.net_contributed === 'number') {
+      flow = curr.net_contributed - prev.net_contributed;
+    }
+    const ret = +((endV - startV - flow) / startV).toFixed(6);
     periodReturns.push(ret);
     if (startV >= SIG_THRESH && Math.abs(ret) <= MAG_CAP) {
       sigReturns.push(ret);
@@ -1116,9 +1170,8 @@ function renderPerformance() {
         'Combined view of the liquidity accounts.  Their return is a blended cash yield, which is why they are held out of the Investments view rather than compared against an equity benchmark.'),
     ] : []),
     ...availableAccounts.map(a => {
-      const escaped = a.replace(/'/g, "\\'");
       return _renderAccountChip(a, performanceAccountFilter === a,
-        `setPerformanceAccountFilter('${escaped}')`);
+        `setPerformanceAccountFilter(${_jsString(a)})`);
     }),
   ].join('');
 
@@ -1458,7 +1511,7 @@ function renderPerformance() {
   const _rowSpan = `Measured ${_winAnchorIso || 'inception'} to ${_winUpperIso}.`;
   const filteredCards = [
     {
-      label: `Total Return <span class="sub">${_winLabel}</span>`,
+      htmlLabel: true, label: `Total Return <span class="sub">${_winLabel}</span>`,
       value: fmtSigned(totalReturn) + (totalReturnPct != null ? ` <span class="sub">${(totalReturnPct >= 0 ? '+' : '') + totalReturnPct.toFixed(1)}%</span>` : ''),
       cls: totalReturnCls,
       title: `Dollar return over the window for the active filter — Modified Dietz numerator: end value − start value − net cash flow.  Window: ${performanceWindow}.
@@ -1466,7 +1519,7 @@ function renderPerformance() {
 ${_rowSpan}`
     },
     {
-      label: `Realized <span class="sub">${_winLabel}</span>`
+      htmlLabel: true, label: `Realized <span class="sub">${_winLabel}</span>`
         + (rolloverDominates ? ' <span class="sub" style="color:var(--yellow);">incl. rollover</span>' : ''),
       value: fmtSigned(totalRealized),
       cls: totalRealized >= 0 ? 'positive' : (totalRealized < 0 ? 'negative' : ''),
@@ -1492,7 +1545,7 @@ ${_rowSpan}`
       // invited the reasonable question of why it never changed.
       // Same reason the Options tab keeps Open Contracts out of its
       // windowed row.
-      label: `Unrealized <span class="sub">${_filterWord ? _filterWord + ' · ' : ''}as of ${_winUpperIso}</span>`,
+      htmlLabel: true, label: `Unrealized <span class="sub">${_filterWord ? _htmlEsc(_filterWord) + ' · ' : ''}as of ${_winUpperIso}</span>`,
       value: fmtSigned(totalUnrealized),
       cls: totalUnrealized >= 0 ? 'positive' : (totalUnrealized < 0 ? 'negative' : ''),
       title: `Unrealized P&L on positions still held on ${_winUpperIso}${_filterWord ? ', ' + _filterWord + ' only' : ''}.
@@ -1500,20 +1553,20 @@ ${_rowSpan}`
 This is a LEVEL measured at one date, not a gain accrued over the window — so unlike its neighbours it does NOT move when you change the window.  Every trailing window ends today; only a custom window with an earlier end date, or the account filter, changes it.`
     },
     {
-      label: `Net Contributed <span class="sub">${_winLabel}</span>`,
+      htmlLabel: true, label: `Net Contributed <span class="sub">${_winLabel}</span>`,
       value: fmtMoney(netContrib),
       title: `Net cash flow into the filtered account(s) during the window (deposits − withdrawals).  Window: ${performanceWindow}.
 
 ${_rowSpan}`
     },
     {
-      label: `Cumulative Return <span class="sub">${performanceWindow}</span>`,
+      htmlLabel: true, label: `Cumulative Return <span class="sub">${performanceWindow}</span>`,
       value: cumStr,
       cls: cumCls,
       title: `Cumulative return over the selected window (geometric chain-link of monthly returns).  Window: ${performanceWindow}.`
     },
     {
-      label: `Annualized Return <span class="sub">${performanceWindow}</span>`,
+      htmlLabel: true, label: `Annualized Return <span class="sub">${performanceWindow}</span>`,
       value: annStr,
       cls: annCls,
       title: `Annualized return: cumulative return scaled to per-year using the actual months covered.  Window: ${performanceWindow}.`
@@ -1523,25 +1576,25 @@ ${_rowSpan}`
   // Row 5 — risk-adjusted ratios + max drawdown.  Same window/filter.
   const ratioCards = [
     {
-      label: `Sharpe Ratio <span class="sub">${performanceWindow}</span>`,
+      htmlLabel: true, label: `Sharpe Ratio <span class="sub">${performanceWindow}</span>`,
       value: sharpeStr + ' <span class="sub">vs 4% rf</span>',
       cls: sharpeCls,
       title: `Annualized risk-adjusted return: (mean monthly excess return) / stdev × √12.  > 1 is solid, > 2 is great.  Window: ${performanceWindow}.` + filteredHint
     },
     {
-      label: `Sortino Ratio <span class="sub">${performanceWindow}</span>`,
+      htmlLabel: true, label: `Sortino Ratio <span class="sub">${performanceWindow}</span>`,
       value: sortinoStr + ' <span class="sub">downside-only</span>',
       cls: sortinoCls,
       title: `Like Sharpe, but only counts downside volatility (months below the risk-free return).  Closer to "how much pain per unit of return".  Window: ${performanceWindow}.` + filteredHint
     },
     {
-      label: `Calmar Ratio <span class="sub">${performanceWindow}</span>`,
+      htmlLabel: true, label: `Calmar Ratio <span class="sub">${performanceWindow}</span>`,
       value: calmarStr + ' <span class="sub">return / max DD</span>',
       cls: calmarCls,
       title: calmarTitle
     },
     {
-      label: `Max Drawdown <span class="sub">${performanceWindow}</span>`,
+      htmlLabel: true, label: `Max Drawdown <span class="sub">${performanceWindow}</span>`,
       value: mddStr + (win.mddPeak ? ` <span class="sub">${win.mddPeak}→${win.mddTrough}</span>` : ''),
       cls: mddCls,
       title: `Largest peak-to-trough decline within the selected window.  Window: ${performanceWindow}.`
@@ -1574,7 +1627,7 @@ ${_rowSpan}`
     `<span class="toggles-label">Window:</span>` +
     `<div class="toggle-group">${windowChips}</div>` +
     _customInputsHtml +
-    `<span class="toggles-hint">${win.nMonths || 0} months · ${win.nInRatio || 0} in ratio calc</span>` +
+    `<span class="toggles-hint">${win.nMonths || 0} monthly periods · ${win.nInRatio || 0} in ratio calc</span>` +
     `</div>` +
     `</div>` +
     _renderCardRow(filteredCards) +
@@ -1716,7 +1769,7 @@ ${_rowSpan}`
   const acctSummaryHtml = '<div class="stats">' + acctSummaryCards.map(c => {
     const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
     const titleAttr = c.title ? ` title="${_htmlEsc(c.title)}"` : '';
-    return `<div class="${cls}"${titleAttr}><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
+    return `<div class="${cls}"${titleAttr}><div class="label">${c.htmlLabel ? c.label : _htmlEsc(c.label)}</div><div class="value">${c.value}</div></div>`;
   }).join('') + '</div>';
 
   // No per-section window/account selectors anymore — both live at
@@ -1914,7 +1967,7 @@ ${_rowSpan}`
     benchChartParts.push(`All comparison lines rebased to portfolio's value on ${windowedHistory[0].date} (Schwab-style) — read window-relative deltas directly off the chart.`);
   }
   if (benchFilterActive) {
-    benchChartParts.push(`<b>SPY/BND/VXUS lines</b> simulate the same cash flows (deposits + withdrawals) on the chosen ${performanceAccountFilter === '__retirement__' ? 'retirement accounts' : performanceAccountFilter === '__investments__' ? 'investment accounts' : performanceAccountFilter === '__taxable__' ? 'taxable accounts' : performanceAccountFilter} but invested in the benchmark instead.  Apples-to-apples: deposits buy benchmark shares, withdrawals sell shares.  Anchored at the portfolio's value on the window-start date.`);
+    benchChartParts.push(`<b>SPY/BND/VXUS lines</b> simulate the same cash flows (deposits + withdrawals) on the chosen ${performanceAccountFilter === '__retirement__' ? 'retirement accounts' : performanceAccountFilter === '__investments__' ? 'investment accounts' : performanceAccountFilter === '__taxable__' ? 'taxable accounts' : _htmlEsc(performanceAccountFilter)} but invested in the benchmark instead.  Apples-to-apples: deposits buy benchmark shares, withdrawals sell shares.  Anchored at the portfolio's value on the window-start date.`);
   }
   const benchChartNote = benchChartParts.length
     ? `<div style="color:var(--text-dim);font-size:0.72rem;margin-top:4px;padding:0 4px;line-height:1.5;">${benchChartParts.join(' ')}</div>`
@@ -1994,14 +2047,14 @@ ${_rowSpan}`
   const spanNote = twr ? `Measured ${twr.start_date} to ${twr.end_date}.` : '';
   const benchStatCards = [
     {
-      label: `Your Return (TWR) <span class="sub">${winLabel}</span>`,
+      htmlLabel: true, label: `Your Return (TWR) <span class="sub">${winLabel}</span>`,
       value: twrMainStr + ' ' + twrSubStr, cls: twrCls,
       title: `Time-weighted return for the active account filter.
 
 ${spanNote}`
     },
     {
-      label: `SPY Return <span class="sub">${winLabel}</span>`,
+      htmlLabel: true, label: `SPY Return <span class="sub">${winLabel}</span>`,
       value: spyMainStr + ' ' + spySubStr, cls: spyCls,
       title: `SPY's market return over the SAME span as Your Return, so the two are directly comparable.
 
@@ -2025,7 +2078,7 @@ ${spanNote}`
   const benchStatsHtml = '<div class="stats">' + benchStatCards.map(c => {
     const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
     const titleAttr = c.title ? ` title="${_htmlEsc(c.title)}"` : '';
-    return `<div class="${cls}"${titleAttr}><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`;
+    return `<div class="${cls}"${titleAttr}><div class="label">${c.htmlLabel ? c.label : _htmlEsc(c.label)}</div><div class="value">${c.value}</div></div>`;
   }).join('') + '</div>';
 
   // Top 10 winners — POSITIVE total_gain only.  Without the sign
@@ -2041,7 +2094,7 @@ ${spanNote}`
       const pctStr = p.pctReturn != null ? (p.pctReturn >= 0 ? '+' : '') + p.pctReturn.toFixed(1) + '%' : '—';
       return `<tr>
       <td><b>${symLabel(p.symbol)}</b></td>
-      <td>${p.sector || ''}</td>
+      <td>${_htmlEsc(p.sector || '')}</td>
       <td class="num">${fmtMoney(p.value)}</td>
       <td class="num"><span class="positive">${fmtSigned(p.total_gain)}</span></td>
       <td class="num positive">${pctStr}</td>
@@ -2055,7 +2108,7 @@ ${spanNote}`
       const pctStr = p.pctReturn != null ? (p.pctReturn >= 0 ? '+' : '') + p.pctReturn.toFixed(1) + '%' : '—';
       return `<tr>
       <td><b>${symLabel(p.symbol)}</b></td>
-      <td>${p.sector || ''}</td>
+      <td>${_htmlEsc(p.sector || '')}</td>
       <td class="num">${fmtMoney(p.value)}</td>
       <td class="num"><span class="negative">${fmtSigned(p.total_gain)}</span></td>
       <td class="num negative">${pctStr}</td>
@@ -2216,7 +2269,7 @@ const columns = txns.length > 0
   : ['date', 'account_group', 'account_type', 'account', 'symbol', 'action', 'quantity', 'price', 'fees', 'amount', 'description', 'source'];
 
 // Column visibility state
-const colVisible = {};
+const colVisible = Object.create(null);
 columns.forEach(col => colVisible[col] = !HIDDEN_BY_DEFAULT.has(col));
 const visibleCols = () => columns.filter(c => colVisible[c]);
 
@@ -2228,11 +2281,11 @@ const FILTER_FIELDS = columns.filter(col => {
 });
 
 // Filter state: field -> Set of selected values (empty = all)
-const filterState = {};
+const filterState = Object.create(null);
 FILTER_FIELDS.forEach(f => filterState[f] = new Set());
 
 // Precompute unique values per filter field
-const filterValues = {};
+const filterValues = Object.create(null);
 FILTER_FIELDS.forEach(f => {
   filterValues[f] = [...new Set(txns.map(t => t[f]))].filter(v => v != null && v !== '').sort();
 });
