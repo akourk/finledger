@@ -1,15 +1,26 @@
-# fin
+# finledger
 
-A personal portfolio tracker. Drop raw transaction CSVs from your brokerages
-into `data/`, run one command, and get a clean HTML dashboard of your
-holdings and every transaction ever — across every account, in one view.
+[![finledger dashboard — portfolio value over time, stat cards, top holdings and recent transactions, all from a fictional sample portfolio](docs/img/dashboard.png)](https://akourk.github.io/finledger/)
 
-No server, no database, no cloud. One Python script, one HTML file out.
+**[Open the live demo →](https://akourk.github.io/finledger/)** — a real,
+working dashboard built from the fictional sample portfolio in this repo.
+Every figure in it is invented; there is no real financial data anywhere in
+this project.
 
-**[Live demo →](https://akourk.github.io/finledger/)** — the dashboard rendered from
-the bundled fictional sample portfolio, rebuilt on every push.
+[![tests](https://github.com/akourk/finledger/actions/workflows/tests.yml/badge.svg)](https://github.com/akourk/finledger/actions/workflows/tests.yml)
+[![accessibility](https://github.com/akourk/finledger/actions/workflows/accessibility.yml/badge.svg)](https://github.com/akourk/finledger/actions/workflows/accessibility.yml)
+![tests: 1300+](https://img.shields.io/badge/tests-1300%2B-brightgreen)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-> **Not tax, financial, or investment advice.** `fin` reconstructs figures
+Drop raw transaction CSVs from your brokerages into `data/`, run one command,
+and get a self-contained HTML dashboard of your holdings, cost basis, and
+every transaction ever — across every account, in one view.
+
+No server, no database, no cloud, no credentials. One Python package in, one
+HTML file out.
+
+> **Not tax, financial, or investment advice.** finledger reconstructs figures
 > from broker CSV exports and will disagree with your broker in known,
 > documented ways — off-platform cost basis it cannot see, lot-relief
 > differences, wash-sale deferral. Treat your broker's own 1099s and
@@ -17,14 +28,42 @@ the bundled fictional sample portfolio, rebuilt on every push.
 > `Reconcile *` metadata rows are for) before relying on anything here for
 > a tax filing or a financial decision.
 
+## Why this exists
+
+If your money is spread across a brokerage, a crypto exchange, an old 401(k),
+a rolled-over IRA, and a savings account, no one shows you the whole thing.
+Each institution shows you its own slice, in its own vocabulary, over whatever
+window it feels like — and none of them can tell you what your cost basis is
+once assets have moved between them. The usual answers are an aggregator that
+wants your banking credentials and monetises the data, or a spreadsheet that
+is accurate the week you build it.
+
+finledger is the third answer: a local program that reads the CSV exports the
+brokers already give you, normalises nine different transaction vocabularies
+into one ledger, and reconstructs the figures the brokers do not — running
+balances, per-lot cost basis across account transfers, time-weighted return
+against a benchmark, realized gains split short- and long-term. Nothing leaves
+the machine. `data/` and `exports/` are gitignored and a pre-commit hook blocks
+your own figures from being committed by accident.
+
+The part worth arguing about is what it does when it *cannot* be sure. A
+reconstruction from CSV exports has real limits — basis for assets acquired
+before the export window is not recoverable, and the broker's lot relief is
+not always FIFO. So finledger takes broker-reported ground truth (statement
+balances, 1099 figures) as declared input, checks its own numbers against
+them, and shows you every disagreement with its size and a status on the
+Overview tab. It is built to be checkable rather than to look confident.
+It is for someone who wants one honest ledger of their own money and is
+willing to reconcile it against the documents they already have.
+
 ## Screenshots
 
 All screenshots are rendered from the bundled **fictional** sample portfolio
 (`samples/portfolio.snapshot.json`) — no real financial data.
 
-| Overview | Performance | Tax |
+| Holdings | Performance | Tax |
 |:---:|:---:|:---:|
-| [![Overview — stat cards, history chart, reconciliation panel](docs/img/overview.png)](docs/img/overview.png) | [![Performance — returns vs benchmarks, drawdown](docs/img/performance.png)](docs/img/performance.png) | [![Tax — bracket fill, realized gains, harvest candidates](docs/img/tax.png)](docs/img/tax.png) |
+| [![Holdings — positions by account with per-lot detail](docs/img/holdings.png)](docs/img/holdings.png) | [![Performance — returns vs benchmarks, drawdown](docs/img/performance.png)](docs/img/performance.png) | [![Tax — bracket fill, realized gains, harvest candidates](docs/img/tax.png)](docs/img/tax.png) |
 
 > Regenerate the sample dashboard yourself (in a scratch dir, per the
 > dev-loop): import the snapshot, then run the pipeline → `exports/dashboard.html`.
@@ -179,8 +218,8 @@ is one of:
 | `Pay Frequency`   | Amount = pay periods per year (`12` / `24` / `26` / `52`, default `26` = biweekly).  Annualizes the paycheck rows. |
 | `Tax Return`      | A figure from a filed 1040.  Date = tax year, Symbol = field (`Total Tax` = line 24, `AGI` = line 11, `Withholding` = line 25d, `Wages`, `Capital Gains`), Amount = $.  The prior year's Total Tax + AGI drive the Tax tab's **withholding safe-harbor check** (IRS Form 2210: 90%-of-current vs 100%/110%-of-prior-year, whichever is less). |
 | `Lot Method`      | Symbol = account group, Note = `FIFO` / `LIFO` / `HIFO` — the lot-relief method that account's broker actually uses (e.g. Coinbase defaults to HIFO).  Affects realized gains / holding period, never balances. |
-| `Cost Basis`      | True cost basis for an off-platform crypto receive fin can't reconstruct.  Symbol = account group, Date = acquired date, Amount = total basis, Note = `"<qty> <asset>"` (optional `#N` to disambiguate). |
-| `Reconcile Balance` / `Reconcile Realized` / `Reconcile Income` / `Reconcile Section 1256` / `Reconcile Other Income` | Broker-reported ground truth (statement balance, 1099-B, 1099-DIV/INT, 1099-MISC) to check fin against — drives the Overview's Reconciliation panel.  Symbol = account group, Date = as-of date (balance) or year, Amount = the broker figure.  `Reconcile Realized` also overrides fin's realized figure in AGI / MAGI / Roth-eligibility math. |
+| `Cost Basis`      | True cost basis for an off-platform crypto receive finledger can't reconstruct.  Symbol = account group, Date = acquired date, Amount = total basis, Note = `"<qty> <asset>"` (optional `#N` to disambiguate). |
+| `Reconcile Balance` / `Reconcile Realized` / `Reconcile Income` / `Reconcile Section 1256` / `Reconcile Other Income` | Broker-reported ground truth (statement balance, 1099-B, 1099-DIV/INT, 1099-MISC) to check finledger against — drives the Overview's Reconciliation panel.  Symbol = account group, Date = as-of date (balance) or year, Amount = the broker figure.  `Reconcile Realized` also overrides finledger's realized figure in AGI / MAGI / Roth-eligibility math. |
 
 `Account Group` / `Account Type` rows let you onboard a new broker or
 account name without editing `src/config.py`.  Built-in defaults from
@@ -196,7 +235,7 @@ The dashboard is a tabbed single-page app (URL hash routing, so
 
 - **Overview** — persistent top bar (Portfolio Value, Total Return,
   1-Day Change), alerts / "what changed since last run" /
-  **reconciliation** (fin vs broker-reported figures) feedback panels,
+  **reconciliation** (finledger vs broker-reported figures) feedback panels,
   stat cards (Cost Basis, Unrealized/Realized P&L, Net Contributed,
   Income, Current Drawdown), history chart with overlay toggles (Cost
   Basis, Unrealized Gain, SPY Benchmark, Net Contributed,
@@ -265,7 +304,7 @@ Dark theme, tabular-numeric formatting, mobile responsive
 ## Project layout
 
 ```
-fin/
+finledger/
 ├── data/                  # Drop broker CSVs + metadata.csv here (gitignored)
 ├── exports/               # Generated JSON + HTML dashboard (gitignored)
 ├── samples/               # Synthetic starter portfolio (--import-snapshot)
@@ -325,7 +364,7 @@ fin/
 │   │   ├── monte_carlo.py #   Stochastic projection (retirement +
 │   │   │                  #     all-accounts) + FIRE date crossings
 │   │   ├── rebalancing.py #   Target vs Actual sector-allocation drift
-│   │   ├── reconcile.py   #   fin vs broker-reported ground truth
+│   │   ├── reconcile.py   #   vs broker-reported ground truth
 │   │   ├── savings.py     #   Savings rate by year + fee rollups
 │   │   ├── data_health.py #   Invariant checks (hard errors in tests)
 │   │   ├── changes.py     #   Run-over-run diff vs cache/last_run.json
@@ -336,7 +375,7 @@ fin/
 │       ├── styles.css     #   Dashboard CSS
 │       └── app/           #   Dashboard JS — one module per tab/concern,
 │                          #     concatenated in filename order at bundle time
-└── tests/                 # pytest test suite (~220 tests, no network calls)
+└── tests/                 # pytest test suite (1300+ tests, no network calls)
     ├── conftest.py        #   Fixtures: isolated_workdir, stub_prices, writers
     ├── fixtures/          #   Synthetic multi-broker portfolio for E2E test
     └── test_*.py          #   One file per concern

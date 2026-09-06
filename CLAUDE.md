@@ -4,9 +4,11 @@ Guidance for Claude Code when working in this repo.
 
 ## What this project is
 
-`fin` is a personal portfolio tracker. It reads raw transaction CSVs exported
-from brokerages, normalizes them into a common schema, and produces a
-self-contained HTML dashboard.
+**finledger** is a personal portfolio tracker. It reads raw transaction CSVs
+exported from brokerages, normalizes them into a common schema, and produces
+a self-contained HTML dashboard.  The rest of this file, the module
+docstrings, and the skills all shorten the name to `fin` — that is the
+in-code shorthand, not a second project.
 
 The app is ~45 Python modules under `src/` (~11k lines), organized into
 the `parsers/`, `analytics/`, and `dashboard/` packages plus top-level
@@ -1524,7 +1526,7 @@ threads through every consumer.
   `FIN_PROJECT_ROOT` / `FIN_DATA_DIR` / `FIN_CACHE_DIR` /
   `FIN_EXPORT_DIR` (falling back to repo-relative defaults).  Tests
   use this to redirect the pipeline at a tmp dir.
-- **`tests/`** — pytest suite (~220 tests).  Covers:
+- **`tests/`** — pytest suite (1300+ tests).  Covers:
   - Parser corp-action handling (per-broker fixture CSVs)
   - Basis walker math (FIFO/LIFO/HIFO/Average)
   - Ticker rename layer

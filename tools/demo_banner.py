@@ -28,7 +28,7 @@ BANNER = f"""<div style="
   background:#1a1a2e;color:#c9c9d4;border-bottom:1px solid #2f2f45;
   padding:10px 16px;display:flex;flex-wrap:wrap;gap:8px 18px;
   align-items:center;justify-content:center;text-align:center;">
-  <span><strong style="color:#a78bfa;">fin</strong> &mdash; live demo</span>
+  <span><strong style="color:#a78bfa;">finledger</strong> &mdash; live demo</span>
   <span style="color:#8a8a9e;">Every figure below is a fictional sample
   portfolio. No real financial data.</span>
   <a href="{REPO}" style="color:#a78bfa;font-weight:600;">Source on GitHub &rarr;</a>
