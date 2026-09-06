@@ -728,17 +728,21 @@ def _build(tmp: Path) -> None:
         ["Budget", "",           "2.99",  "Subscriptions", "iCloud"],
         # Paycheck Deduction — per-paycheck payroll lines (Symbol = kind:
         # Pre-Tax / Tax / Post-Tax; negative Amount = a credit).  Figures
-        # are Sam's fictional biweekly stub at the 80k salary (OASDI 6.2%
-        # of gross − medical, Medicare 1.45% of same, plus WA state
-        # programs).  401(k) deferrals are NOT listed — derived from the
-        # contribution transactions.  Drives the Income tab's Paycheck
-        # panel + the pre-tax AGI adjustment on the Tax tab.
-        ["Paycheck Deduction", "", "85.00",  "Pre-Tax",  "Medical/PPO Before-Tax"],
+        # are Sam's fictional biweekly stub at the 80k salary, and they are
+        # derived rather than invented so the panel adds up: gross is
+        # 80000 / 26 = 3076.92, the pre-tax medical lines net to 90.00, and
+        # the payroll taxes are that reduced base times their statutory
+        # rates — OASDI 6.2%, Medicare 1.45%, CA SDI 1.1%.  The state line
+        # must match the `State` row below; it used to name Washington
+        # programs while the profile said California.  401(k) deferrals are
+        # NOT listed — derived from the contribution transactions.  Drives
+        # the Income tab's Paycheck panel + the pre-tax AGI adjustment on
+        # the Tax tab.
+        ["Paycheck Deduction", "", "95.00",  "Pre-Tax",  "Medical/PPO Before-Tax"],
         ["Paycheck Deduction", "", "-5.00",  "Pre-Tax",  "Wellness Incentive"],
-        ["Paycheck Deduction", "", "190.00", "Tax",      "OASDI (Social Security)"],
-        ["Paycheck Deduction", "", "43.46",  "Tax",      "Medicare"],
-        ["Paycheck Deduction", "", "17.85",  "Tax",      "WA Cares"],
-        ["Paycheck Deduction", "", "24.84",  "Tax",      "WA Paid Family Leave"],
+        ["Paycheck Deduction", "", "185.19", "Tax",      "OASDI (Social Security)"],
+        ["Paycheck Deduction", "", "43.31",  "Tax",      "Medicare"],
+        ["Paycheck Deduction", "", "32.86",  "Tax",      "CA SDI"],
         ["Paycheck Deduction", "", "8.00",   "Post-Tax", "Long-Term Disability"],
         # Voluntary extra federal withholding — reduces take-home but
         # prepays the year-end bill; the Tax tab credits it against the
