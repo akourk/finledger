@@ -1,56 +1,57 @@
 # finledger
 
-**A local financial ledger that reconciles broker exports into one auditable portfolio.**
+finledger started as a personal project. It combines broker CSV exports into a
+portfolio dashboard you can open locally as a single HTML file.
+
+Most of the work is in handling overlapping exports, tracking cost basis when
+assets move between accounts, and checking the results against broker statements.
 
 [![finledger dashboard built from a fictional sample portfolio](docs/img/dashboard.png)](https://akourk.github.io/finledger/)
 
-**[Explore the live demo →](https://akourk.github.io/finledger/)** ·
+**[Live demo](https://akourk.github.io/finledger/)** ·
 [Engineering case study](docs/ENGINEERING_CASE_STUDY.md) ·
 [Architecture](docs/ARCHITECTURE.md)
+
+The demo and screenshots use fictional transactions and illustrative prices.
 
 [![tests](https://github.com/akourk/finledger/actions/workflows/tests.yml/badge.svg)](https://github.com/akourk/finledger/actions/workflows/tests.yml)
 ![tests: 1400+](https://img.shields.io/badge/tests-1400%2B-brightgreen)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Brokerages describe the same financial events in different ways. Moving assets
-between them can lose acquisition history; importing overlapping CSVs can count
-the same transaction twice. finledger normalizes those exports, reconstructs
-holdings and cost basis, and checks its results against declared broker figures.
+## How it works
 
-I built the ingestion pipeline, financial calculations, and dashboard as a
-personal project, then made a fictional demonstration available for anyone to
-explore. The output is one HTML file with its data and assets embedded. It can be
-opened locally without a server, database, account, or frontend runtime.
+Each broker has a parser that converts its exports into a common transaction
+format. From there, finledger merges the files, tracks lots and balances, and
+compares its totals with broker figures you supply.
 
-## Engineering highlights
+Two cases need particular care:
 
-- **Deduplication that preserves legitimate repeats.** Overlapping exports are
-  merged while retaining repeated transactions occurring within a single file.
-- **Cost basis across account transfers.** Lot tracking carries acquisition
-  history through custodial moves; reconciliation exposes missing or conflicting
-  source information.
-- **Checks across the whole pipeline.** Synthetic fixtures, financial invariants,
-  Python/JavaScript parity tests, keyboard/browser tests, and accessibility scans
-  validate ingestion through the final dashboard.
+- If two exports contain the same purchase, importing both shouldn't count it
+  twice. The merge handles that while keeping legitimate repeated transactions
+  within a single file.
+- Moving shares between accounts shouldn't reset their acquisition dates or
+  cost basis. Those follow the lots through paired transfers. Incomplete history
+  and differences from broker figures remain visible for review.
 
-**Stack:** Python, yfinance for optional market-data enrichment, vanilla
-JavaScript, CSS and SVG. GitHub Actions validates the same fictional artifact
-that GitHub Pages publishes. The browser has no CDN or network dependencies.
+Python handles imports and calculations; the dashboard uses plain JavaScript,
+CSS, and SVG. Everything needed to view it is in the HTML file, so there's no
+server or database to run. Tests compare shared calculations in Python and
+JavaScript and exercise imports, keyboard controls, and browser interactions.
 
-## Try the fictional demo locally
+## Try it locally
 
-With Python 3.10+, uv, and Node.js 22.12+ installed:
+With Python 3.10+ and uv installed:
 
 ```bash
 uv sync --locked --all-groups
 uv run python -m tools.build_demo --output _site
 ```
 
-Open `_site/index.html`. This build uses a fixed sample date, independently
-constructed fictional transactions and illustrative prices, and isolated
-working directories. It never reads your personal `data/` or market-data cache.
-See [how the demo is built](docs/DEMO.md).
+Open `_site/index.html`. The sample is dated June 30, 2026 and builds in temporary
+directories without reading your personal `data/` or market-data cache.
+[Demo build details](docs/DEMO.md) explain the inputs and how they're checked
+before deployment.
 
 ## Use your own exports
 
@@ -62,27 +63,30 @@ uv run python -m src.main --init-account-mappings
 uv run python -m src.main
 ```
 
-Every account needs an explicit classification. The starter file suggests known
-account types and marks ambiguous ones `REVIEW_REQUIRED`; resolve those before
-running the pipeline. Open the generated `exports/dashboard.html` locally.
+Review the suggested account types and resolve any `REVIEW_REQUIRED` entries
+before running the pipeline. Every account needs a type. The resulting dashboard
+is at `exports/dashboard.html`.
 
-Supported adapters cover Robinhood, Coinbase, Coinbase Pro/GDAX, Schwab,
+Parsers are included for Robinhood, Coinbase, Coinbase Pro/GDAX, Schwab,
 Vanguard and Voya retirement exports, USAA Victory Capital, Apple Savings,
 and State Farm FCU. See the [format and metadata reference](docs/USAGE.md) for
 supported variants and limitations.
 
-## Explore the dashboard
+## Dashboard
 
 | Holdings | Performance | Tax |
 |:---:|:---:|:---:|
 | [![Holdings with per-lot detail](docs/img/holdings.png)](docs/img/holdings.png) | [![Performance and benchmark comparisons](docs/img/performance.png)](docs/img/performance.png) | [![Tax planning from fictional inputs](docs/img/tax.png)](docs/img/tax.png) |
 
-Ten views cover holdings, transactions, options, retirement, planning, income,
-tax, crypto, performance, and a reconciled overview. Historical selections use
-the selected date consistently; estimates and intentional sample reconciliation
-differences carry explanations. All public screenshots use fictional data.
+You can inspect individual lots, look back at earlier holdings, compare returns,
+or work through retirement and tax estimates. The demo also includes a
+reconciliation difference with an explanation, so you can see how a mismatch
+is reported.
 
-## Develop and validate
+## Development
+
+You'll also need Node.js 22.12+ for the browser checks. GitHub Actions runs the
+tests and deploys the same demo file that passed those checks.
 
 ```bash
 uv sync --locked --all-groups
@@ -95,21 +99,21 @@ uv run python -m tools.privacy_guard scan --scope worktree
 uv run python -m tools.privacy_guard scan --artifact _site
 ```
 
-[CONTRIBUTING](CONTRIBUTING.md) covers isolated test runs and the exact
-pre-commit/pre-push checklist. [The improvement plan](docs/IMPLEMENTATION_PLAN.md)
-tracks the portfolio review work; earlier audit records are historical snapshots.
+See [CONTRIBUTING](CONTRIBUTING.md) for the test workflow and checks to run before
+committing or pushing.
 
 ## Privacy and limitations
 
-Broker files, personal metadata, and generated dashboards stay local. Normal
-market-data enrichment requests symbol prices and sectors through yfinance.
-The public demo uses fictional inputs; it does not upload or display your ledger.
+Keep personal exports in `data/` and generated dashboards in `exports/`; both
+are ignored by Git. A generated dashboard contains the full ledger, including
+fields that aren't currently visible, so keep that HTML file private too.
+Price and sector lookups use yfinance. The broker files themselves stay local.
 
-Privacy hooks reject protected files, inspect staged content and commit metadata,
-and scan every outgoing commit. Use your GitHub no-reply commit email. Add private identifiers and distinctive values
-to the ignored local denylist. Automated checks complement manual provenance
-review; they cannot identify every personal figure or read text inside an image.
-See [the privacy workflow](docs/PRIVACY.md).
+The privacy hooks check staged files, commit metadata, and outgoing history.
+Use your GitHub no-reply commit email and add private identifiers and distinctive
+values to the ignored local denylist. These checks still need manual review:
+they can't recognize every personal amount or read text in an image.
+See [the privacy workflow](docs/PRIVACY.md) for setup and details.
 
 **Not tax, financial, or investment advice.** Results depend on the completeness
 of broker exports and declared metadata. Missing acquisition history, lot-relief
