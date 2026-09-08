@@ -869,12 +869,14 @@ def build_snapshot(out: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="finledger-sample-") as td:
         data_dir = Path(td) / "data"
         _build(data_dir)
+        # Path ordering folds case on Windows; snapshot order must be the same
+        # as the case-sensitive filename ordering used on every other platform.
         files = {p.name: p.read_text(encoding="utf-8")
-                 for p in sorted(data_dir.glob("*.csv"))}
+                 for p in sorted(data_dir.glob("*.csv"), key=lambda p: p.name)}
     bundle = {"version": 1, "exported_at": SAMPLE_TIMESTAMP,
               "file_count": len(files), "files": files}
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+    out.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8", newline="\n")
     return bundle
 
 

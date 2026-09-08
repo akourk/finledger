@@ -52,6 +52,49 @@ The test suite uses Node for Python/JavaScript parity. Do not accept a green run
 that skipped required JavaScript checks because Node was missing. The local
 metadata-dependent savings test may skip in a clean checkout; report that skip.
 
+### CSV parser investigations
+
+For snapshot restore errors, first compare the restored CSV text with its
+snapshot entry locally. Snapshot transport does not validate transactions.
+Inspect structural facts such as header width, row width, blank-cell positions,
+and physical line numbers without printing private cell contents. Reproduce
+the shape with independently fictional CSVs before changing the parser.
+
+For Robinhood ingestion changes, start with:
+
+```bash
+uv run python -m pytest tests/test_robinhood_footer.py tests/test_import_safety.py tests/test_parser_silent_drop.py tests/test_robinhood_corp_actions.py tests/test_sample_snapshot.py -q -rs
+```
+
+Then run the complete suite. Include snapshot round trips, multiline quoted
+fields, and malformed rows near any recognized informational footer. Keep CSV
+record parsing intact so error locations retain their physical line numbers.
+
+### Windows validation
+
+Set `PYTHONUTF8=1` when running the suite from PowerShell so subprocesses and
+tests that use the default text encoding read generated UTF-8 consistently.
+Write synthetic CSV fixtures with `newline=""` to preserve intentional embedded
+line endings. `.gitattributes` keeps public text in LF form so reviewed working
+source and staged source have identical bytes for provenance checks.
+Git hook tests need `sh` on `PATH` (provided by Git for Windows). If a managed
+Python runtime resets `PATH` at startup, configure it inside the test process
+before launching pytest. The filesystem symlink test reports a skip when Windows
+denies that privilege; Git-index symlink checks still run.
+
+If the demo reports a stale sample, compare both parsed JSON and serialized
+bytes before regenerating anything. Sorting `Path` objects can produce a
+different filename order on Windows; the generators, scanner, and parser sort
+explicit filename strings. Identical JSON values do not satisfy a byte-for-byte
+provenance check. Report the failed check and investigate its cause; do not
+disable the check or regenerate artifacts from personal inputs.
+
+When a full-suite failure appears unrelated, reproduce the affected test on
+unchanged source in a separate temporary checkout. Keep its inputs isolated
+and logs local, and report both results rather than treating the failure as a
+pass. Check runtime availability before repeatedly attempting dependency setup;
+use the configured project environment when it is available.
+
 ## Extending the ledger
 
 - A new broker needs detection, a parser returning the common transaction shape,

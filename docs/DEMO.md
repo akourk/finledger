@@ -34,6 +34,12 @@ The builder does not read the repository's mutable `cache/` or personal data.
 snapshot date for tax years, age calculations, and trailing activity windows,
 so visiting next year will not silently reinterpret the same figures.
 
+Public text uses LF line endings through `.gitattributes`, and generated
+snapshots, HTML, and manifests write UTF-8/LF explicitly. CSV filenames are
+sorted as strings during generation, scanning, and parsing so Windows and
+POSIX produce the same transaction order and artifact bytes. Provenance checks
+continue to compare exact bytes; equivalent parsed JSON alone is insufficient.
+
 `samples/prices.fixture.json` describes fixed endpoints, sectors, and a
 synthetic split. A deterministic formula produces daily illustrative prices
 between those endpoints. Empty dividend fixtures mean the invented benchmark

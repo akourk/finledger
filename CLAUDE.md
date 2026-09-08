@@ -97,6 +97,14 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
 3. **Parse** (`parsers.parse_all_files`) — dispatch to a per-broker parser.
    Every parser returns the same 10-field dict (`date, account, symbol,
    action, quantity, price, fees, amount, description, source`).
+   Recognize broker-specific informational rows before validating or counting
+   transaction rows. Robinhood's disclaimer can occupy one overflow cell after
+   all nine expected transaction cells are blank; validating its width first
+   rejected otherwise valid exports, including CSVs restored from snapshots.
+   Accept only that exact header and row shape with the recognized disclaimer
+   prefix. Never relax overflow validation generally or discard a row containing
+   transaction data. `tests/test_robinhood_footer.py` pins this boundary,
+   snapshot round trips, and exclusion from ingestion counts and findings.
 4. **Deduplicate** (`export.deduplicate`) — identical rows across *different*
    source files are overlapping exports; identical rows *within* one file are
    legitimate (e.g. three same-day CBETH sells). The hash-based dedupe keeps
@@ -1952,17 +1960,20 @@ transactions can't explain.
 The bundle includes **every** top-level `*.csv` unconditionally —
 `metadata.csv`, `manual-adjustments.csv`, and scanner-`skip`ped
 reference reports (the Coinbase RAWTX / gain-loss files) all travel
-with it.  Snapshot + repo checkout (which carries `cache/`) fully
-reproduces a working install; the only thing that resets is the
-gitignored `cache/last_run.json`, so the first run on a new machine
-reports `first_run` in What's Changed.
+with it. Generated price shards and coverage metadata stay local; privately
+copy `cache/prices/` and `cache/price_cache_meta.json` together when migrating
+to preserve cached history. Otherwise the next run fetches missing prices.
+The legacy `cache/price_cache.json` is also local. The gitignored
+`cache/last_run.json` resets, so the first run on a new machine reports
+`first_run` in What's Changed.
 
 ## Data is sensitive
 
 The WHOLE `data/` directory and `exports/` are gitignored (any
-extension — a stray `.bak`/`.xlsx` in `data/` won't leak).  `cache/` is
-checked in EXCEPT `cache/last_run.json` (which carries portfolio
-totals).  Treat CSV contents as private financial data — don't paste
+extension — a stray `.bak`/`.xlsx` in `data/` won't leak). Generated price
+shards, the legacy price cache, coverage metadata, and `cache/last_run.json`
+(which carries portfolio totals) stay local. Other shared cache/config files
+still require privacy review. Treat CSV contents as private financial data — don't paste
 them into external services, issue bodies, or anywhere public.
 
 **This repo is public.**  NEVER put the user's actual portfolio figures

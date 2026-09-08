@@ -32,7 +32,7 @@ def digest(path: Path) -> str:
 
 
 def seed_prices(cache: Path) -> None:
-    fixture = json.loads((ROOT / "samples/prices.fixture.json").read_text())
+    fixture = json.loads((ROOT / "samples/prices.fixture.json").read_text(encoding="utf-8"))
     start, end = date.fromisoformat(fixture["start"]), date.fromisoformat(fixture["as_of"])
     span = (end - start).days
     prices, sectors, symbols = {}, {}, {}
@@ -62,7 +62,7 @@ def seed_prices(cache: Path) -> None:
         "ticker_renames.json": {},
     }
     for name, doc in docs.items():
-        (cache / name).write_text(json.dumps(doc, sort_keys=True), encoding="utf-8")
+        (cache / name).write_text(json.dumps(doc, sort_keys=True), encoding="utf-8", newline="\n")
 
 
 def _worker(work: Path) -> None:
@@ -123,17 +123,18 @@ def _worker(work: Path) -> None:
     reconciliation = data.get("analytics", {}).get("reconciliation", {}).get("summary", {})
     if reconciliation.get("off") or reconciliation.get("warn"):
         raise RuntimeError("demo contains unexplained reconciliation differences")
-    exported.write_text(json.dumps(data, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+    exported.write_text(json.dumps(data, sort_keys=True, ensure_ascii=False), encoding="utf-8", newline="\n")
     from src.dashboard import generate_dashboard
     generate_dashboard(exported, work / "dashboard.html")
     from tools.demo_banner import inject
     stage = work / "site"
     stage.mkdir()
     html = inject((work / "dashboard.html").read_text(encoding="utf-8"))
-    (stage / "index.html").write_text(html, encoding="utf-8")
+    (stage / "index.html").write_text(html, encoding="utf-8", newline="\n")
     manifest = {"schema": 1, **demo, "files": {"index.html": digest(stage / "index.html")},
                 "builder_sha256": digest(ROOT / "tools/build_demo.py")}
-    (stage / "provenance.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (stage / "provenance.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                                          encoding="utf-8", newline="\n")
 
 
 def main() -> None:
@@ -154,6 +155,7 @@ def main() -> None:
         env = os.environ.copy()
         env["PYTHONPATH"] = str(ROOT)
         env["PYTHONHASHSEED"] = "0"
+        env["PYTHONUTF8"] = "1"
         env["TZ"] = "UTC"
         subprocess.run([sys.executable, "-m", "tools.build_demo", "--worker", str(work)],
                        cwd=work, env=env, check=True)

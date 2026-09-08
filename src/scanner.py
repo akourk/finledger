@@ -168,7 +168,7 @@ def scan_data_files(data_dir: Path) -> dict[str, str]:
     Broker key is one of the CANONICAL_PREFIXES keys, "manual", "skip", or "unknown".
     """
     results = {}
-    for csv_file in sorted(data_dir.glob("*.csv")):
+    for csv_file in sorted(data_dir.glob("*.csv"), key=lambda p: p.name):
         results[csv_file.name] = detect_broker(csv_file)
     return results
 
@@ -195,7 +195,7 @@ def rename_data_files(data_dir: Path, *, dry_run: bool = False) -> dict[str, str
     plan_1099: list[tuple[Path, str]] = []
     claimed_1099: set[str] = {p.name for p in data_dir.glob("robinhood-1099-*.csv")}
 
-    for csv_file in sorted(data_dir.glob("*.csv")):
+    for csv_file in sorted(data_dir.glob("*.csv"), key=lambda p: p.name):
         broker = detect_broker(csv_file)
 
         if broker in ("skip", "unknown"):

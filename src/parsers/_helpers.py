@@ -118,8 +118,14 @@ def skip_informational_row():
     _substantive_rows -= 1
 
 
-def read_csv_rows(lines, source, *, required=(), nonblank=(), line_offset=0):
-    """Read CSV cells with precise numeric error locations and header checks."""
+def read_csv_rows(lines, source, *, required=(), nonblank=(), line_offset=0,
+                  is_informational=None):
+    """Read CSV cells with precise numeric error locations and header checks.
+
+    A broker may recognize a documented informational record in the raw
+    DictReader row before transaction validation and substantive-row counting.
+    Header validation still applies, and all other rows remain strict.
+    """
     global _substantive_rows
     from itertools import chain
     iterator = iter(lines)
@@ -136,6 +142,8 @@ def read_csv_rows(lines, source, *, required=(), nonblank=(), line_offset=0):
         raise ValueError(f"{source}: missing required CSV column(s): "
                          + ", ".join(sorted(missing)))
     for row in reader:
+        if is_informational is not None and is_informational(row):
+            continue
         if None in row:
             raise ValueError(f"{source}: row {reader.line_num + line_offset}: "
                              "more cells than header columns")

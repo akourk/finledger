@@ -2,6 +2,8 @@
 from pathlib import Path
 import hashlib
 import json
+import os
+import shlex
 import subprocess
 import sys
 
@@ -17,6 +19,8 @@ def repo(tmp_path):
     git('init')
     git('config', 'user.name', 'Example Developer')
     git('config', 'user.email', 'developer@example.test')
+    # These fixtures compare reviewed source bytes with the index verbatim.
+    git('config', 'core.autocrlf', 'false')
     (tmp_path / '.gitignore').write_text('.pii-denylist.txt\n.privacy-receipts.json\ndata/\n')
     (tmp_path / 'README.md').write_text('Synthetic test repository\n')
     git('add', '.')
@@ -161,13 +165,30 @@ def test_failed_git_inspection_is_a_failure(repo):
         G.git(root, 'rev-list', 'no-such-revision')
 
 
-def test_symlinks_are_not_followed(repo):
+def test_staged_symlinks_are_not_followed(repo):
     root, git = repo
     target = root.parent / 'private-example.txt'
     target.write_text(token())
-    (root / 'link').symlink_to(target)
-    git('add', 'link')
+    # A real Git symlink entry does not require Windows symlink privileges.
+    (root / 'link').write_text(target.as_posix())
+    blob = git('hash-object', '-w', 'link')
+    git('update-index', '--add', '--cacheinfo', f'120000,{blob},link')
     assert any(f.rule == 'uninspectable-link-or-submodule' for f in G.scan_scope(root, 'staged', []))
+
+
+def test_worktree_symlinks_are_not_followed(repo):
+    root, _ = repo
+    target = root.parent / 'private-example.txt'
+    target.write_text(token())
+    try:
+        (root / 'link').symlink_to(target)
+    except OSError as exc:
+        if getattr(exc, 'winerror', None) == 1314:
+            pytest.skip('Windows requires Developer Mode or symlink privilege for filesystem symlinks')
+        raise
+    findings = G.scan_scope(root, 'worktree', [token()])
+    assert any(f.rule == 'uninspectable-link-or-submodule' for f in findings)
+    assert not any(f.rule == 'local-denylist' for f in findings)
 
 
 def test_identifiers_in_filenames_are_not_printed(capsys):
@@ -188,7 +209,9 @@ def test_hook_rejects_staged_file_and_commit_message(repo):
     shutil.copy2(original / 'tools/run-privacy-guard.sh', root / 'tools/run-privacy-guard.sh')
     runtime = root / '.venv/bin/python'
     runtime.parent.mkdir(parents=True)
-    runtime.symlink_to(sys.executable)
+    runtime.write_bytes(('#!/bin/sh\nexec ' + shlex.quote(Path(sys.executable).as_posix())
+                         + ' "$@"\n').encode())
+    runtime.chmod(0o755)
     for name in ('pre-commit', 'commit-msg', 'pre-push'):
         shutil.copy2(original / 'githooks' / name, root / 'githooks' / name)
     git('add', 'tools', 'githooks')
@@ -197,13 +220,18 @@ def test_hook_rejects_staged_file_and_commit_message(repo):
     (root / '.pii-denylist.txt').write_text(token())
     (root / 'note.md').write_text(token())
     git('add', 'note.md')
-    result = subprocess.run(['git', '-C', str(root), 'commit', '-m', 'Safe message'], capture_output=True, text=True)
+    git_binary = shutil.which('git')
+    assert git_binary
+    hook_env = dict(os.environ)
+    result = subprocess.run([git_binary, '-C', str(root), 'commit', '-m', 'Safe message'],
+                            env=hook_env, capture_output=True, text=True)
     assert result.returncode != 0
     assert 'BLOCKED local-denylist' in result.stderr
     assert token() not in result.stderr
     (root / 'note.md').write_text('Fictional harmless input')
     git('add', 'note.md')
-    result = subprocess.run(['git', '-C', str(root), 'commit', '-m', token()], capture_output=True, text=True)
+    result = subprocess.run([git_binary, '-C', str(root), 'commit', '-m', token()],
+                            env=hook_env, capture_output=True, text=True)
     assert result.returncode != 0
     assert '<commit-message>' in result.stderr
     assert token() not in result.stderr
@@ -255,9 +283,11 @@ def test_mode_change_reusing_blob_is_still_scanned(repo):
     file.write_text('relative-target')
     git('add', 'link'); git('commit', '-m', 'Ordinary synthetic file')
     first = git('rev-parse', 'HEAD')
-    file.unlink(); file.symlink_to('relative-target')
-    git('add', 'link'); git('commit', '-m', 'Synthetic symlink')
+    blob = git('rev-parse', 'HEAD:link')
+    git('update-index', '--cacheinfo', f'120000,{blob},link')
+    git('commit', '-m', 'Synthetic symlink')
     second = git('rev-parse', 'HEAD')
+    assert git('rev-parse', 'HEAD:link') == blob
     found = G.scan_commits(root, [first, second], [])
     assert any(f.rule == 'uninspectable-link-or-submodule' and f.revision == second[:12] for f in found)
 

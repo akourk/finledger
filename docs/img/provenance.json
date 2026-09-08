@@ -3,10 +3,10 @@
   "synthetic": true,
   "as_of": "2026-06-30",
   "source": "tools/build_sample_snapshot.py",
-  "source_sha256": "5570868b00cacd1c96fb8f26a60aa5ccdaa2411e9daf61f8ca63b11dbc933bd9",
+  "source_sha256": "c278a355c22d54abecf024326e9517bb162dcb43d03f57c5a63e8bd6d079bd93",
   "snapshot_sha256": "deb05041d83b5f43882b518af0d9db95084ce1be4bb7f9c714afbfcc8dc0321b",
   "prices_sha256": "e4e33498981ac1905fe2e0d823320d48f3ca3734c09982fc69e4251168a11b38",
-  "artifact_sha256": "acbf552e449d7ed927b3097b9a208512ee186f3e85dbb266455e585c5d09ce66",
+  "artifact_sha256": "744b498865f16e1b2ce4f21233363ffe4023db2de81058eade6541d54b9ce301",
   "visually_reviewed": true,
   "tool": "tools/capture_demo_screenshots.js",
   "viewport": {
@@ -14,9 +14,9 @@
     "height": 1100
   },
   "files": {
-    "dashboard.png": "7b663d660960c33ec1be995dff35049ad93a00be151b313f8946c1e52271f214",
-    "holdings.png": "932aa5819b3aa4e1980f3765cb4ba1ecc0c6d50037cdf7bc531882b254cdd7e4",
-    "performance.png": "9b6dce15b79b0c6be7c0dfc351d6874e24509b026c930e7e3e3dc470e40668ab",
-    "tax.png": "4fb28e11dd48916257991efe5f809f624ff6ea6b3fac3f1412770103a69a7634"
+    "dashboard.png": "7e65de2820932d718e53353c480b114bcf94074e081c9fc513c1f5f7ad34d896",
+    "holdings.png": "d38a969ec705af7305d8780b1f175814b41350ed460adc40a406ada919195aa9",
+    "performance.png": "5b1dc3db5e06b17facd84954be5f88722e0b3439401582eb515b57de7ddd1d99",
+    "tax.png": "18a21c7c91b3d7c9bfaa64ce370626837c75727181b42e8aec001c9b4ae6178c"
   }
 }

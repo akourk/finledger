@@ -14,6 +14,16 @@ private email addresses, financial values, tax documents, and screenshots of a
 personal dashboard must not appear in source, tests, docs, commit messages,
 issue/PR text, or external tools.
 
+Generated price shards, the legacy price cache, and price coverage metadata
+also stay local (`cache/prices/`, `cache/price_cache.json`, and
+`cache/price_cache_meta.json`). Removing them from version control does not
+require deleting local files: use `git rm --cached` for that migration.
+Before updating another clone that still tracks these files, privately back up
+its prices and coverage metadata together; pulling their removal can delete
+unchanged tracked copies. Restore the backup afterward under the ignored paths.
+Keep the local denylist intact; moving caches out of publication avoids
+weakening protection for matching private values.
+
 Normal ingestion uses yfinance for symbol price/sector requests. Broker files
 and the complete ledger are not uploaded by that process. Public demo generation
 uses isolated paths, fictional price curves, a fixed date, and disabled network

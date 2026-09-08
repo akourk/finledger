@@ -20,9 +20,12 @@ snap.json
 # Locally-rendered sample dashboard (regenerate from samples/ — see README).
 sample-dashboard.html
 
-# Cache: every file in cache/ is checked in EXCEPT the run-state
-# snapshot used for "What's Changed" diffs.  last_run.json captures
-# portfolio totals and is regenerated every pipeline run.
+# Generated prices and their coverage state stay local. Preserve both when
+# migrating an installation; a fresh checkout fetches its own price history.
+cache/prices/
+cache/price_cache.json
+cache/price_cache_meta.json
+# The "What's Changed" snapshot contains portfolio totals.
 cache/last_run.json
 
 # Python

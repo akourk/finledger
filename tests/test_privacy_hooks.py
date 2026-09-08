@@ -19,32 +19,39 @@ def hook_repo(tmp_path):
     shell = shutil.which('sh')
     assert git and shell
     for args in [('init', '-q'), ('config', 'user.name', 'Example Developer'),
-                 ('config', 'user.email', 'developer@example.test')]:
+                 ('config', 'user.email', 'developer@example.test'),
+                 ('config', 'core.autocrlf', 'false')]:
         subprocess.run([git, '-C', str(repo), *args], check=True, capture_output=True)
     for relative in ['tools/privacy_guard.py', 'tools/run-privacy-guard.sh',
                      'tools/install-hooks.sh', 'githooks/pre-commit']:
         target = repo / relative
         target.parent.mkdir(exist_ok=True)
-        target.write_bytes((ROOT / relative).read_bytes())
+        target.write_bytes((ROOT / relative).read_text(encoding='utf-8').encode('utf-8'))
     (repo / 'README.md').write_text('Entirely fictional test repository.\n')
     (repo / '.gitignore').write_text('.pii-denylist.txt\n.privacy-receipts.json\n.venv/\n')
     subprocess.run([git, '-C', str(repo), 'add', 'README.md', '.gitignore'],
                    check=True, capture_output=True)
     binaries = tmp_path / 'bin'
     binaries.mkdir()
-    (binaries / 'git').symlink_to(git)
-    (binaries / 'sh').symlink_to(shell)
+    if os.name == 'nt':
+        # Native Python needs git.exe on PATH; copying it breaks Git's install
+        # lookup. Git's own directories supply git/sh without exposing Python.
+        search_path = os.pathsep.join([str(binaries), str(Path(git).parent), str(Path(shell).parent)])
+    else:
+        (binaries / 'git').symlink_to(git)
+        (binaries / 'sh').symlink_to(shell)
+        search_path = str(binaries)
     marker = tmp_path / 'unsupported-runtime-called'
-    env = {**os.environ, 'PATH': str(binaries), 'FIN_TEST_RUNTIME_MARKER': str(marker),
+    env = {**os.environ, 'PATH': search_path, 'FIN_TEST_RUNTIME_MARKER': str(marker),
            'GIT_CONFIG_NOSYSTEM': '1'}
     env.pop('PYTHONPATH', None)
     env.pop('PYTHONHOME', None)
 
     def install_runtime(path, supported):
         path.parent.mkdir(exist_ok=True, parents=True)
-        script = ('#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' "$@"\n' if supported
+        script = ('#!/bin/sh\nexec ' + shlex.quote(Path(sys.executable).as_posix()) + ' "$@"\n' if supported
                   else '#!/bin/sh\nprintf "called\\n" > "$FIN_TEST_RUNTIME_MARKER"\nexit 1\n')
-        path.write_text(script)
+        path.write_bytes(script.encode('utf-8'))
         path.chmod(0o755)
 
     def run(*args):

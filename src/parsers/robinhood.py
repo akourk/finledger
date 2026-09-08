@@ -25,6 +25,27 @@ from ._helpers import (
 # Headers: Activity Date, Process Date, Settle Date, Instrument, Description,
 #          Trans Code, Quantity, Price, Amount
 
+_ROBINHOOD_COLUMNS = (
+    "Activity Date", "Process Date", "Settle Date", "Instrument", "Description",
+    "Trans Code", "Quantity", "Price", "Amount",
+)
+
+
+def _is_informational_footer(row: dict) -> bool:
+    """Recognize Robinhood's disclaimer in an extra, tenth CSV column.
+
+    All nine transaction cells must be blank. Never discard an oversized
+    transaction or an unrecognized extra cell, even at the end of a file.
+    """
+    if set(row) != {*_ROBINHOOD_COLUMNS, None}:
+        return False
+    if any((row[column] or "").strip() for column in _ROBINHOOD_COLUMNS):
+        return False
+    extra = row[None]
+    return len(extra) == 1 and " ".join(extra[0].split()).startswith(
+        "The data provided is for informational purposes only.")
+
+
 def _parse_option_qty(raw: str, default: float = 1.0) -> float:
     """Parse an option contract quantity from a Robinhood CSV Quantity field.
 
@@ -138,7 +159,12 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
     # First pass: read everything so we can pair OEXCS with OCC.
     rows: list[tuple[str, dict]] = []
     with open(filepath, newline="", encoding="utf-8-sig") as f:
-        reader = read_csv_rows(f, filepath.name, nonblank=('Trans Code',), required=('Activity Date', 'Trans Code', 'Instrument', 'Quantity', 'Price', 'Amount'))
+        reader = read_csv_rows(
+            f, filepath.name, nonblank=('Trans Code',),
+            required=('Activity Date', 'Trans Code', 'Instrument', 'Quantity',
+                      'Price', 'Amount'),
+            is_informational=_is_informational_footer,
+        )
         for row in reader:
             try:
                 date = _date_mdy(row["Activity Date"])

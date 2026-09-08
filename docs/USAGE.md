@@ -72,6 +72,30 @@ side.  Use this to move your portfolio between machines without copying
 30+ files individually.  Existing files are preserved unless you pass
 `--force`.
 
+Generated price history and its coverage metadata stay local and are not part
+of the CSV snapshot or a fresh checkout. The next normal run fetches missing
+prices. To preserve cached history when moving machines, privately copy
+`cache/prices/` and `cache/price_cache_meta.json` together (and
+`cache/price_cache.json` if using the legacy format). Keep these files out of
+Git; historical prices for delisted instruments may be difficult to fetch again.
+Before pulling the change that removes tracked price caches into an older
+clone, back up those files privately and restore them after the update. Git
+can remove unchanged tracked copies when applying that change.
+
+Snapshots transport raw CSV text; export and import do not parse its transaction
+rows. Import validates the snapshot bundle before restoring files, while a
+subsequent `python -m src.main` validates transactions and builds the dashboard.
+A successful restore can therefore be followed by a CSV validation error. The
+`Import/export failed:` prefix is also used for normal pipeline errors; read the
+file, row, and reason that follow it to identify the problem.
+
+The Robinhood parser automatically excludes its recognized informational
+disclaimer footer when all transaction cells are blank and the notice occupies
+one extra column. It still rejects oversized transaction rows, unrecognized
+extra cells, and other malformed transaction data. This footer needs no manual
+CSV or snapshot edits; other validation errors require correcting the source
+format while preserving transaction records.
+
 ## Supported brokers
 
 | Broker               | Account type        | Detection                                           |

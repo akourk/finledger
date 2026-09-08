@@ -88,7 +88,7 @@ def main(argv: list[str]) -> int:
     src, dst = Path(argv[1]), Path(argv[2])
     out = inject(src.read_text(encoding="utf-8"))
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(out, encoding="utf-8")
+    dst.write_text(out, encoding="utf-8", newline="\n")
     print(f"demo_banner: wrote {len(out):,} bytes")
     return 0
 

@@ -130,7 +130,9 @@ def parse_all_files(data_dir: Path) -> list[Transaction]:
     global _parse_report
     _parse_report = []
     all_txns: list[Transaction] = []
-    for csv_file in sorted(data_dir.glob("*.csv")):
+    # Path comparison folds case on Windows. File order feeds transaction
+    # ordering and analytics, so use identical filename ordering on all hosts.
+    for csv_file in sorted(data_dir.glob("*.csv"), key=lambda p: p.name):
         broker = detect_broker(csv_file)
         if broker == "unknown":
             _parse_report.append({"file": csv_file.name, "broker": broker,
