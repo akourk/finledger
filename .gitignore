@@ -27,6 +27,8 @@ cache/price_cache.json
 cache/price_cache_meta.json
 # The "What's Changed" snapshot contains portfolio totals.
 cache/last_run.json
+# Interrupted cache-save manifests and backups contain private local state.
+cache/.fin-*
 
 # Python
 .venv/

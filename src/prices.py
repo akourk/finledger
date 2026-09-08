@@ -69,13 +69,14 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .config import CACHE_DIR, CRYPTO_SYMBOLS, SYMBOL_MAP, load_json_cache
+from .io_safe import check_pending_recovery, replace_files
 
 # Prices are sharded one JSON file per symbol under PRICES_DIR — only
 # symbols with new data get rewritten on save, git diffs scope to the
 # symbols that actually changed, and "delete to force a refetch" is a
 # single file.  PRICE_CACHE_FILE is the legacy pre-sharding monolith:
 # still read on load (shards override per symbol) and removed after the
-# first successful shard write.
+# first successful cache save.
 PRICES_DIR           = CACHE_DIR / "prices"
 PRICE_CACHE_FILE     = CACHE_DIR / "price_cache.json"
 PRICE_META_FILE      = CACHE_DIR / "price_cache_meta.json"
@@ -367,6 +368,7 @@ def _shard_path(sym: str) -> Path:
 def _load_prices() -> dict[str, dict[str, float]]:
     global _prices, _legacy_prices_pending_delete
     if _prices is None:
+        check_pending_recovery(CACHE_DIR)
         _prices = {}
         # Legacy pre-sharding monolith: read it first (shards override
         # per symbol), mark everything dirty so the first save writes
@@ -377,11 +379,13 @@ def _load_prices() -> dict[str, dict[str, float]]:
                     legacy = json.load(f)
                 if isinstance(legacy, dict):
                     _prices.update(legacy)
+                    # Even an empty valid monolith can retire. An unreadable
+                    # or malformed source must remain available for repair.
+                    _legacy_prices_pending_delete = True
             except (OSError, json.JSONDecodeError):
                 pass
             for sym in _prices:
                 _mark_prices_dirty(sym)
-            _legacy_prices_pending_delete = True
         if PRICES_DIR.exists():
             for fp in sorted(PRICES_DIR.glob("*.json")):
                 try:
@@ -403,6 +407,7 @@ def _load_prices() -> dict[str, dict[str, float]]:
 def _load_meta() -> dict:
     global _meta
     if _meta is None:
+        check_pending_recovery(CACHE_DIR)
         _meta = load_json_cache(
             PRICE_META_FILE,
             {"version": 1, "auto_adjusted": _AUTO_ADJUST, "symbols": {}})
@@ -442,6 +447,7 @@ def _invalidate_if_policy_changed() -> None:
 def _load_splits() -> dict[str, list[list]]:
     global _splits
     if _splits is None:
+        check_pending_recovery(CACHE_DIR)
         _splits = load_json_cache(SPLITS_CACHE_FILE, {})
     return _splits
 
@@ -452,6 +458,7 @@ def _load_dividends() -> dict[str, list[list]]:
     `_is_total_return_symbol` classifies get entries."""
     global _dividends
     if _dividends is None:
+        check_pending_recovery(CACHE_DIR)
         if DIVIDENDS_CACHE_FILE.exists():
             with open(DIVIDENDS_CACHE_FILE, "r", encoding="utf-8") as f:
                 _dividends = json.load(f)
@@ -471,6 +478,7 @@ def _load_proxy_map() -> dict:
     """
     global _proxy
     if _proxy is None:
+        check_pending_recovery(CACHE_DIR)
         if PROXY_MAP_FILE.exists():
             with open(PROXY_MAP_FILE, "r", encoding="utf-8") as f:
                 _proxy = json.load(f)
@@ -548,17 +556,20 @@ def _round_price(v: float) -> float:
 
 
 def save_caches() -> None:
-    """Write all caches back to disk (only what's dirty).
+    """Save the complete dirty cache set, retaining pending work on failure.
 
     Prices are sharded: only symbols marked dirty get their shard file
-    rewritten, and symbols marked deleted get theirs unlinked.  The
-    legacy monolithic ``price_cache.json`` (if it was read this process)
-    is removed after the first successful shard write.
+    rewritten. Serialize every shard and sidecar before replacing any file,
+    so invalid data cannot partially advance closes, splits, or coverage.
+    Deleted shards and the legacy monolith retire after the replacements;
+    incomplete replacements roll back or remain behind a recovery guard.
     """
     global _meta_dirty, _splits_dirty, _dividends_dirty, _proxy_dirty
     global _legacy_prices_pending_delete
-    if (_prices_dirty_syms or _prices_deleted_syms) and _prices is not None:
-        PRICES_DIR.mkdir(parents=True, exist_ok=True)
+
+    contents: dict[Path, bytes] = {}
+    deletions: list[Path] = []
+    if _prices is not None:
         for sym in sorted(_prices_dirty_syms):
             series = _prices.get(sym)
             if series is None:
@@ -567,40 +578,40 @@ def save_caches() -> None:
                 "symbol": sym,
                 "prices": {d: _round_price(p) for d, p in series.items()},
             }
-            with open(_shard_path(sym), "w", encoding="utf-8") as f:
-                json.dump(doc, f, indent=1, sort_keys=True, ensure_ascii=False)
-        for sym in sorted(_prices_deleted_syms):
-            try:
-                _shard_path(sym).unlink()
-            except OSError:
-                pass
+            contents[_shard_path(sym)] = json.dumps(
+                doc, indent=1, sort_keys=True, ensure_ascii=False,
+                allow_nan=False).encode("utf-8")
+        deletions.extend(_shard_path(sym) for sym in sorted(_prices_deleted_syms))
+        if _legacy_prices_pending_delete:
+            deletions.append(PRICE_CACHE_FILE)
+
+    for path, dirty, cache in (
+        (DIVIDENDS_CACHE_FILE, _dividends_dirty, _dividends),
+        (PRICE_META_FILE, _meta_dirty, _meta),
+        (SPLITS_CACHE_FILE, _splits_dirty, _splits),
+        (PROXY_MAP_FILE, _proxy_dirty, _proxy),
+    ):
+        if dirty and cache is not None:
+            contents[path] = json.dumps(
+                cache, indent=2, sort_keys=True, ensure_ascii=False,
+                allow_nan=False).encode("utf-8")
+
+    if contents or deletions:
+        replace_files(contents, deletions=deletions, recovery_dir=CACHE_DIR)
+
+    # Clear flags only after the entire set, including deletions, succeeds.
+    # A failed save can be retried without fetching or rebuilding cache data.
+    if _prices is not None:
         _prices_dirty_syms.clear()
         _prices_deleted_syms.clear()
-        if _legacy_prices_pending_delete:
-            try:
-                PRICE_CACHE_FILE.unlink()
-            except OSError:
-                pass
-            _legacy_prices_pending_delete = False
+        _legacy_prices_pending_delete = False
     if _dividends_dirty and _dividends is not None:
-        DIVIDENDS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(DIVIDENDS_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(_dividends, f, indent=2, sort_keys=True, ensure_ascii=False)
         _dividends_dirty = False
     if _meta_dirty and _meta is not None:
-        PRICE_META_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(PRICE_META_FILE, "w", encoding="utf-8") as f:
-            json.dump(_meta, f, indent=2, sort_keys=True, ensure_ascii=False)
         _meta_dirty = False
     if _splits_dirty and _splits is not None:
-        SPLITS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(SPLITS_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(_splits, f, indent=2, sort_keys=True, ensure_ascii=False)
         _splits_dirty = False
     if _proxy_dirty and _proxy is not None:
-        PROXY_MAP_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(PROXY_MAP_FILE, "w", encoding="utf-8") as f:
-            json.dump(_proxy, f, indent=2, sort_keys=True, ensure_ascii=False)
         _proxy_dirty = False
 
 

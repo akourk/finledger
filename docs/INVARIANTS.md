@@ -1752,6 +1752,25 @@ process.
 
 ## Invariants the price cache relies on
 
+- **Persist the complete dirty set or preserve recovery evidence.**
+  `prices.save_caches` serializes all changed shards and dirty sidecars with
+  `allow_nan=False` before changing live files. `io_safe.replace_files` stages
+  replacements and original-byte backups, writes `cache/.fin-recovery.json`,
+  then replaces files before deleting retired shards or the legacy monolith.
+  Dirty flags and pending deletions clear only after the whole save succeeds;
+  a failed save must retain the work for retry. `sectors.save_cache` uses the
+  same helper for its own file, as a separate save.
+  Ordinary failures attempt to restore the prior set. Interrupted processes or
+  incomplete rollback leave a recovery marker and private `.fin-*` files;
+  subsequent disk loads and replacement saves fail closed on that marker.
+  Original hashes and backup paths in the manifest support manual recovery;
+  they are not instructions for automatic replay. Removing the marker is the
+  commit point: never begin rollback after successful marker removal.
+  This assumes one writer. Per-file replacement is atomic, but the group is
+  not an atomic filesystem transaction, does not coordinate concurrent readers
+  or writers, and does not promise power-loss durability. Preserve these
+  boundaries in `tests/test_io_safe.py` and `tests/test_cache_persistence.py`.
+  See [manual recovery](USAGE.md#cache-save-recovery).
 - **Canonical keys are post-normalization** (`BTC-USD`, not `BTC`;
   `ETH-USD`, not `ETH2`). On first load after this feature landed,
   `prices._migrate_legacy_keys` folded the pre-existing bare-ticker crypto
@@ -1909,6 +1928,11 @@ process.
   If you hand-edit or delete price shards, also delete those symbols'
   meta entries so the "covered range" tracking doesn't claim coverage
   that doesn't exist anymore.
+- `cache/.fin-recovery.json` and `.fin-*` files within cache directories —
+  local recovery evidence, including exact previous cache bytes. Keep them
+  private and intact until [manual recovery](USAGE.md#cache-save-recovery)
+  verifies the previous file set. A marker must never be deleted simply to
+  make a blocked pipeline run again.
 - `cache/dividends_cache.json` — dividend events for total-return
   symbols (benchmarks + scaled-proxy targets); auto-refreshed, safe to
   delete.
@@ -1924,6 +1948,10 @@ process.
   with payroll contributions) instead of years-since-first-anchor.
 
 ## Repairing a suspect price cache
+
+Resolve any [interrupted-save recovery](USAGE.md#cache-save-recovery) first.
+Rewinding coverage or refetching prices does not restore a partially replaced
+set of prices and sidecars.
 
 `tools/repair_intraday_marks.py` audits cached daily bars against a
 fresh pull and, if warranted, rewinds `covered_end` / `settled_through`

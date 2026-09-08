@@ -252,6 +252,34 @@ Coinbase Pro match without a USD valuation is reported as unsupported; provide a
 supported export with USD values rather than accepting invented zero proceeds.
 A ticker shared by a stock/ETF and cryptocurrency must be classified by source.
 
+### Cache save recovery
+
+Cache saves prepare replacements and backups before changing live files. A
+failed save attempts to restore the previous set. If the process stops abruptly
+or restoration cannot finish, `cache/.fin-recovery.json` blocks later cache
+loads and saves. Its manifest and `.fin-*` backups are private local files;
+keep them together and do not clear the marker merely to retry.
+
+Recover with all finledger processes stopped:
+
+1. Preserve a private copy of the affected cache directory, including the
+   manifest and backups. Inspect the manifest locally; its `path` and `backup`
+   entries are relative to the cache directory and must resolve within it.
+2. For each file that previously existed, verify the backup's SHA-256 against
+   `sha256`, then restore the exact original bytes and verify the restored
+   file's hash. A target already matching the original hash needs no rewrite.
+   An entry with `backup` and `sha256` both `null` records a previously absent
+   target; restore that absence rather than retaining a newly created file.
+   If a backup is missing, a hash disagrees, or a path is unexpected, preserve
+   the evidence and investigate instead of guessing or fetching replacements.
+3. Remove the recovery marker only after the complete original file set and
+   recorded absences are verified. Keep the private backup until a normal run
+   succeeds; clean up only recovery files whose purpose has been established.
+
+There is no automatic recovery replay. Run only one pipeline writer against a
+cache at a time. Individual replacements are atomic, but a multi-file save is
+not an atomic filesystem transaction and does not promise power-loss durability.
+
 ## Market data and privacy
 
 Local ingestion can request prices and sectors for symbols through yfinance.

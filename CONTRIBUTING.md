@@ -70,6 +70,7 @@ workflow instead of duplicating it for each model or client.
 | New financial action | `src/actions.py`, `normalize.py`; `test_actions_catalog.py` and affected financial consumers | [Action catalog](.claude/skills/fin-add-action/SKILL.md) |
 | Lots, cash principal, or cost basis | `src/basis.py`, `history.py`, `pipeline_stages.py`; `test_lot_walker_parity.py`, `test_cash_basis_parity.py`, `test_pipeline_path_parity.py` | [Lot parity](.claude/skills/fin-lot-walker-sync/SKILL.md) |
 | Valuation or price cache | `src/valuation.py`, `prices.py`; `test_valuation_kernel.py`, `test_value_at_date_parity.py`, `test_prices.py`, `test_price_cache_corruption.py`, `test_prices_backoff.py` | [Price invariants](docs/INVARIANTS.md#invariants-the-price-cache-relies-on) |
+| Cache persistence or interrupted-save recovery | `src/io_safe.py`, `prices.py`, `sectors.py`; `test_io_safe.py`, `test_cache_persistence.py` | [Recovery procedure](docs/USAGE.md#cache-save-recovery) and [persistence invariants](docs/INVARIANTS.md#invariants-the-price-cache-relies-on) |
 | Analytics or dashboard behavior | `src/analytics/`, `src/dashboard/app/*.js`; module tests, `test_dashboard_consistency.py`, `test_dashboard_bundling.py`, then demo browser checks | [Analytics and rendering](.claude/skills/fin-add-analytics/SKILL.md) |
 | Annual tax reference update | `src/analytics/tax.py`; `test_tax_tables_vs_irs.py`, `test_tax_tables.py`, `test_tax_table_js_parity.py` | [Tax tables](.claude/skills/fin-tax-year-update/SKILL.md) |
 | Privacy or publication | `tools/privacy_guard.py`, `tools/build_demo.py`, `githooks/`; `test_privacy_guard.py`, `test_privacy_hooks.py`, `test_demo_build.py` | [Privacy](docs/PRIVACY.md) |
@@ -88,6 +89,14 @@ it loses split, cash, date, or lot semantics. Distinguish local measurements fro
 general speed claims. In parallel reviews, assign file ownership and share
 qualitative findings or independently fictional reproducers, never private
 inputs or local audit output. Review the combined diff before final validation.
+
+For cache persistence changes, inject failures with fictional files at
+serialization, replacement, deletion, rollback, and marker removal. Assert
+byte-for-byte preservation or intact recovery evidence, retained dirty state,
+and rejection of subsequent cold loads when recovery is pending. Use a child
+process to test abrupt termination. The helper assumes a single writer and
+does not make multiple file replacements globally atomic or power-loss durable;
+do not turn those assumptions into stronger documentation claims.
 
 ### CSV parser investigations
 

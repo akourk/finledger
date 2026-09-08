@@ -52,6 +52,19 @@ def test_complete_index_not_only_added_lines(repo):
     assert any(f.rule == 'local-denylist' for f in G.scan_scope(root, 'staged', [token()]))
 
 
+@pytest.mark.parametrize('path', [
+    'cache/.fin-recovery.json', 'cache/.fin-backup-fictional',
+    'cache/.fin-stage-fictional', 'cache/prices/.fin-backup-fictional',
+])
+def test_cache_recovery_material_is_blocked_even_when_force_added(repo, path):
+    root, git = repo
+    target = root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('{}')
+    git('add', '-f', path)
+    assert any(f.rule == 'private-file' for f in G.scan_scope(root, 'staged', []))
+
+
 def test_force_added_private_file_cannot_hide_behind_gitignore(repo):
     root, git = repo
     (root / 'data').mkdir()

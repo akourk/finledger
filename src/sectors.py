@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 
 from .config import CACHE_DIR, CASH_SYMBOLS, load_json_cache
+from .io_safe import check_pending_recovery, replace_files
 
 SECTOR_CACHE_FILE = CACHE_DIR / "sector_cache.json"
 
@@ -44,18 +45,19 @@ _yf = None
 def _load_cache() -> dict[str, str]:
     global _cache
     if _cache is None:
+        check_pending_recovery(CACHE_DIR)
         _cache = load_json_cache(SECTOR_CACHE_FILE, {})
     return _cache
 
 
 def save_cache() -> None:
-    """Write cache back to disk if anything changed this run."""
+    """Replace a changed cache only after serialization, retaining failed work."""
     global _dirty
     if not _dirty or _cache is None:
         return
-    SECTOR_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(SECTOR_CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(_cache, f, indent=2, sort_keys=True, ensure_ascii=False)
+    payload = json.dumps(_cache, indent=2, sort_keys=True, ensure_ascii=False,
+                         allow_nan=False).encode("utf-8")
+    replace_files({SECTOR_CACHE_FILE: payload}, recovery_dir=CACHE_DIR)
     _dirty = False
 
 

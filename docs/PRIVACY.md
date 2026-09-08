@@ -24,6 +24,13 @@ unchanged tracked copies. Restore the backup afterward under the ignored paths.
 Keep the local denylist intact; moving caches out of publication avoids
 weakening protection for matching private values.
 
+Cache recovery files also stay local: `cache/.fin-recovery.json` and `.fin-*`
+staging or backup files within cache directories. Backups contain exact prior
+cache bytes, which may include transaction-derived proxy anchors; the manifest
+contains paths and original hashes. Do not publish or paste them into external
+tools, and do not delete them to bypass a recovery error. Preserve their bytes
+until [manual recovery](USAGE.md#cache-save-recovery) verifies the previous set.
+
 Normal ingestion uses yfinance for symbol price/sector requests. Broker files
 and the complete ledger are not uploaded by that process. Public demo generation
 uses isolated paths, fictional price curves, a fixed date, and disabled network

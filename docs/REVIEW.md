@@ -17,12 +17,20 @@ code testing or measurements.
 | Retirement defaults | Some browser totals added contribution reversals, counted transfers, included future rows, or omitted custom retirement groups. | Share signed, bounded trailing contributions and metadata-aware account classification; compare classification with Python in `test_frontend_review_regressions.py`. |
 | Transaction startup | Up to thousands of hidden rows were formatted on every page load; search text was rebuilt each keystroke. | Render the table on its first visit and cache immutable row search text. Tests cover initial deep links, repeated visits, and hidden-column search. |
 | CSV renaming | Fixed temporary filenames could collide; an I/O failure could leave inputs renamed or unavailable to the next import. | Use a unique staging directory, recover both phases, preserve every source on recovery failure, and block subsequent ingestion until recovery is resolved. `test_scanner.py` injects failures during staging, final renames, and rollback. |
+| Cache persistence | In-place writes could leave truncated JSON or mismatched prices, splits, and coverage; deletion errors discarded pending work. | Serialize the entire dirty price set before mutation, stage replacements and original backups, retire old files last, and retain dirty state on failure. A recovery manifest blocks cold loads after an interrupted save or failed rollback. `test_cache_persistence.py` and `test_io_safe.py` cover serialization, disk errors, migration, rollback, and abrupt process exit. Sector saves use the same helper separately. |
 | Test cleanup | The session isolation directory was never released. | Retain a `TemporaryDirectory` owner for process lifetime so normal interpreter shutdown cleans up the session's own files. |
 
 The rename workflow assumes a single writer, as does the rest of the pipeline.
 It does not claim atomic multi-file transactions or protection against concurrent
 processes mutating the same input directory. Recovery instructions are in
 [Usage](USAGE.md#input-validation-and-recovery).
+
+Cache saves likewise assume one writer. They preserve original bytes and a
+local recovery manifest before replacing live files; a failed rollback requires
+manual restoration before another process can load caches. This is not an
+atomic multi-file filesystem transaction or a power-loss durability guarantee.
+Recovery files remain private and are blocked by the publication guard even
+when force-added. See [cache recovery](USAGE.md#cache-save-recovery).
 
 ## Development efficiency
 
@@ -52,25 +60,19 @@ necessary rendering work.
 
 ## Further work, in priority order
 
-1. **Cache persistence and crash recovery.** `prices.save_caches` and
-   `sectors.save_cache` write JSON in place. Investigate staged replacement of
-   shards and related sidecars, preserving dirty state and migration backups on
-   failure. Cover interruption, disk errors, and split/coverage consistency
-   before changing this subsystem; a per-file atomic write alone does not make
-   the entire cache update transactional.
-2. **Clarify drawdown semantics.** Some drawdown views use raw portfolio-value
+1. **Clarify drawdown semantics.** Some drawdown views use raw portfolio-value
    declines, so external withdrawals contribute to the reported drawdown.
    Decide whether each view describes balance declines or investment
    performance. Add a withdrawal-only fixture before changing labels or math.
-3. **Market calendars by asset class.** The existing weekend crypto limitation
+2. **Market calendars by asset class.** The existing weekend crypto limitation
    remains: coverage scheduling clamps through the weekday calendar. Any fix
    must respect crypto settlement, equity close timing, and provisional marks;
    test those independently of live quotes.
-4. **Profile repeated walks before broader optimization.** Transfer pairing and
+3. **Profile repeated walks before broader optimization.** Transfer pairing and
    historical lot processing are plausible scaling costs, but this review did
    not establish an end-to-end bottleneck. Measure larger fictional ledgers
    before introducing indexes, checkpoints, or persistent incremental state.
-5. **Reduce duplicated financial state transitions gradually.** The lot walkers
+4. **Reduce duplicated financial state transitions gradually.** The lot walkers
    already share substantial helpers and strong parity coverage. Extract one
    verified transition at a time. A framework rewrite or database migration has
    no demonstrated benefit for the current workload.
@@ -83,6 +85,12 @@ skipped because Windows did not grant symlink privileges. Chrome smoke checks
 passed across all **10 tabs** of the deterministic fictional demo, and axe
 accessibility checks passed across **12 states** with no serious or critical
 violations.
+
+The cache-recovery follow-up passed **1,568 tests**, with the same Windows
+symlink skip. Its isolated demo HTML and provenance manifest exactly match the
+approved artifact, so the existing browser checks and screenshot review still
+describe the generated output. New tests include real subprocess exits after
+filesystem mutations and interruptions around recovery-marker removal.
 
 Artifact and worktree privacy scans both passed after the proxy-configuration
 sanitization and screenshot review. A human visually approved all four refreshed
