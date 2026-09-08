@@ -51,16 +51,16 @@ def _parse_option_qty(raw: str, default: float = 1.0) -> float:
 
     Robinhood writes things like ``"1S"`` (1 contract, short leg marker)
     for OEXCS rows, and empty strings for OEXP rows.  Neither is
-    parseable by plain ``float()``.  Strip trailing non-numeric characters
-    and fall back to ``default`` (usually 1 — one contract) when nothing
-    numeric is present.
+    parseable by plain ``float()``. Accept only the recognized ``S`` suffix
+    after a valid number. Only an entirely blank field uses ``default``;
+    a marker without a number and other malformed values must fail.
     """
     s = (raw or "").strip()
     if not s:
         return default
-    # S is the broker's documented short/surrender marker, not an
-    # invitation to accept arbitrary numeric prefixes such as '1typo'.
-    if s.endswith("S"):
+    # Keep the known short/surrender marker distinct from arbitrary numeric
+    # prefixes such as '1typo'. A marker alone remains invalid, not blank.
+    if s.endswith("S") and s[:-1].strip():
         s = s[:-1]
     from ._helpers import CSVValue
     checked = CSVValue(s, "Robinhood", 0, "Quantity")
@@ -181,7 +181,7 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
         build_mrgc_pool, build_occ_pool, build_mrgs_receive_dates,
         build_held_at_some_point, is_cil_from_recent_merger,
         is_option_description, parse_cil_description,
-        parse_liq_description, parse_qty_with_surrender_marker,
+        parse_liq_description,
     )
     occ_pool           = build_occ_pool(rows)
     mrgc_pool          = build_mrgc_pool(rows)
@@ -257,7 +257,7 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
 
         qty_raw = (row.get("Quantity", "") or "").strip()
         qty = (_parse_option_qty(row.get("Quantity", ""), default=0.0)
-               if action in {"MRGS", "SOFF", "SPR", "CIL", "LIQ"}
+               if action in {"MRGS", "SOFF", "SPR", "SXCH", "CIL", "LIQ"}
                else _num(row.get("Quantity", "")))
         amount = _num(row.get("Amount", ""))
 
@@ -292,21 +292,30 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
         # - SPR = stock split / spinoff.  Same S-vs-no-S convention as
         #   MRGS.  Treated as Sell-at-$0 + Buy-at-$0 for now (basis
         #   continuity lost); balances are correct.
-        if action in ("MRGS", "SPR"):
-            mrg_qty, is_surrender = parse_qty_with_surrender_marker(qty_raw)
+        # - SXCH = stock exchange. Use the same directional stock-for-stock
+        #   representation and existing basis limitation, without assuming a
+        #   same-day MRGC cash receipt belongs to the exchange.
+        # SXCH uses the same surrender/receipt marker for stock exchanges.
+        # Resolve direction here: its generic Merger normalization only adds
+        # shares. Reuse the validated quantity rather than reparsing with float,
+        # which would silently turn grouped quantities into zero.
+        if action in ("MRGS", "SPR", "SXCH"):
+            mrg_qty, is_surrender = qty, qty_raw.endswith("S")
             if is_surrender:
                 # Look for paired MRGC cash receipt (cash-only merger)
                 proceeds = 0.0
-                for mrgc_row in mrgc_pool.get((date, underlying), []):
+                cash_rows = (mrgc_pool.get((date, underlying), [])
+                             if action != "SXCH" else [])
+                for mrgc_row in cash_rows:
                     if id(mrgc_row) in consumed_mrgc:
                         continue
                     proceeds = abs(_num(mrgc_row.get("Amount", "")))
                     consumed_mrgc.add(id(mrgc_row))
                     break
                 price = (proceeds / mrg_qty) if (mrg_qty > 0 and proceeds > 0) else 0.0
-                kind = "Cash merger" if action == "MRGS" and proceeds > 0 else (
-                    "Merger surrender" if action == "MRGS" else "Split/spinoff out"
-                )
+                kind = ("Stock exchange surrender" if action == "SXCH" else
+                        "Cash merger" if action == "MRGS" and proceeds > 0 else
+                        "Merger surrender" if action == "MRGS" else "Split/spinoff out")
                 txns.append(_txn(
                     date=date, account="Robinhood", symbol=underlying,
                     action="Sell", quantity=mrg_qty,
@@ -315,7 +324,8 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
                     source=filepath.name,
                 ))
             else:
-                kind = "Merger receipt" if action == "MRGS" else "Split/spinoff in"
+                kind = ("Stock exchange receipt" if action == "SXCH" else
+                        "Merger receipt" if action == "MRGS" else "Split/spinoff in")
                 txns.append(_txn(
                     date=date, account="Robinhood", symbol=underlying,
                     action="Buy", quantity=mrg_qty,

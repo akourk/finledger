@@ -119,12 +119,14 @@ def build_occ_pool(rows: list[tuple[str, dict]]) -> dict[tuple[str, str], list[d
 
 
 def build_mrgs_receive_dates(rows: list[tuple[str, dict]]) -> dict[str, list[str]]:
-    """Map ``symbol → list of dates`` where a MRGS-receive (no-S
-    quantity) appeared.  Used by the CIL handler to detect
-    fractional-share cash-outs from stock-for-stock mergers."""
+    """Map receipt dates for MRGS mergers and SXCH stock exchanges.
+
+    The CIL handler uses these no-S quantities to recognize fractional
+    cash-outs separately from the whole shares already received.
+    """
     out: dict[str, list[str]] = {}
     for date, row in rows:
-        if (row.get("Trans Code") or "").strip() != "MRGS":
+        if (row.get("Trans Code") or "").strip() not in ("MRGS", "SXCH"):
             continue
         qty_raw = (row.get("Quantity", "") or "").strip()
         if not qty_raw or qty_raw.upper().endswith("S"):
@@ -137,7 +139,7 @@ def build_mrgs_receive_dates(rows: list[tuple[str, dict]]) -> dict[str, list[str
 
 def build_held_at_some_point(rows: list[tuple[str, dict]]) -> set[str]:
     """Set of symbols that have any share-ADDING event in the CSV
-    (Buy, REINV, MRGS-receive, SPR-receive).  CIL or MRGS-surrender on
+    (Buy, REINV, MRGS/SXCH/SPR-receive). CIL or merger surrender on
     a symbol NOT in this set means the user never held the shares (a
     spin-off warrant or pre-rename ticker), so proceeds should route
     to a USD Dividend rather than creating a phantom negative balance.
@@ -151,7 +153,7 @@ def build_held_at_some_point(rows: list[tuple[str, dict]]) -> set[str]:
             continue
         if code in ("Buy", "REINV"):
             held.add(sym)
-        elif code in ("MRGS", "SPR") and qty and not qty.upper().endswith("S"):
+        elif code in ("MRGS", "SPR", "SXCH") and qty and not qty.upper().endswith("S"):
             held.add(sym)
     return held
 

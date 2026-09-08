@@ -105,6 +105,11 @@ Output lands in `exports/transactions.json` and `exports/dashboard.html`.
    prefix. Never relax overflow validation generally or discard a row containing
    transaction data. `tests/test_robinhood_footer.py` pins this boundary,
    snapshot round trips, and exclusion from ingestion counts and findings.
+   Robinhood `SXCH` must resolve the quantity's `S` surrender marker before
+   generic action normalization, which otherwise treats both legs as additions.
+   Reuse the strictly parsed quantity; reparsing grouped values with `float`
+   can silently lose shares. `tests/test_snapshot_workflow.py` exercises real
+   CLI export, copy, restore, and full ingestion with balance assertions.
 4. **Deduplicate** (`export.deduplicate`) — identical rows across *different*
    source files are overlapping exports; identical rows *within* one file are
    legitimate (e.g. three same-day CBETH sells). The hash-based dedupe keeps

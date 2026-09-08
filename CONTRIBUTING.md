@@ -63,12 +63,17 @@ the shape with independently fictional CSVs before changing the parser.
 For Robinhood ingestion changes, start with:
 
 ```bash
-uv run python -m pytest tests/test_robinhood_footer.py tests/test_import_safety.py tests/test_parser_silent_drop.py tests/test_robinhood_corp_actions.py tests/test_sample_snapshot.py -q -rs
+uv run python -m pytest tests/test_snapshot_workflow.py tests/test_robinhood_footer.py tests/test_import_safety.py tests/test_parser_silent_drop.py tests/test_robinhood_corp_actions.py tests/test_sample_snapshot.py -q -rs
 ```
 
 Then run the complete suite. Include snapshot round trips, multiline quoted
 fields, and malformed rows near any recognized informational footer. Keep CSV
 record parsing intact so error locations retain their physical line numbers.
+Snapshot tests must run the restored files through the normal CLI pipeline,
+not stop at successful export/import. Assert resulting share balances and
+preservation of previous outputs on failure. Use a fixed date, fictional price
+coverage, and disabled network access so a missing format case cannot hide
+behind environment differences or live quotes.
 
 ### Windows validation
 

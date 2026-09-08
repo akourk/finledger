@@ -111,6 +111,168 @@ class TestStockMerger:
 
 
 # ---------------------------------------------------------------------------
+# SXCH — stock exchange surrender / receipt
+# ---------------------------------------------------------------------------
+
+class TestStockExchange:
+    """All figures and securities below are independently fictional."""
+
+    @staticmethod
+    def _normalized_balances(path):
+        from src.accounts import configure_accounts
+        from src.normalize import normalize_action
+        from src.pipeline_stages import walk_balances
+
+        txns = _parse(path)
+        configure_accounts(txns, {"account_types": {"Robinhood": "Taxable"}})
+        for txn in txns:
+            txn["action"] = normalize_action(txn)
+        return walk_balances(txns)
+
+    @pytest.mark.parametrize(
+        "bought,surrendered,received,sold,expected_receipt,expected_balance",
+        [
+            ("6", "6S", "3", "2", 3.0, 1.0),
+            ("1,200", "1,200S", "2,400", "400", 2400.0, 2000.0),
+            ("1.25", "1.25S", "2.5", "0.5", 2.5, 2.0),
+        ],
+    )
+    @pytest.mark.parametrize("newest_first", [False, True])
+    def test_exchange_removes_old_shares_and_adds_new_shares(
+            self, isolated_workdir, bought, surrendered, received, sold,
+            expected_receipt, expected_balance, newest_first):
+        """Accepting S must retain its direction through normalization."""
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        rows = [
+            {"Activity Date": "1/2/2024", "Trans Code": "Buy",
+             "Instrument": "OLDCO", "Description": "Fictional Old Company",
+             "Quantity": bought, "Price": "$10.00"},
+            {"Activity Date": "2/2/2024", "Trans Code": "SXCH",
+             "Instrument": "OLDCO", "Description": "Fictional stock exchange",
+             "Quantity": surrendered},
+            {"Activity Date": "2/2/2024", "Trans Code": "SXCH",
+             "Instrument": "NEWCO", "Description": "Fictional stock exchange",
+             "Quantity": received},
+            {"Activity Date": "3/2/2024", "Trans Code": "Sell",
+             "Instrument": "NEWCO", "Description": "Fictional New Company",
+             "Quantity": sold, "Price": "$13.00"},
+        ]
+        write_robinhood_csv(csv, list(reversed(rows)) if newest_first else rows)
+
+        txns, balances = self._normalized_balances(csv)
+        exchange = [t for t in txns if t["date"] == "2024-02-02"]
+        outgoing = next(t for t in exchange if t["symbol"] == "OLDCO")
+        incoming = next(t for t in exchange if t["symbol"] == "NEWCO")
+        assert outgoing["action"] == "Sell"
+        assert outgoing["quantity"] == pytest.approx(float(bought.replace(",", "")))
+        assert outgoing["price"] == outgoing["amount"] == 0.0
+        assert incoming["action"] == "Buy"
+        assert incoming["quantity"] == pytest.approx(expected_receipt)
+        assert incoming["price"] == incoming["amount"] == 0.0
+        assert balances[("Robinhood", "OLDCO")] == pytest.approx(0.0)
+        assert balances[("Robinhood", "NEWCO")] == pytest.approx(expected_balance)
+
+    def test_fractional_cash_in_lieu_preserves_issued_whole_shares(
+            self, isolated_workdir):
+        """Cash-out of an unissued fraction cannot eat the SXCH receipt."""
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        write_robinhood_csv(csv, [
+            {"Activity Date": "1/2/2024", "Trans Code": "Buy",
+             "Instrument": "NEWCO", "Description": "Fictional New Company",
+             "Quantity": "1", "Price": "$8.00"},
+            {"Activity Date": "2/2/2024", "Trans Code": "SXCH",
+             "Instrument": "NEWCO", "Description": "Fictional stock exchange",
+             "Quantity": "3"},
+            {"Activity Date": "2/9/2024", "Trans Code": "CIL",
+             "Instrument": "NEWCO", "Description": "CIL on 0.25 @ $8.00 - NEWCO",
+             "Amount": "$2.00"},
+        ])
+
+        txns, balances = self._normalized_balances(csv)
+        fractional = [t for t in txns if t["date"] == "2024-02-09"]
+        assert {t["action"] for t in fractional} == {"Buy", "Sell"}
+        assert all(t["quantity"] == pytest.approx(0.25) for t in fractional)
+        assert next(t for t in fractional if t["action"] == "Sell")["amount"] == 2.0
+        assert balances[("Robinhood", "NEWCO")] == pytest.approx(4.0)
+        assert not [t for t in txns if t["action"] == "Dividend"]
+
+    def test_later_cash_in_lieu_recognizes_exchange_shares_as_held(
+            self, isolated_workdir):
+        """Outside the merger window, CIL removes a fraction of held shares."""
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        write_robinhood_csv(csv, [
+            {"Activity Date": "2/2/2024", "Trans Code": "SXCH",
+             "Instrument": "NEWCO", "Description": "Fictional stock exchange",
+             "Quantity": "3"},
+            {"Activity Date": "4/9/2024", "Trans Code": "CIL",
+             "Instrument": "NEWCO", "Description": "CIL on 0.25 @ $8.00 - NEWCO",
+             "Amount": "$2.00"},
+        ])
+
+        txns, balances = self._normalized_balances(csv)
+        fractional = [t for t in txns if t["date"] == "2024-04-09"]
+        assert len(fractional) == 1
+        assert fractional[0]["action"] == "Sell"
+        assert fractional[0]["quantity"] == pytest.approx(0.25)
+        assert fractional[0]["amount"] == 2.0
+        assert balances[("Robinhood", "NEWCO")] == pytest.approx(2.75)
+
+    @pytest.mark.parametrize("cash_first", [False, True])
+    def test_exchange_does_not_consume_unpaired_merger_cash(
+            self, isolated_workdir, cash_first):
+        """SXCH is not evidence that a same-day MRGC belongs to the exchange."""
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        exchange = {"Activity Date": "2/2/2024", "Trans Code": "SXCH",
+                    "Instrument": "OLDCO", "Quantity": "6S"}
+        cash = {"Activity Date": "2/2/2024", "Trans Code": "MRGC",
+                "Instrument": "OLDCO", "Amount": "$17.00"}
+        write_robinhood_csv(csv, [
+            {"Activity Date": "1/2/2024", "Trans Code": "Buy",
+             "Instrument": "OLDCO", "Quantity": "6", "Price": "$10.00"},
+            *([cash, exchange] if cash_first else [exchange, cash]),
+        ])
+
+        txns, balances = self._normalized_balances(csv)
+        surrender = next(t for t in txns if t["action"] == "Sell")
+        dividend = [t for t in txns if t["action"] == "Dividend"]
+        assert surrender["quantity"] == 6.0
+        assert surrender["price"] == surrender["amount"] == 0.0
+        assert len(dividend) == 1
+        assert dividend[0]["symbol"] == "USD"
+        assert dividend[0]["amount"] == 17.0
+        assert balances[("Robinhood", "OLDCO")] == pytest.approx(0.0)
+
+    @pytest.mark.parametrize("quantity", [
+        "S", "6SS", "6Q", "1,20S", "1,2", "NaNS", "InfinityS", "1e999S", "6s",
+    ])
+    def test_malformed_exchange_quantity_keeps_precise_error(
+            self, isolated_workdir, quantity):
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        write_robinhood_csv(csv, [
+            {"Activity Date": "2/2/2024", "Trans Code": "SXCH",
+             "Instrument": "OLDCO", "Quantity": quantity},
+        ])
+
+        with pytest.raises(ValueError) as error:
+            _parse(csv)
+        assert str(error.value).startswith(
+            "robinhood-1.csv: row 2, column Quantity:")
+        assert "invalid number" in str(error.value) or "number must be finite" in str(error.value)
+
+    def test_surrender_suffix_is_still_invalid_for_an_ordinary_buy(
+            self, isolated_workdir):
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        write_robinhood_csv(csv, [
+            {"Activity Date": "1/2/2024", "Trans Code": "Buy",
+             "Instrument": "OLDCO", "Quantity": "6S", "Price": "$10.00"},
+        ])
+
+        with pytest.raises(ValueError, match=(
+                r"robinhood-1\.csv: row 2, column Quantity: invalid number")):
+            _parse(csv)
+
+
+# ---------------------------------------------------------------------------
 # CIL — three flavors (held, never-held, merger-fractional)
 # ---------------------------------------------------------------------------
 
