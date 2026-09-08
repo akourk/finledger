@@ -629,7 +629,7 @@ def compute_history(txns: list[dict],
                 "account_group": acct,
                 "symbol":        sym,
                 "quantity":      round(qty, 8),
-                "price":         round(eff_price, 4) if eff_price is not None else None,
+                "price":         eff_price,
                 "value":         round(val, 2) if val is not None else None,
                 "cost_basis":    round(pos_basis, 2),
             })

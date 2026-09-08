@@ -13,27 +13,13 @@ function renderPlanning() {
 
   // Trailing-12-months retirement contribution (auto-inferred default for
   // the scenario projection's annual-contribution input)
-  const today = snapshotDate();
-  const yrAgo = new Date(today); yrAgo.setFullYear(yrAgo.getFullYear() - 1);
-  let last12 = 0;
-  for (const t of txns) {
-    const info = retirementContribInfo(t);
-    if (!info.isContrib) continue;
-    if (!t.date) continue;
-    if (new Date(t.date) >= yrAgo) last12 += (t.amount || 0);
-  }
-  const autoAnnualContrib = Math.round(last12);
+  const autoAnnualContrib = Math.round(trailingRetirementContributions());
   const annualContribUsed = retirementAnnualContrib != null ? retirementAnnualContrib : autoAnnualContrib;
 
   // Years to projection age (default = metadata Retirement Age / 67 —
   // see retirementProjectionAge initializer)
-  const birthday = RETIREMENT_META.birthday ? new Date(RETIREMENT_META.birthday) : null;
-  let yearsToRetire = null;
-  let currentAge = null;
-  if (birthday) {
-    currentAge = Math.floor((today - birthday) / (365.25 * 86400000));
-    yearsToRetire = Math.max(0, retirementProjectionAge - currentAge);
-  }
+  const currentAge = calendarAge(RETIREMENT_META.birthday);
+  const yearsToRetire = currentAge != null ? Math.max(0, retirementProjectionAge - currentAge) : null;
 
   const scenarios = [
     { name: 'Conservative', rate: 0.05 },

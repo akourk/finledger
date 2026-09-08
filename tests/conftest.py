@@ -48,7 +48,12 @@ sys.path.insert(0, str(ROOT))
 # from the developer's shell must never leak into a test run either.
 import tempfile
 
-_GUARD_ROOT = Path(tempfile.mkdtemp(prefix="fin-test-guard-"))
+# Keep the owner alive for the entire process, then remove the session files
+# at interpreter exit (including subprocesses that import this conftest).
+# mkdtemp alone leaked one directory on every test invocation.
+_GUARD_DIRECTORY = tempfile.TemporaryDirectory(prefix="fin-test-guard-",
+                                              ignore_cleanup_errors=True)
+_GUARD_ROOT = Path(_GUARD_DIRECTORY.name)
 for _sub in ("data", "cache", "exports"):
     (_GUARD_ROOT / _sub).mkdir()
 os.environ["FIN_PROJECT_ROOT"] = str(_GUARD_ROOT)

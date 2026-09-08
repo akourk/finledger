@@ -48,7 +48,7 @@ from .income import compute_income_analytics
 from .income_calendar import compute_income_calendar
 from .lots import compute_open_lots
 from .monthly_pnl import compute_monthly_pnl
-from .monte_carlo import compute_monte_carlo
+from .monte_carlo import compute_monte_carlo, trailing_annual_contribution
 from .options import compute_options_analytics
 from .position_pnl import compute_position_pnl
 from .positions import compute_position_returns
@@ -132,7 +132,7 @@ def build_analytics(txns: list[dict], history: list[dict],
         from datetime import datetime as _dt
         try:
             birth = _dt.strptime(bd, "%Y-%m-%d").date()
-            today = _dt.now().date()
+            today = clock.now(fallback=_dt.now).date()
             # Calendar age — days//365 drifts by the accumulated leap
             # days (reports the birthday a week early by your 30s),
             # which shifts the Monte Carlo horizon a year at the edges.
@@ -180,16 +180,8 @@ def build_analytics(txns: list[dict], history: list[dict],
                 # Trailing-3-year average annual net contribution (all
                 # accounts) — pulled from history snapshots'
                 # ``net_contributed`` cumulative field.
-                avg_total_contrib = avg_ret_contrib   # default fallback
-                if len(history) >= 13:
-                    # ~36 months back if monthly snapshots, else use
-                    # whatever we've got
-                    look_back = min(36, len(history) - 1)
-                    nc_now = float(history[-1].get("net_contributed") or 0)
-                    nc_then = float(history[-1 - look_back].get("net_contributed") or 0)
-                    months = look_back
-                    if months > 0:
-                        avg_total_contrib = max(0.0, (nc_now - nc_then) * 12 / months)
+                avg_total_contrib = trailing_annual_contribution(
+                    history, avg_ret_contrib)
 
                 # FIRE threshold: most-recent annual_expenses entry × 25
                 # (the classic 4% safe-withdrawal-rate rule).

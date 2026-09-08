@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..scanner import detect_broker
+from ..scanner import check_pending_renames, detect_broker
 from ._helpers import (
     Transaction,
     apply_ticker_rename,
@@ -129,6 +129,7 @@ def parse_all_files(data_dir: Path) -> list[Transaction]:
     """
     global _parse_report
     _parse_report = []
+    check_pending_renames(data_dir)
     all_txns: list[Transaction] = []
     # Path comparison folds case on Windows. File order feeds transaction
     # ordering and analytics, so use identical filename ordering on all hosts.

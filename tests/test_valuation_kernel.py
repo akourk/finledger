@@ -285,6 +285,41 @@ class TestTheDustFilter:
         assert m.qty == pytest.approx(-0.5)
         assert mark_is_dust(m, -0.0005) is True
 
+    @pytest.mark.parametrize(
+        "qty, factor, expected_value, expected_dust",
+        [
+            (0.0001, 1000.0, 5.0, False),
+            (0.001, 0.01, 0.0005, True),
+            (-0.005, 1000.0, -250.0, False),
+            (-0.005, 100.0, -25.0, True),
+        ],
+    )
+    def test_dollar_thresholds_use_split_restated_value(
+        self, kernel, qty, factor, expected_value, expected_dust,
+    ):
+        V = kernel(prices={"AAA": {DATE: 50.0}},
+                   splits={"AAA": [["2024-09-01", factor]]})
+        m = V.mark("AAA", qty, DATE)
+        assert m.value == pytest.approx(expected_value)
+        assert V.mark_is_dust(m, qty) is expected_dust
+
+    def test_dollar_thresholds_include_the_contract_multiplier(self, kernel):
+        V = kernel()
+        m = V.mark(OPT, 1.0, DATE, {OPT: 0.005})
+        assert m.value == pytest.approx(0.5)
+        assert V.mark_is_dust(m, 1.0) is False
+
+    def test_holdings_and_marks_keep_the_same_low_premium_contract(self, kernel):
+        from src.pipeline_stages import build_holdings
+
+        V = kernel()
+        holdings, by_account = build_holdings(
+            {("Robinhood", OPT): 1.0}, {OPT: 0.005},
+            {("Robinhood", OPT): 1.0}, {},
+        )
+        assert len(holdings) == len(by_account) == 1
+        assert holdings[0]["value"] == V.mark(OPT, 1.0, DATE, {OPT: 0.005}).value
+
 
 class TestThePriceMemo:
     """A day walker asks for one symbol once per account group holding

@@ -1,14 +1,17 @@
 ---
 name: fin-tax-year-update
-description: Annual chore — add a new IRS tax year to the `fin` portfolio tracker (federal brackets, LTCG brackets, standard deduction, 401k limit, Roth MAGI phase-out). Use when a new tax year's figures are announced (typically Oct–Nov via a Rev. Proc. + retirement Notice), when the Tax tab silently falls back to the prior year's tables, or when Congress retroactively changes already-published figures (as OBBBA did to 2025). Lists every table, the authoritative sources, the verification rule, and the tests.
+description: Add or revise an IRS tax year in finledger, including federal and LTCG brackets, standard deductions, 401(k) limits, and Roth phase-outs. Use for annual published-table updates or retroactive legislation; verify against current IRS primary sources.
 ---
 
 # Adding a new tax year to `fin`
 
+All paths below are repository-relative. Use
+[fin-dev-loop](../fin-dev-loop/SKILL.md) for isolated fictional validation.
+
 All tax reference data is **single-sourced in `src/analytics/tax.py`**
 and serialized into the export via `tax_tables_to_json()` (under
 `DATA.tax_tables`).  The dashboard JS reads from there — the literals in
-`app/80-tax.js` are emergency fallbacks only.  **Never add a year in the
+`src/dashboard/app/80-tax.js` are emergency fallbacks only.  **Never add a year in the
 JS.**
 
 ## Tables to update (all in `src/analytics/tax.py`)
@@ -31,8 +34,10 @@ Conventions to preserve:
 ## Verification rule (non-negotiable)
 
 **Never write figures from memory.**  Web-search the actual Rev. Proc. /
-Notice numbers and cross-check at least two sources (irs.gov newsroom +
-Tax Foundation's year page are reliable).  Watch for **retroactive
+Notice numbers and cross-check the actual IRS publication against its IRS
+announcement or a subsequent IRS correction. Cite primary-source URLs beside
+the changed tables and expected test figures; a secondary summary is not the
+authority when they disagree.  Watch for **retroactive
 legislation**: OBBBA (July 2025) replaced the already-published 2025
 standard deductions ($15,000→$15,750 Single, $30,000→$31,500 MFJ,
 $22,500→$23,625 HoH) — when that happens, update the *existing* year's
@@ -71,7 +76,8 @@ Python↔JS agreement; only this one checks *correctness*.
   `math.inf`, which serializes to `null`).
 
 ```bash
-python -m pytest tests/test_tax_tables.py -q
+uv run python -m pytest tests/test_tax_tables_vs_irs.py tests/test_tax_tables.py tests/test_tax_table_js_parity.py -q -rs
+uv run python -m pytest tests/ -q -rs
 ```
 
 ## Related figures that are NOT in the tables
@@ -80,5 +86,6 @@ python -m pytest tests/test_tax_tables.py -q
   not inflation-indexed — $200k/$250k/$125k; don't "update" them).
 - State tax is a single user-supplied marginal rate
   (`State Tax Rate` metadata row), no brackets.
-- §1256 underlyings (`SECTION_1256_UNDERLYINGS`) change only when the
-  user trades a new broad-based index product.
+- §1256 underlyings (`SECTION_1256_UNDERLYINGS`) are a product-classification
+  list, not an annual inflation table. Change it only for a verified eligible
+  product; ETF options do not inherit their index's treatment.

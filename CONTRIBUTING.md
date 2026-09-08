@@ -1,8 +1,10 @@
 # Contributing
 
 Use fictional inputs and read [Privacy](docs/PRIVACY.md) before any commit or
-push. The privacy hooks must be enabled in each clone. `CLAUDE.md` documents
-financial subsystem invariants; it is a reference, not a substitute for tests.
+push. The privacy hooks must be enabled in each clone. Shared agent instructions
+live in [AGENTS.md](AGENTS.md); [engineering invariants](docs/INVARIANTS.md)
+explain financial failure boundaries and parallel consumers. They are a reference,
+not a substitute for tests.
 
 ## Set up
 
@@ -30,8 +32,10 @@ installation, set `PUPPETEER_EXECUTABLE_PATH` to its executable for browser chec
 1. Reproduce a problem with a small, independently constructed fictional input.
 2. Add a behavioral regression where it protects a real boundary: input parsing,
    accounting/date semantics, failure recovery, or user interaction.
-3. Run the relevant tests, then the complete suite before finishing a change.
-4. Build the fictional demo, exercise affected views, and run browser checks.
+3. Run the relevant tests, then the complete suite for application changes.
+4. For changes affecting dashboard output, build the fictional demo, exercise
+   affected views, and run browser checks. Documentation-only edits need link,
+   command, and skill-reference checks; they do not need a new pipeline run.
 5. Follow the privacy checklist before every commit and every push.
 
 ```bash
@@ -51,6 +55,39 @@ this isolation automatically and refuses network access.
 The test suite uses Node for Python/JavaScript parity. Do not accept a green run
 that skipped required JavaScript checks because Node was missing. The local
 metadata-dependent savings test may skip in a clean checkout; report that skip.
+
+## Find the right surface
+
+Start with the source and regression boundary below. The skills are plain
+Markdown workflows shared across agents; open the linked file directly if your
+client does not discover `.claude/skills/`. Keep one maintained copy of each
+workflow instead of duplicating it for each model or client.
+
+| Change | Source and focused checks | Workflow |
+| --- | --- | --- |
+| Pipeline orchestration or refresh | `src/main.py`, `pipeline_stages.py`; `test_pipeline_snapshot.py`, `test_pipeline_path_parity.py`, `test_import_safety.py` | [Development loop](.claude/skills/fin-dev-loop/SKILL.md) |
+| Broker format or snapshot import | `src/scanner.py`, `parsers/`, `snapshot.py`, `accounts.py`; parser-specific tests, `test_snapshot_workflow.py`, `test_parser_silent_drop.py` | [Broker parser](.claude/skills/fin-add-broker/SKILL.md) |
+| New financial action | `src/actions.py`, `normalize.py`; `test_actions_catalog.py` and affected financial consumers | [Action catalog](.claude/skills/fin-add-action/SKILL.md) |
+| Lots, cash principal, or cost basis | `src/basis.py`, `history.py`, `pipeline_stages.py`; `test_lot_walker_parity.py`, `test_cash_basis_parity.py`, `test_pipeline_path_parity.py` | [Lot parity](.claude/skills/fin-lot-walker-sync/SKILL.md) |
+| Valuation or price cache | `src/valuation.py`, `prices.py`; `test_valuation_kernel.py`, `test_value_at_date_parity.py`, `test_prices.py`, `test_price_cache_corruption.py`, `test_prices_backoff.py` | [Price invariants](docs/INVARIANTS.md#invariants-the-price-cache-relies-on) |
+| Analytics or dashboard behavior | `src/analytics/`, `src/dashboard/app/*.js`; module tests, `test_dashboard_consistency.py`, `test_dashboard_bundling.py`, then demo browser checks | [Analytics and rendering](.claude/skills/fin-add-analytics/SKILL.md) |
+| Annual tax reference update | `src/analytics/tax.py`; `test_tax_tables_vs_irs.py`, `test_tax_tables.py`, `test_tax_table_js_parity.py` | [Tax tables](.claude/skills/fin-tax-year-update/SKILL.md) |
+| Privacy or publication | `tools/privacy_guard.py`, `tools/build_demo.py`, `githooks/`; `test_privacy_guard.py`, `test_privacy_hooks.py`, `test_demo_build.py` | [Privacy](docs/PRIVACY.md) |
+
+Test filenames in the table are under `tests/`. Use `uv run python -m pytest
+tests/<module>.py -q -rs` for a focused run. Read the relevant
+[invariants](docs/INVARIANTS.md) before interpreting a surprising financial
+result as a bug; verify the claimed behavior against source and a fictional
+regression. The historical audit explains prior failures, but its old commands
+and observations are not current operating instructions.
+
+For performance work, measure the suspected path with isolated fictional data
+and a fixed date before changing it. Report workload and before/after timings
+together with output parity; reducing a walk's runtime is not an improvement if
+it loses split, cash, date, or lot semantics. Distinguish local measurements from
+general speed claims. In parallel reviews, assign file ownership and share
+qualitative findings or independently fictional reproducers, never private
+inputs or local audit output. Review the combined diff before final validation.
 
 ### CSV parser investigations
 

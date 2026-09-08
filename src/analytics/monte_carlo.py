@@ -27,7 +27,7 @@ from __future__ import annotations
 from .. import clock
 import math
 import random
-from datetime import datetime
+from datetime import date, datetime
 
 
 _DEFAULT_RUNS = 1000
@@ -37,6 +37,39 @@ _DEFAULT_SEED = 42
 # stdev — gets you reasonable bands without being optimistic.
 _DEFAULT_MEAN = 0.08
 _DEFAULT_STDEV = 0.16
+
+
+def trailing_annual_contribution(history: list[dict], fallback: float) -> float:
+    """Annualize net contributions over up to three years of history.
+
+    Snapshot count is not elapsed time: history normally has two rows
+    per month, and can also be daily or irregular.  Use the latest
+    snapshot at or before the three-year boundary (or the first one for
+    a shorter history), then divide by the actual span.  Using a real
+    boundary snapshot avoids inventing cash flows between observations.
+    """
+    points = {}
+    for row in history:
+        try:
+            on_date = date.fromisoformat(row.get("date", ""))
+        except (TypeError, ValueError):
+            continue
+        points[on_date] = float(row.get("net_contributed") or 0)
+    if len(points) < 2:
+        return fallback
+    ordered = sorted(points)
+    end = ordered[-1]
+    try:
+        cutoff = end.replace(year=end.year - 3)
+    except ValueError:  # February 29 -> February 28
+        cutoff = end.replace(year=end.year - 3, day=28)
+    start = ordered[0]
+    for on_date in ordered:
+        if on_date > cutoff:
+            break
+        start = on_date
+    elapsed_days = (end - start).days
+    return max(0.0, (points[end] - points[start]) * 365.25 / elapsed_days)
 
 
 def compute_monte_carlo(

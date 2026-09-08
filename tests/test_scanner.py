@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import pytest
 
 
 def test_coinbase_reference_reports_are_skipped(tmp_path):
@@ -102,3 +105,106 @@ def test_robinhood_1099_uuid_upload_auto_renames(tmp_path):
     assert uuid2.exists()
     rename_data_files(tmp_path)
     assert (tmp_path / "robinhood-1099-2023.csv").exists()
+
+
+def _rename_inputs(directory):
+    # The second final name overlaps the first original name: recovery must
+    # evacuate completed targets before restoring the originals.
+    contents = {"robinhood-2.csv": b"fictional first export",
+                "robinhood-3.csv": b"fictional second export"}
+    for name, body in contents.items():
+        (directory / name).write_bytes(body)
+    return contents
+
+
+@pytest.mark.parametrize("failed_move", [1, 2, 3, 4])
+def test_rename_failure_restores_all_original_names_and_bytes(tmp_path, monkeypatch, failed_move):
+    from src.scanner import rename_data_files
+
+    originals = _rename_inputs(tmp_path)
+    real_rename = Path.rename
+    calls = 0
+
+    def fail_once(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls == failed_move:
+            raise OSError("fictional filesystem failure")
+        return real_rename(source, destination)
+
+    monkeypatch.setattr(Path, "rename", fail_once)
+    with pytest.raises(OSError, match="fictional filesystem failure"):
+        rename_data_files(tmp_path)
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == originals
+
+
+def test_rename_preserves_old_temporary_files_and_handles_name_overlap(tmp_path):
+    from src.scanner import rename_data_files
+
+    originals = _rename_inputs(tmp_path)
+    previous_temporary = tmp_path / ".tmp-robinhood-2.csv"
+    previous_temporary.write_bytes(b"fictional recovery copy")
+    assert rename_data_files(tmp_path) == {
+        "robinhood-2.csv": "robinhood-1.csv", "robinhood-3.csv": "robinhood-2.csv"}
+    assert (tmp_path / "robinhood-1.csv").read_bytes() == originals["robinhood-2.csv"]
+    assert (tmp_path / "robinhood-2.csv").read_bytes() == originals["robinhood-3.csv"]
+    assert previous_temporary.read_bytes() == b"fictional recovery copy"
+    assert not list(tmp_path.glob(".fin-rename-*"))
+
+
+def test_rename_dry_run_does_not_create_temporary_directories(tmp_path):
+    from src.scanner import rename_data_files
+
+    originals = _rename_inputs(tmp_path)
+    assert len(rename_data_files(tmp_path, dry_run=True)) == 2
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == originals
+
+
+@pytest.mark.parametrize("failed_moves", [{4, 5}, {4, 5, 6}])
+def test_rename_recovery_failure_keeps_every_source_byte(tmp_path, monkeypatch, failed_moves):
+    from src.scanner import rename_data_files
+
+    originals = _rename_inputs(tmp_path)
+    real_rename = Path.rename
+    calls = 0
+
+    def fail_twice(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls in failed_moves:
+            raise OSError("fictional filesystem failure")
+        return real_rename(source, destination)
+
+    monkeypatch.setattr(Path, "rename", fail_twice)
+    with pytest.raises(OSError, match="recovery was incomplete"):
+        rename_data_files(tmp_path)
+    assert sorted(p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()) == sorted(originals.values())
+    assert list(tmp_path.glob(".fin-rename-*")), "Keep stranded originals for manual recovery"
+    with pytest.raises(ValueError, match="incomplete CSV rename"):
+        rename_data_files(tmp_path)
+
+
+def test_rename_rejects_directory_inputs_before_moving_any_csv(tmp_path):
+    from src.scanner import rename_data_files
+
+    originals = _rename_inputs(tmp_path)
+    occupied = tmp_path / "robinhood-4.csv"
+    occupied.mkdir()
+    with pytest.raises(ValueError, match="regular files"):
+        rename_data_files(tmp_path)
+    assert occupied.is_dir()
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()} == originals
+
+
+@pytest.mark.parametrize("entrypoint", ["scan", "rename", "parse"])
+def test_incomplete_recovery_blocks_the_next_import_even_without_renaming(tmp_path, entrypoint):
+    from src.parsers import parse_all_files
+    from src.scanner import rename_data_files, scan_data_files
+
+    recovery = tmp_path / ".fin-rename-fictional"
+    recovery.mkdir()
+    (recovery / "robinhood.csv").write_bytes(b"fictional interrupted export")
+    with pytest.raises(ValueError, match="incomplete CSV rename"):
+        {"scan": scan_data_files, "rename": rename_data_files,
+         "parse": parse_all_files}[entrypoint](tmp_path)
+    assert (recovery / "robinhood.csv").read_bytes() == b"fictional interrupted export"

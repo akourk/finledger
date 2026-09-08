@@ -36,12 +36,12 @@ function _optWindowRange() {
   if (/^\d{4}$/.test(w)) return [`${w}-01-01`, `${w}-12-31`];
   if (w === 'ytd') return [`${today.getFullYear()}-01-01`, isoToday];
   let m;
-  const start = new Date(today);
-  if ((m = w.match(/^(\d+)y$/))) start.setFullYear(start.getFullYear() - parseInt(m[1], 10));
-  else if ((m = w.match(/^(\d+)mo$/))) start.setMonth(start.getMonth() - parseInt(m[1], 10));
-  else if ((m = w.match(/^(\d+)d$/))) start.setDate(start.getDate() - parseInt(m[1], 10));
+  let offset;
+  if ((m = w.match(/^(\d+)y$/))) offset = { years: -parseInt(m[1], 10) };
+  else if ((m = w.match(/^(\d+)mo$/))) offset = { months: -parseInt(m[1], 10) };
+  else if ((m = w.match(/^(\d+)d$/))) offset = { days: -parseInt(m[1], 10) };
   else return null;
-  return [calendarIso(start), isoToday];
+  return [shiftCalendarIso(isoToday, offset), isoToday];
 }
 
 function _optWindowLabel() {

@@ -129,7 +129,6 @@ function renderFilterBar() {
       popover + `</div>`;
   }).join('');
 }
-renderFilterBar();
 
 filterBar.addEventListener('click', e => {
   e.stopPropagation();
@@ -196,7 +195,6 @@ function renderColToggle() {
       `<button class="col-chip" data-col="${_htmlEsc(col)}" title="Show ${_htmlEsc(fieldLabel(col))} column">${_htmlEsc(fieldLabel(col))}</button>`
     ).join('');
 }
-renderColToggle();
 
 colWrap.addEventListener('click', e => {
   const chip = e.target.closest('.col-chip');
@@ -224,7 +222,6 @@ function renderHeader() {
       `<button type="button" class="col-x" data-hide="${_htmlEsc(col)}"${vis.length === 1 ? ' disabled' : ''} aria-label="Hide ${_htmlEsc(fieldLabel(col))} column" title="Hide ${_htmlEsc(fieldLabel(col))} column">×</button></th>`;
   }).join('');
 }
-renderHeader();
 
 headerRow.addEventListener('click', e => {
   // "x" inside the header → hide the column.  Don't fall through to sort.
@@ -294,22 +291,17 @@ dateToInput.addEventListener('input', () => {
 document.querySelectorAll('.date-range-group .date-quick').forEach(btn => {
   btn.addEventListener('click', () => {
     const key = btn.dataset.range;
-    const today = snapshotDate();
-    const isoDate = calendarIso;
-    const todayIso = isoDate(today);
+    const todayIso = SNAPSHOT_DATE;
     if (key === 'all') {
       _setDateRange('', '', 'all');
     } else if (key === '30d') {
-      const d = new Date(today); d.setDate(d.getDate() - 30);
-      _setDateRange(isoDate(d), todayIso, '30d');
+      _setDateRange(shiftCalendarIso(todayIso, { days: -30 }), todayIso, '30d');
     } else if (key === '90d') {
-      const d = new Date(today); d.setDate(d.getDate() - 90);
-      _setDateRange(isoDate(d), todayIso, '90d');
+      _setDateRange(shiftCalendarIso(todayIso, { days: -90 }), todayIso, '90d');
     } else if (key === 'ytd') {
-      _setDateRange(`${today.getFullYear()}-01-01`, todayIso, 'ytd');
+      _setDateRange(`${snapshotYear()}-01-01`, todayIso, 'ytd');
     } else if (key === '1y') {
-      const d = new Date(today); d.setFullYear(d.getFullYear() - 1);
-      _setDateRange(isoDate(d), todayIso, '1y');
+      _setDateRange(shiftCalendarIso(todayIso, { years: -1 }), todayIso, '1y');
     }
   });
 });
@@ -317,6 +309,15 @@ document.querySelectorAll('.date-range-group .date-quick').forEach(btn => {
 // --- Table rendering ---
 const tbody = document.getElementById('tbody');
 const countPill = document.getElementById('countPill');
+// The embedded ledger is immutable. Build search text only when a row is
+// first searched, then reuse it across keystrokes and filter changes.
+const txnSearchText = new WeakMap();
+function transactionSearchText(t) {
+  if (!txnSearchText.has(t)) {
+    txnSearchText.set(t, columns.map(c => String(t[c] ?? '')).join(' ').toLowerCase());
+  }
+  return txnSearchText.get(t);
+}
 
 function formatCell(val, col) {
   if (val == null || val === '') return '';
@@ -348,10 +349,11 @@ function renderTable() {
   const dateFrom = dateFromInput.value;   // "" or "YYYY-MM-DD"
   const dateTo = dateToInput.value;
   const vis = visibleCols();
+  const activeFilters = Object.entries(filterState).filter(([, selected]) => selected.size > 0);
 
   let filtered = txns.filter(t => {
-    for (const [field, selected] of Object.entries(filterState)) {
-      if (selected.size > 0 && !selected.has(String(t[field]))) return false;
+    for (const [field, selected] of activeFilters) {
+      if (!selected.has(String(t[field]))) return false;
     }
     if (symbolQuery) {
       const symbol = String(t.symbol ?? '').toLowerCase();
@@ -363,8 +365,7 @@ function renderTable() {
       if (dateTo && d > dateTo) return false;
     }
     if (query) {
-      const haystack = columns.map(c => String(t[c] ?? '')).join(' ').toLowerCase();
-      if (!haystack.includes(query)) return false;
+      if (!transactionSearchText(t).includes(query)) return false;
     }
     return true;
   });
@@ -400,7 +401,15 @@ function renderTable() {
   }
 }
 
-renderTable();
+// Thousands of formatted ledger rows should not delay the Overview.
+// The normal router also honors a direct #transactions link and retries
+// rendering failures; later visits preserve the current search and sort.
+registerTabRenderer('transactions', () => {
+  renderFilterBar();
+  renderColToggle();
+  renderHeader();
+  renderTable();
+});
 
 // Honor initial URL hash — deferred to here (bottom of script) so
 // every `const`/`let` declaration has already executed.  If the URL

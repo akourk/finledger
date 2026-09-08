@@ -114,15 +114,9 @@ function renderAnnualBreakdown() {
   }
 
   // Birthday → age computation.  Year is the December-31-of-year.
-  const birthdayDate = RETIREMENT_META.birthday ? new Date(RETIREMENT_META.birthday) : null;
   const ageAtYearEnd = (year) => {
-    if (!birthdayDate) return '';
-    const yearEnd = new Date(`${year}-12-31`);
-    const age = yearEnd.getFullYear() - birthdayDate.getFullYear()
-      - ((yearEnd.getMonth() < birthdayDate.getMonth() ||
-        (yearEnd.getMonth() === birthdayDate.getMonth()
-          && yearEnd.getDate() < birthdayDate.getDate())) ? 1 : 0);
-    return age >= 0 ? age : '';
+    const age = calendarAge(RETIREMENT_META.birthday, `${year}-12-31`);
+    return age != null && age >= 0 ? age : '';
   };
 
   // Salary at year-end — find the latest Salary History entry whose

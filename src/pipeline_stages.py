@@ -320,14 +320,14 @@ def build_holdings(
     holdings_by_account: list[dict] = []
     for (acct, sym), qty in sorted(balances.items()):
         price = last_prices.get(sym, 0.0)
-        if is_dust(qty, price):
+        raw_value = qty * price * contract_multiplier(sym) if price else None
+        if is_dust(qty, price, value=raw_value):
             continue
         # Option quantities are CONTRACTS; price is the per-share
         # premium — valuation needs the ×100 contract multiplier
         # (see config.contract_multiplier).  price stays per-share
         # in the row, matching how brokers quote.
-        value = (round(qty * price * contract_multiplier(sym), 2)
-                 if price else None)
+        value = round(raw_value, 2) if raw_value is not None else None
         if sym in CASH_SYMBOLS and ACCOUNT_TYPES.get(acct) == "Savings":
             cost_basis = round(cash_principal_by_key.get((acct, sym), 0.0), 2)
         else:
@@ -344,7 +344,9 @@ def build_holdings(
             "account_type": ACCOUNT_TYPES.get(acct, "Taxable"),
             "symbol": sym,
             "quantity": round(qty, 8),
-            "price": round(price, 2),
+            # Unit prices are calculation inputs for lot and window P&L.
+            # Rounding to cents can erase a priced crypto holding entirely.
+            "price": price,
             "value": value,
             "cost_basis": cost_basis,
             "unrealized_gain": unrealized,
@@ -362,17 +364,17 @@ def build_holdings(
     holdings: list[dict] = []
     for sym, qty in sorted(asset_totals.items()):
         price = last_prices.get(sym, 0.0)
-        if is_dust(qty, price):
+        raw_value = qty * price * contract_multiplier(sym) if price else None
+        if is_dust(qty, price, value=raw_value):
             continue
         cost_basis = round(asset_basis[sym], 2) if asset_has_basis[sym] else None
-        value = (round(qty * price * contract_multiplier(sym), 2)
-                 if price else None)
+        value = round(raw_value, 2) if raw_value is not None else None
         unrealized = (round(value - cost_basis, 2)
                       if (value is not None and cost_basis is not None) else None)
         holdings.append({
             "symbol": sym,
             "quantity": round(qty, 8),
-            "price": round(price, 2),
+            "price": price,
             "value": value,
             "cost_basis": cost_basis,
             "unrealized_gain": unrealized,

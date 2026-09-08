@@ -661,8 +661,8 @@ function renderTax() {
     if (t.action !== 'Sell') continue;            // and only actual sells
     const buys = buysBySym[t.symbol] || [];
     const closeD = new Date(t.date);
-    const min = new Date(closeD); min.setDate(min.getDate() - 30);
-    const max = new Date(closeD); max.setDate(max.getDate() + 30);
+    const min = new Date(closeD); min.setUTCDate(min.getUTCDate() - 30);
+    const max = new Date(closeD); max.setUTCDate(max.getUTCDate() + 30);
     const offender = buys.find(bd => bd >= min && bd <= max && bd.toISOString().slice(0, 10) !== t.date);
     if (offender) {
       washSales.push({

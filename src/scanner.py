@@ -1,6 +1,7 @@
 """File detection and two-pass renaming for broker CSV exports."""
 
 import csv
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -18,6 +19,11 @@ def detect_broker(filepath: Path) -> str:
     Returns a key into CANONICAL_PREFIXES, or "manual"/"skip"/"unknown".
     """
     name = filepath.name.lower()
+
+    # Legacy interrupted renames may leave these behind. Keep them intact
+    # and let ingestion report an unrecognized input until manually recovered.
+    if name.startswith(".tmp-"):
+        return "unknown"
 
     # Exact matches
     if name == "manual-adjustments.csv":
@@ -162,11 +168,21 @@ def _detect_by_headers(filepath: Path) -> str:
 # File scanning
 # ---------------------------------------------------------------------------
 
+def check_pending_renames(data_dir: Path) -> None:
+    """Do not ingest a partial ledger after an interrupted rename."""
+    if any(data_dir.glob(".fin-rename-*")):
+        raise ValueError("An incomplete CSV rename needs recovery. Restore the "
+                         "original filenames from .fin-rename-* in the data "
+                         "directory, then remove the empty recovery directory "
+                         "before importing again.")
+
+
 def scan_data_files(data_dir: Path) -> dict[str, str]:
     """Scan all CSVs in data_dir and return {filename: broker_key}.
 
     Broker key is one of the CANONICAL_PREFIXES keys, "manual", "skip", or "unknown".
     """
+    check_pending_renames(data_dir)
     results = {}
     for csv_file in sorted(data_dir.glob("*.csv"), key=lambda p: p.name):
         results[csv_file.name] = detect_broker(csv_file)
@@ -184,6 +200,8 @@ def rename_data_files(data_dir: Path, *, dry_run: bool = False) -> dict[str, str
     Returns {old_name: new_name} for files that were renamed.
     """
     from .broker_lots import _is_robinhood_1099_file, robinhood_1099_tax_year
+
+    check_pending_renames(data_dir)
 
     # Group files by their canonical prefix
     prefix_files: dict[str, list[Path]] = defaultdict(list)
@@ -249,6 +267,16 @@ def rename_data_files(data_dir: Path, *, dry_run: bool = False) -> dict[str, str
     if not rename_plan:
         return {}
 
+    # Validate the whole plan before moving any input. Only destinations
+    # vacated by this plan may already exist (including filename swaps).
+    originals = {path for path, _ in rename_plan}
+    for original, final_name in rename_plan:
+        if original.is_symlink() or not original.is_file():
+            raise ValueError("CSV rename sources must be regular files")
+        destination = data_dir / final_name
+        if destination not in originals and (destination.exists() or destination.is_symlink()):
+            raise FileExistsError(f"CSV rename destination already exists: {final_name}")
+
     if dry_run:
         renames = {}
         for orig_path, final_name in rename_plan:
@@ -256,20 +284,57 @@ def rename_data_files(data_dir: Path, *, dry_run: bool = False) -> dict[str, str
             print(f"  {orig_path.name} -> {final_name}")
         return renames
 
-    # Pass 1: rename to temp names to avoid collisions
-    temp_paths: list[tuple[Path, str]] = []
-    for orig_path, final_name in rename_plan:
-        tmp_path = orig_path.parent / f".tmp-{orig_path.name}"
-        orig_path.rename(tmp_path)
-        temp_paths.append((tmp_path, final_name))
+    # A private sibling directory avoids clobbering remnants of an earlier
+    # interrupted run. Never recursively clean it: if recovery itself fails,
+    # its files are still the user's source data.
+    staging = Path(tempfile.mkdtemp(prefix=".fin-rename-", dir=data_dir))
+    staged: list[tuple[Path, Path, Path]] = []
+    completed: list[tuple[Path, Path, Path]] = []
+    recovery_incomplete = False
 
-    # Pass 2: rename from temp to final names
-    renames = {}
-    for tmp_path, final_name in temp_paths:
-        final_path = tmp_path.parent / final_name
-        tmp_path.rename(final_path)
-        orig_name = tmp_path.name.removeprefix(".tmp-")
-        renames[orig_name] = final_name
-        print(f"  {orig_name} -> {final_name}")
+    def move(source, destination):
+        # Path.rename replaces existing files on POSIX. Reject destinations
+        # observed after planning; this pipeline still requires one writer.
+        if destination.exists() or destination.is_symlink():
+            raise FileExistsError("CSV rename destination became occupied")
+        source.rename(destination)
+
+    try:
+        for original, final_name in rename_plan:
+            temporary = staging / original.name
+            entry = (original, temporary, data_dir / final_name)
+            move(original, temporary)
+            staged.append(entry)
+        for original, temporary, destination in staged:
+            move(temporary, destination)
+            completed.append((original, temporary, destination))
+    except OSError as error:
+        recovery_errors = []
+        # Re-stage every completed rename before restoring original names;
+        # a final name can itself be another input's original name.
+        for original, temporary, destination in reversed(completed):
+            try:
+                move(destination, temporary)
+            except OSError as recovery_error:
+                recovery_errors.append(recovery_error)
+        for original, temporary, destination in reversed(staged):
+            if temporary.exists():
+                try:
+                    move(temporary, original)
+                except OSError as recovery_error:
+                    recovery_errors.append(recovery_error)
+        if recovery_errors:
+            recovery_incomplete = True
+            raise OSError("CSV rename recovery was incomplete; source files "
+                          f"were preserved in the data directory and {staging.name}. "
+                          "Restore original filenames before running again.") from error
+        raise
+    finally:
+        if not recovery_incomplete and not any(staging.iterdir()):
+            staging.rmdir()
+
+    renames = {original.name: final_name for original, final_name in rename_plan}
+    for original, final_name in renames.items():
+        print(f"  {original} -> {final_name}")
 
     return renames

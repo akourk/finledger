@@ -2,7 +2,8 @@
 
 This document is about decisions, not features. What the project does is in
 [the README](../README.md); how each stage works in detail is in
-[`CLAUDE.md`](../CLAUDE.md), which is the working spec. What follows is why the
+[`INVARIANTS.md`](INVARIANTS.md), with execution order defined by `src/main.py`.
+What follows is why the
 system is shaped the way it is, and what each choice cost.
 
 ---
@@ -90,19 +91,18 @@ rather than filtered downstream, and the `skip` check runs *before* the generic
 filename matches, because `robinhood-1099-2024.csv` also contains the word
 "robinhood".
 
-**An unrecognised file is skipped, counted, and reported — never guessed at.**
-`parse_all_files` ignores it and `main.py` prints a warning naming the files it
-could not identify. Attempting a best-effort parse of an unknown format is the
-one thing that would produce confidently wrong numbers, which is the failure
-this project is most concerned with.
+**An unrecognised file is reported and blocks export — never guessed at.**
+`parse_all_files` records a finding and `validate_ingestion` rejects the run
+before valuation and export, preserving previous outputs. Attempting a
+best-effort parse of an unknown format would produce confidently wrong numbers.
 
-The subtler danger is the *recognised* file that parses to nothing. Every
-parser drops an unparseable row with a bare `continue` — correct for one odd
-row, but if a broker changes its date format that same `continue` takes the
-whole file to zero, and the account simply vanishes from the portfolio with no
-error anywhere. So the parse loop tracks dropped-row counts per file and warns
-loudly on any recognised file that has data rows but yields zero transactions.
-Silence is the bug; the warning is the fix.
+The subtler danger is a *recognised* file that loses rows or parses to nothing.
+Strict CSV helpers preserve numeric error locations and count substantive rows;
+date helpers count failures even when a parser catches them. The ingestion gate
+rejects reported drops or empty-with-data files. Recognized informational rows
+are excluded narrowly before counting; malformed transactions cannot become
+informational rows just to make a run succeed. Tests cover output preservation
+and snapshot round trips through the normal pipeline.
 
 ---
 

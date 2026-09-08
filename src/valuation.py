@@ -124,7 +124,7 @@ def mark(symbol: str, qty: float, on_date: str,
     return Mark(price, qty, qty * price * contract_multiplier(symbol), source)
 
 
-def is_dust(qty: float, price: float) -> bool:
+def is_dust(qty: float, price: float, *, value: float | None = None) -> bool:
     """Whether a (qty, price) pair is too small to be a real position.
 
     Two regimes:
@@ -142,14 +142,19 @@ def is_dust(qty: float, price: float) -> bool:
        option-exercise rows can push contract counts negative
        indefinitely.
 
+    ``value`` supplies the resolved dollar value when the price and raw
+    quantity use different units (split-adjusted shares or options).
+    The raw quantity still controls the negative fractional-share guard.
+
     Lives here rather than in ``pipeline_stages`` because the history
     walkers need it too, and their inline copy had already drifted from
     it.  ``pipeline_stages`` re-exports the name.
     """
     if price > 0:
-        if qty < 0 and abs(qty) < 1.0 and abs(qty * price) < 200:
+        dollars = abs(value if value is not None else qty * price)
+        if qty < 0 and abs(qty) < 1.0 and dollars < 200:
             return True
-        return abs(qty * price) < 0.01
+        return dollars < 0.01
     if qty < 0:
         return True
     return abs(qty) < 1e-6
@@ -158,9 +163,10 @@ def is_dust(qty: float, price: float) -> bool:
 def mark_is_dust(m: Mark, qty: float) -> bool:
     """``is_dust`` against a ``Mark``.
 
-    Takes the RAW quantity, not the mark's restated one: the dust
-    thresholds are about the position as held, and a pre-split balance
-    scaled forward would clear a share-count threshold it should not.
+    Uses raw quantity for the share-count guard and the resolved value
+    for dollar thresholds.  Multiplying raw quantity by a split-adjusted
+    price mixes share bases; omitting a contract multiplier similarly
+    understates an option's value.  Neither should decide materiality.
     Price may be None, which ``is_dust`` reads as the unpriced regime.
     """
-    return is_dust(qty, m.price or 0.0)
+    return is_dust(qty, m.price or 0.0, value=m.value)

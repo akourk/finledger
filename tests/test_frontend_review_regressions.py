@@ -17,7 +17,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_js(tmp_path, payload, driver, *, timezone=None):
+def run_js(tmp_path, payload, driver, *, timezone=None, initial_hash=''):
     from src.dashboard import _read_app_js
 
     node = shutil.which('node')
@@ -33,6 +33,7 @@ def run_js(tmp_path, payload, driver, *, timezone=None):
       this.listeners[name] = callback;
     },''')
     script = prelude + '\nconst errors = []; console.error = (...args) => errors.push(args.map(String).join(" "));\n'
+    script += 'location.hash = ' + json.dumps(initial_hash) + ';\n'
     script += _read_app_js().replace('__JSON_DATA__', json.dumps(payload))
     script += '\n' + driver
     target = tmp_path / 'regression.js'
@@ -253,3 +254,178 @@ def test_ytd_monthly_ratios_include_january_from_the_prior_close(tmp_path):
     assert result['nMonths'] == 6
     assert result['sharpe'] == expected['sharpe']
     assert result['sortino'] == expected['sortino']
+
+
+@pytest.mark.parametrize('timezone', ['UTC', 'America/Los_Angeles', 'Pacific/Kiritimati'])
+def test_calendar_windows_keep_dst_and_month_end_boundaries(tmp_path, timezone):
+    data = payload()
+    data['as_of'] = '2024-05-31'
+    result = run_js(tmp_path, data, """
+      _optWindow = '3mo';
+      process.stdout.write(JSON.stringify({
+        autumn: _windowCutoffIso('30day', '2024-11-30'),
+        spring: _windowCutoffIso('30day', '2024-03-31'),
+        yearAgo: shiftCalendarIso('2024-02-29', { years: -1 }),
+        optionRange: _optWindowRange()
+      }));
+    """, timezone=timezone)
+    assert result == {
+        'autumn': '2024-10-31', 'spring': '2024-03-01',
+        'yearAgo': '2023-02-28', 'optionRange': ['2024-02-29', '2024-05-31'],
+    }
+
+
+@pytest.mark.parametrize('timezone', ['UTC', 'America/Los_Angeles', 'Pacific/Kiritimati'])
+def test_retirement_defaults_use_dated_signed_contributions_and_python_parity(tmp_path, timezone):
+    from src.analytics._shared import contributions_by_year
+
+    rows = [
+        ('2023-12-30', 'Contribution', 10000, ''),
+        ('2023-12-31', 'Contribution', 100, ''),
+        ('2024-06-01', 'Contribution', 1000, ''),
+        ('2024-06-02', 'Contribution Reversal', 200, ''),
+        ('2024-06-03', 'Contribution', 300, 'Employer match'),
+        ('2024-06-04', 'Transfer In', 5000, 'Custodian transfer'),
+        ('2024-12-31', 'Contribution', 200, ''),
+        ('2025-01-01', 'Contribution', 20000, ''),
+    ]
+    transactions = [dict(date=date, action=action, amount=amount, description=description,
+                         account_group='401K', account_type='Retirement', symbol='XYZ')
+                    for date, action, amount, description in rows]
+    data = payload(transactions=transactions)
+    data['retirement_meta'] = {'birthday': '1990-12-31'}
+    result = run_js(tmp_path, data, """
+      renderPlanning(); renderRetirement();
+      process.stdout.write(JSON.stringify({
+        total: trailingRetirementContributions(),
+        employee: trailingRetirementContributions({ employeeOnly: true }),
+        years: computeRetirementContributionsByYear(),
+        planning: NODES.get('planningContent').innerHTML,
+        forecast: _buildCashFlowForecast(0), errors
+      }));
+    """, timezone=timezone)
+    assert not result['errors']
+    assert result['total'] == 1400
+    assert result['employee'] == 1100
+    assert result['years'] == contributions_by_year(transactions)
+    assert 'id="retAnnualContrib" value="1400"' in result['planning']
+    assert '$1,100.00' in result['forecast']
+
+
+@pytest.mark.parametrize('timezone', ['UTC', 'America/Los_Angeles', 'Pacific/Kiritimati'])
+@pytest.mark.parametrize(('birthday', 'as_of', 'expected'), [
+    ('1990-06-15', '2025-06-14', 34),
+    ('1990-06-15', '2025-06-15', 35),
+    ('1992-02-29', '2025-02-28', 32),
+    ('1992-02-29', '2025-03-01', 33),
+])
+def test_retirement_age_and_projection_horizon_follow_calendar_anniversaries(
+        tmp_path, timezone, birthday, as_of, expected):
+    data = payload()
+    data['as_of'] = as_of
+    data['retirement_meta'] = {'birthday': birthday}
+    result = run_js(tmp_path, data, """
+      renderPlanning(); renderRetirement();
+      process.stdout.write(JSON.stringify({age: currentAgeFromMeta(),
+        retirement: NODES.get('retirementContent').innerHTML,
+        planning: NODES.get('planningContent').innerHTML, errors}));
+    """, timezone=timezone)
+    assert not result['errors']
+    assert result['age'] == expected
+    assert f'Current Age</div><div class="value">{expected}</div>' in result['retirement']
+    assert f'Value at age 67 ({67 - expected}y)' in result['planning']
+
+
+def test_transactions_render_on_first_visit_and_reuse_hidden_column_search_text(tmp_path):
+    data = payload(transactions=[
+        {'date': '2024-01-01', 'symbol': 'AAA', 'description': 'Unique hidden phrase', 'amount': 100},
+        {'date': '2024-01-02', 'symbol': 'BBB', 'description': 'Another entry', 'amount': 200},
+    ])
+    result = run_js(tmp_path, data, """
+      const before = NODES.get('tbody').innerHTML;
+      activateTab('transactions');
+      const first = NODES.get('tbody').innerHTML;
+      let searchReads = 0;
+      for (const t of txns) {
+        const description = t.description;
+        Object.defineProperty(t, 'description', { get() { searchReads++; return description; } });
+      }
+      searchInput.value = 'unique hidden'; renderTable();
+      const filtered = NODES.get('tbody').innerHTML;
+      const count = NODES.get('countPill').textContent;
+      searchInput.value = 'UNIQUE'; renderTable();
+      searchInput.value = 'unique hidden phrase'; renderTable();
+      activateTab('overview'); activateTab('transactions');
+      process.stdout.write(JSON.stringify({before, first, filtered, count, searchReads,
+        after: NODES.get('tbody').innerHTML, errors}));
+    """)
+    assert not result['errors']
+    assert result['before'] == ''
+    assert 'AAA' in result['first'] and 'BBB' in result['first']
+    assert 'AAA' in result['filtered'] and 'BBB' not in result['filtered']
+    assert 'Unique hidden phrase' not in result['filtered']
+    assert result['count'] == '1 / 2'
+    assert result['searchReads'] == 2
+    assert result['after'] == result['filtered']
+
+
+def test_transaction_deep_link_renders_on_initial_load(tmp_path):
+    data = payload(transactions=[{'date': '2024-01-01', 'symbol': 'XYZ', 'amount': 100}])
+    result = run_js(tmp_path, data, """
+      process.stdout.write(JSON.stringify({html: NODES.get('tbody').innerHTML,
+        rendered: TAB_RENDERED.has('transactions'), errors}));
+    """, initial_hash='#transactions')
+    assert not result['errors']
+    assert result['rendered'] is True
+    assert 'XYZ' in result['html']
+
+
+@pytest.mark.parametrize('timezone', ['UTC', 'America/Los_Angeles', 'Pacific/Kiritimati'])
+def test_existing_wash_risk_window_includes_the_thirtieth_day_across_dst(tmp_path, timezone):
+    data = payload(transactions=[
+        {'date': '2024-10-16', 'symbol': 'XYZ', 'account_group': 'Example',
+         'action': 'Buy', 'amount': 1000},
+        {'date': '2024-11-15', 'symbol': 'XYZ', 'account_group': 'Example',
+         'action': 'Sell', 'amount': 900, 'realized_gain': -100},
+    ])
+    result = run_js(tmp_path, data, """
+      renderTax();
+      process.stdout.write(JSON.stringify({html: NODES.get('taxContent').innerHTML, errors}));
+    """, timezone=timezone)
+    assert not result['errors']
+    assert 'No potential wash sales detected.' not in result['html']
+    assert '2024-10-16' in result['html']
+
+
+@pytest.mark.parametrize('group', ['Example Plan', '__proto__'])
+def test_custom_retirement_groups_match_python_with_legacy_fallback(tmp_path, monkeypatch, group):
+    from src import config
+    from src.analytics._shared import contributions_by_year
+
+    monkeypatch.setitem(config.ACCOUNT_TYPES, group, 'Retirement')
+    transactions = [
+        {'date': '2024-06-01', 'account_group': group, 'account_type': 'Retirement',
+         'action': 'Contribution', 'amount': 200},
+        {'date': '2024-06-01', 'account_group': '401K', 'action': 'Contribution', 'amount': 100},
+        {'date': '2024-06-01', 'account_group': 'constructor', 'account_type': 'Taxable',
+         'action': 'Contribution', 'amount': 900},
+    ]
+    data = payload(transactions=transactions)
+    data['holdings_by_account'] = [
+        {'account_group': group, 'account_type': 'Retirement', 'value': 2000, 'cost_basis': 1800},
+        {'account_group': '401K', 'value': 1000, 'cost_basis': 900},
+        {'account_group': 'constructor', 'account_type': 'Taxable', 'value': 9000, 'cost_basis': 8000},
+    ]
+    result = run_js(tmp_path, data, """
+      renderRetirement();
+      process.stdout.write(JSON.stringify({summary: computeRetirementSummary(),
+        contributions: trailingRetirementContributions(), years: computeRetirementContributionsByYear(),
+        html: NODES.get('retirementContent').innerHTML, errors}));
+    """)
+    assert not result['errors']
+    assert result['summary']['value'] == 3000
+    assert result['summary']['basis'] == 2700
+    assert set(result['summary']['byGroup']) == {group, '401K'}
+    assert result['contributions'] == 300
+    assert result['years'] == contributions_by_year(transactions)
+    assert '$3,000.00' in result['html']

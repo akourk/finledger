@@ -159,7 +159,7 @@ def open_lot_rows(fifo_state: dict | None, prices: dict,
                 "qty": round(qty, 8),
                 "basis_per_share": round(basis_per, 4),
                 "cost_basis": round(cost_basis, 2),
-                "price": round(price, 4) if price else None,
+                "price": price if price else None,
                 "value": round(value, 2) if value is not None else None,
                 "unrealized_gain": (round(unrealized, 2)
                                     if unrealized is not None else None),
@@ -168,10 +168,10 @@ def open_lot_rows(fifo_state: dict | None, prices: dict,
                 "lt_eligible_date": lt_iso,
                 "days_to_lt": days_to_lt,
                 "is_long_term": is_lt,
-                # Full-precision aggregation inputs.  Every public
-                # figure above is rounded for display; summing those
-                # across a hundred-lot pool accumulates cents and
-                # drifts from the walker's own total, which sums exact
+                # Full-precision aggregation inputs.  Public quantities
+                # and dollar totals above are rounded for display;
+                # summing those across a hundred-lot pool accumulates
+                # cents and drifts from the walker's own total, which sums exact
                 # and rounds once.  Stripped before export.
                 "_qty_exact": qty,
                 "_cost_basis_exact": cost_basis,

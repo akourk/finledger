@@ -62,10 +62,12 @@ def main() -> None:
 
     print("\nFinal pre-publish checklist:")
     print("  [ ] git status — no data/*.csv or exports/ staged")
-    print("  [ ] grep your name / email / account numbers across the diff")
-    print("  [ ] confirm samples/portfolio.snapshot.json works:")
-    print("        python -m src.main --import-snapshot "
-          "samples/portfolio.snapshot.json")
+    print("  [ ] review provenance and run the local privacy guard:")
+    print("        python -m tools.privacy_guard scan --scope worktree --require-local")
+    print("  [ ] validate the isolated fictional demo:")
+    print("        python -m tools.build_demo --output _site")
+    print("        python -m tools.privacy_guard scan --artifact _site --require-local")
+    print("  [ ] follow docs/PRIVACY.md before every commit and push")
 
 
 if __name__ == "__main__":

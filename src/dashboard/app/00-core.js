@@ -17,6 +17,27 @@ function calendarIso(date) {
     String(date.getDate()).padStart(2, '0')].join('-');
 }
 
+// Ledger dates are calendar days, not instants in the visitor's timezone.
+// UTC accessors avoid DST changing a cutoff by a day. Month/year shifts
+// clamp to the destination month's last day (Feb 29 -> Feb 28).
+function shiftCalendarIso(iso, { days = 0, months = 0, years = 0 } = {}) {
+  const date = new Date(iso + 'T00:00:00Z');
+  const day = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCFullYear(date.getUTCFullYear() + years, date.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay) + days);
+  return date.toISOString().slice(0, 10);
+}
+
+// Match Python's calendar-age rule, including March 1 as the anniversary
+// of a leap-day birthday in a non-leap year.
+function calendarAge(birthday, asOf = SNAPSHOT_DATE) {
+  if (!birthday) return null;
+  return Number(asOf.slice(0, 4)) - Number(birthday.slice(0, 4))
+    - (asOf.slice(5, 10) < birthday.slice(5, 10) ? 1 : 0);
+}
+
 // The lot-method COMPARISON table: four pure single-method what-if
 // walks.  Never publish a figure from this — see `basisTotals`.
 const basisMethods = DATA.basis_methods || {};

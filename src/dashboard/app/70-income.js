@@ -135,16 +135,7 @@ function _buildCashFlowForecast(passiveProjected) {
   // user's paycheck, so counting it would overstate out-of-pocket
   // outflows (same description rule as analytics/tax.py's 401k
   // deduction).
-  const yrAgo = new Date(today); yrAgo.setFullYear(yrAgo.getFullYear() - 1);
-  let last12Contribs = 0;
-  for (const t of txns) {
-    const info = retirementContribInfo(t);
-    if (!info.isContrib || !t.date) continue;
-    const desc = (t.description || '').toLowerCase();
-    if (desc.includes('employer') || desc.includes('match')) continue;
-    if (new Date(t.date) >= yrAgo) last12Contribs += (t.amount || 0);
-  }
-  const projContribs = Math.round(last12Contribs);
+  const projContribs = Math.round(trailingRetirementContributions({ employeeOnly: true }));
 
   const passive = Math.round(passiveProjected || 0);
   const grossIn = currentSalary + lastYearBonuses + passive;

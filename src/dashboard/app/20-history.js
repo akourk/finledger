@@ -45,10 +45,7 @@ function _windowCutoffIso(windowKey, referenceIso) {
   if (windowKey === 'ytd') return referenceIso.slice(0, 4) + '-01-01';
   const days = PERF_WINDOW_DAYS[windowKey];
   if (!days) return '';
-  const ref = new Date(referenceIso);
-  const cutoff = new Date(ref);
-  cutoff.setDate(cutoff.getDate() - days);
-  return cutoff.toISOString().slice(0, 10);
+  return shiftCalendarIso(referenceIso, { days: -days });
 }
 
 // Unified with the Performance tab's window enum (PERF_WINDOWS).
@@ -610,9 +607,7 @@ function buildHistorySeries() {
     // so points near the start of a sliced view still find a year-ago
     // counterpart.
     const lookupYearAgo = (iso) => {
-      const target = new Date(iso);
-      target.setFullYear(target.getFullYear() - 1);
-      const targetIso = target.toISOString().slice(0, 10);
+      const targetIso = shiftCalendarIso(iso, { years: -1 });
       // Binary-ish search: history is sorted, find the largest snapshot ≤ targetIso
       let best = null;
       for (const h of history) {

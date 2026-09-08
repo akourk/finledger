@@ -1,9 +1,13 @@
 ---
 name: fin-lot-walker-sync
-description: Checklist for changing cost-basis semantics in the `fin` portfolio tracker — new basis effects, wrap/transfer/override rules, lot-relief methods, or anything touching how lots are created/consumed. Use whenever editing basis.py's walker rules, and ALWAYS when a change lands in basis.py that affects lot state. The same rule lives in multiple walkers; this skill lists every consumer that must change in lockstep and the parity checks that catch drift.
+description: Change cost-basis or cash-principal semantics in finledger. Use for lot creation/consumption, relief methods, transfers, wraps, overrides, or basis effects that must agree across annotated and historical walkers.
 ---
 
 # Changing basis / lot semantics in `fin`
+
+All paths below are repository-relative. Read the relevant
+[cost-basis invariants](../../../docs/INVARIANTS.md#invariants-the-cost-basis-walker-relies-on)
+and use [fin-dev-loop](../fin-dev-loop/SKILL.md) for isolated fictional inputs.
 
 **The bug class this skill exists for**: basis-rule changes landing in
 `basis.py` but not its parallel implementations.  It has happened twice
@@ -30,11 +34,11 @@ A basis rule lives in up to FOUR places.  Change all that apply:
    to the other — the docstring carries the same INVARIANT note.
 
 3. **`basis.derive_basis_by_key_from_txns`** — reconstructs running
-   basis from per-txn `basis_effect` + `cost_basis` annotations (used by
-   `--refresh-prices` and the lot-queue parity check).  A new
+   basis from per-txn `basis_effect` + `cost_basis` annotations for the
+   lot-queue parity check. Published basis figures in both pipeline paths
+   come from walker state, never this rounded reconstruction. A new
    `basis_effect` value must be added to its add-set or subtract-set
-   (or explicitly documented as a no-op) or the refresh path and parity
-   check will drift.
+   (or explicitly documented as a no-op) or annotation parity will drift.
 
 4. **`src/actions.py`** — if the change introduces a new action or a new
    `BasisEffect` literal, the catalog is the single source of truth
@@ -73,7 +77,7 @@ investment return to the Holdings table.
 
 ## Adjacent things that often need the same change
 
-- **`cost_basis_overrides.py`** — its `_LOT_CREATING_ACTIONS` set must
+- **`cost_basis_overrides.py`** — its `_ADD_ACTIONS` set must
   include any new lot-creating action or user `Cost Basis` rows won't
   match it.
 - **Balance side**: `main.py` / `pipeline_stages.walk_balances` derive
@@ -127,9 +131,10 @@ test that fails if a walker re-inlines it, several asserting the inlined
 form is absent rather than just that the call is present.
 
 ```bash
-python -m pytest tests/test_basis_walker.py tests/test_history.py \
-  tests/test_data_health.py tests/test_pipeline_snapshot.py -q
-python -m pytest tests/ -q        # full suite before calling it done
+uv run python -m pytest tests/test_basis_walker.py tests/test_history.py \
+  tests/test_lot_walker_parity.py tests/test_cash_basis_parity.py \
+  tests/test_data_health.py tests/test_pipeline_path_parity.py tests/test_pipeline_snapshot.py -q -rs
+uv run python -m pytest tests/ -q -rs        # full suite before calling it done
 ```
 
 `test_pipeline_snapshot.py` (end-to-end synthetic portfolio) is the
@@ -149,6 +154,8 @@ snapshot's known-good figures need a *justified* update.
   figure, that the figure is principal rather than face value, and that
   the data-health check still flags a seeded disagreement.
 
-**Verify any new parity test is non-vacuous**: revert the fix, confirm
-the test fails, restore.  A parity test that passes against the broken
-code is the failure mode this whole skill is about.
+**Verify any new parity test is non-vacuous**: run it against the prior
+behavior in an isolated checkout or otherwise demonstrate the failure it catches.
+Do not revert shared working-tree changes while other agents are editing them.
+A parity test that passes against the broken code is the failure mode this
+whole skill is about.

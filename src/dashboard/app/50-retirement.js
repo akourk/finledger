@@ -134,8 +134,14 @@ function rothMagiBarHtml(elig) {
   </div>`;
 }
 const RETIREMENT_GROUPS = { '401K': '401k', 'Roth IRA': 'ira_roth', 'Rollover IRA': 'ira_rollover' };
+function isRetirementGroup(group) {
+  // The shared Performance set reads exported classifications and falls
+  // back to account_type. Keep legacy names additive, matching Python's
+  // retirement_groups() when an older export has incomplete metadata.
+  return RETIREMENT_GROUP_SET.has(group) || Object.hasOwn(RETIREMENT_GROUPS, group);
+}
 // Actions that count as contributions/deposits for retirement accounts.
-const RETIREMENT_CONTRIB_ACTIONS = new Set(['Contribution', 'Deposit', 'Transfer In']);
+const RETIREMENT_CONTRIB_ACTIONS = new Set(['Contribution', 'Deposit']);
 
 function yearOf(iso) { return (iso || '').slice(0, 4); }
 
@@ -145,7 +151,7 @@ function yearOf(iso) { return (iso || '').slice(0, 4); }
 // deadline).  Returns { isContrib: bool, year: string }.
 function retirementContribInfo(t) {
   const g = t.account_group;
-  if (!(g in RETIREMENT_GROUPS)) return { isContrib: false };
+  if (!isRetirementGroup(g)) return { isContrib: false };
   const amt = t.amount || 0;
   if (amt <= 0) return { isContrib: false };
 
@@ -156,10 +162,6 @@ function retirementContribInfo(t) {
 
   // Schwab / Vanguard style: explicit Contribution / Deposit actions
   if (RETIREMENT_CONTRIB_ACTIONS.has(t.action)) {
-    // Skip Transfer In on Roth/Rollover (custodian moves like USAA→Schwab)
-    if (t.action === 'Transfer In' && (g === 'Roth IRA' || g === 'Rollover IRA')) {
-      return { isContrib: false };
-    }
     return { isContrib: true, year: y };
   }
 
@@ -169,6 +171,9 @@ function retirementContribInfo(t) {
   if (t.action === 'Contribution Reversal') {
     return { isContrib: true, year: y, signedAmount: -amt };
   }
+  // Custodian moves are not contributions, including transfers into a
+  // 401K (same rule as the Python classifier).
+  if (t.action === 'Transfer In') return { isContrib: false };
 
   // USAA style: Buy with contribution marker in the description
   if ((isPriorYear || isCurrentYear) && g === 'Roth IRA') {
@@ -179,6 +184,23 @@ function retirementContribInfo(t) {
   }
 
   return { isContrib: false };
+}
+
+// One dated, signed total feeds the scenario and cash-flow defaults.
+// Comparing ISO dates keeps the inclusive first day independent of the
+// browser timezone; the upper bound excludes future-dated imports.
+function trailingRetirementContributions({ employeeOnly = false } = {}) {
+  const start = shiftCalendarIso(SNAPSHOT_DATE, { years: -1 });
+  let total = 0;
+  for (const t of txns) {
+    if (!t.date || t.date < start || t.date > SNAPSHOT_DATE) continue;
+    const info = retirementContribInfo(t);
+    if (!info.isContrib) continue;
+    const desc = (t.description || '').toLowerCase();
+    if (employeeOnly && (desc.includes('employer') || desc.includes('match'))) continue;
+    total += info.signedAmount ?? (t.amount || 0);
+  }
+  return total;
 }
 
 function computeRetirementContributionsByYear() {
@@ -194,7 +216,7 @@ function computeRetirementContributionsByYear() {
     if (!info.isContrib) continue;
     const y = info.year;
     if (!y) continue;
-    const amt = t.amount || 0;
+    const amt = info.signedAmount ?? (t.amount || 0);
     if (!rows[y]) rows[y] = { '401K': 0, 'Roth IRA': 0, total: 0 };
     if (t.account_group === 'Roth IRA') rows[y]['Roth IRA'] += amt;
     else rows[y]['401K'] += amt;
@@ -207,7 +229,7 @@ function computeRetirementSummary() {
   // Current balance + basis per account group, filtered to retirement.
   const byGroup = Object.create(null);
   for (const h of holdingsByAccount) {
-    if (!(h.account_group in RETIREMENT_GROUPS)) continue;
+    if (!isRetirementGroup(h.account_group)) continue;
     if (!(h.account_group in byGroup)) byGroup[h.account_group] = { value: 0, basis: 0 };
     if (typeof h.value === 'number') byGroup[h.account_group].value += h.value;
     if (typeof h.cost_basis === 'number') byGroup[h.account_group].basis += h.cost_basis;
@@ -463,10 +485,7 @@ function _buildFireSection(mcRoot, mc) {
 // Helper: current age from RETIREMENT_META.birthday — used to render
 // "age at crossing" in the FIRE table.  Returns 0 if no birthday.
 function currentAgeFromMeta() {
-  const bd = RETIREMENT_META && RETIREMENT_META.birthday;
-  if (!bd) return 0;
-  const d = new Date(bd);
-  return Math.floor((snapshotDate() - d) / (365.25 * 86400000));
+  return calendarAge(RETIREMENT_META.birthday) ?? 0;
 }
 
 function renderRetirement() {
@@ -479,26 +498,12 @@ function renderRetirement() {
 
   // Auto-infer annual contribution from the last 12 months of retirement contribs.
   const today = snapshotDate();
-  const yrAgo = new Date(today); yrAgo.setFullYear(yrAgo.getFullYear() - 1);
-  let last12 = 0;
-  for (const t of txns) {
-    const info = retirementContribInfo(t);
-    if (!info.isContrib) continue;
-    if (!t.date) continue;
-    if (new Date(t.date) >= yrAgo) last12 += (t.amount || 0);
-  }
-  const autoAnnualContrib = Math.round(last12);
+  const autoAnnualContrib = Math.round(trailingRetirementContributions());
   const annualContribUsed = retirementAnnualContrib != null ? retirementAnnualContrib : autoAnnualContrib;
 
   // Age math
-  const birthday = RETIREMENT_META.birthday ? new Date(RETIREMENT_META.birthday) : null;
-  let currentAge = null;
-  let yearsToRetire = null;
-  if (birthday) {
-    const diffMs = today - birthday;
-    currentAge = Math.floor(diffMs / (365.25 * 86400000));
-    yearsToRetire = Math.max(0, retirementProjectionAge - currentAge);
-  }
+  const currentAge = calendarAge(RETIREMENT_META.birthday);
+  const yearsToRetire = currentAge != null ? Math.max(0, retirementProjectionAge - currentAge) : null;
 
   // Stat cards
   const ytdKey = String(today.getFullYear());

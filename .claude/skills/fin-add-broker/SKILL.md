@@ -1,178 +1,110 @@
 ---
 name: fin-add-broker
-description: Add support for a new brokerage CSV format to the `fin` portfolio tracker. Use when the user wants `fin` to ingest exports from a broker it doesn't yet parse, or asks to "add a broker / parser / new CSV format". Walks the detection → prefix → parser → dispatch → normalize → test checklist with the exact files and signatures to edit.
+description: Add or extend a brokerage CSV parser in finledger. Use for a new broker or changed export format; covers strict row validation, detection, account mappings, normalization, snapshot round trips, and isolated fictional fixtures.
 ---
 
-# Adding a new broker to `fin`
+# Add or extend a broker parser
 
-A broker is supported once its CSV is **detected**, **parsed into the common
-10-field transaction dict**, and its raw action strings are **normalized** to the
-canonical vocabulary. Follow the steps in order; each names the exact file.
+All paths below are repository-relative. Use public format documentation and
+independently fictional examples to establish the header, preamble/footer,
+actions, and sign conventions. If diagnosing an authorized local export,
+inspect structural facts locally and reproduce the shape with fictional cells;
+do not ask the user to send personal financial rows into chat or copy them into
+fixtures. See [PRIVACY.md](../../../docs/PRIVACY.md) and
+[CSV investigations](../../../CONTRIBUTING.md#csv-parser-investigations).
 
-First, get the broker's real CSV header and a few representative rows from the
-user (buy, sell, dividend, deposit, and any directional/ambiguous action). You
-need the actual column names and at least one example of every action type.
-**Do not paste real financial rows into commits or fixtures** — once you know the
-shape, build synthetic rows for the test.
+## Detection and dispatch
 
-## 1. Detection — `src/scanner.py`
+1. Add filename detection in `src/scanner.py::detect_broker` and a distinctive
+   header signature in `_detect_by_headers`. Specific formats must precede
+   generic broker names. Header detection examines the first ten lines because
+   some exports start with metadata. Reference reports must remain `skip`;
+   importing them as transactions would double-count the normal export.
+2. Add the broker key to `CANONICAL_PREFIXES` in `src/config.py` when the new
+   format needs a canonical filename. Preserve the renamer's collision and
+   rollback behavior; never change local personal filenames while developing.
+3. Create `src/parsers/<broker>.py`, register it in `_PARSERS` in
+   `src/parsers/__init__.py`, and add the public parser export where appropriate.
+   The parser returns `list[Transaction]` using `_txn(...)`: the core fields
+   are `date, account, symbol, action, quantity, price, fees, amount,
+   description, source`, with optional `cusip` and later pipeline annotations.
 
-Add to `detect_broker()` a filename-pattern branch, and to `_detect_by_headers()`
-a header-signature fallback (so a not-yet-renamed file is still recognized):
+## Strict CSV and numeric handling
 
-```python
-# in detect_broker(), filename branch:
-if "newbroker" in name or name.startswith("newbroker-"):
-    return "newbroker"
+Model the parser on a current neighbor such as `apple_savings.py`. Use
+`read_csv_rows` from `src/parsers/_helpers.py`, with format-specific `required`
+headers and `nonblank` fields. It validates widths, duplicate headers, and
+required cells; wraps values with redacted error locations; and counts
+substantive rows for empty-import detection. Using a raw `csv.DictReader`
+in a new parser bypasses those boundaries.
 
-# in _detect_by_headers(), header fallback — pick columns unique to this broker:
-if "their unique col" in header and "another col" in header:
-    return "newbroker"
+Open with `newline=""` and `encoding="utf-8-sig"`. Pass complete CSV records
+through the shared reader; do not split or prefilter physical lines, because
+quoted fields may span lines. If scanning a preamble, preserve `line_offset`.
+For an informational footer, use a narrowly recognized `is_informational`
+callback where applicable, checking the exact header and empty transaction
+cells before ignoring an overflow record. Never discard a malformed row that
+contains transaction data. Inspect `robinhood.py` and its footer tests.
+
+Use `_num` for finite numeric parsing and `_date_mdy`, `_date_ymd`, `_date_dmy`,
+or `_date_iso` for dates. `_num` returns zero for an optional blank cell and
+rejects malformed or non-finite input; do not replace it with a forgiving
+`float(...)` fallback. Preserve the shared date-failure accounting if a parser
+catches a date error. The full pipeline calls `validate_ingestion` and must
+reject dropped, malformed, or unrecognized input before replacing outputs.
+
+Direction belongs in the action after parsing:
+
+- Resolve ambiguous signs and broker markers (including surrender suffixes)
+  **before** converting quantity, amount, and fees to nonnegative magnitudes.
+- Keep the validated numeric value; reparsing formatted quantities can lose
+  grouped digits or shares.
+- Use `src/reorgs.py` for corporate-action pairing and classification. Keep
+  options under their contract symbol, with quantity in contracts and premium
+  per share; valuation applies the contract multiplier.
+- Pass `source=filepath.name`; do not embed a personal absolute path.
+
+## Account mappings and actions
+
+`src/accounts.py::configure_accounts` validates each run's metadata and applies
+`Account Group` / `Account Type` mappings before normalization. Every resulting
+group needs an explicit `Taxable`, `Retirement`, or `Savings` type. Missing types
+fail closed; **there is no normal pipeline fallback to Taxable**. Keep personal
+mappings out of `config.py`. Add fictional mappings to the sample metadata.
+`--init-account-mappings` writes a starter for user review; `_INTRINSIC_TYPES`
+may suggest a category only when the parser's account identity establishes it.
+A generic broker can offer multiple account types.
+
+Add ordered rules in `src/normalize.py::RULES`, scoped to the intended
+`account_group` for broker-specific vocabulary. Confirm that scope still
+matches after account grouping. Unmatched actions pass through title-cased;
+cover every supported raw action. If no existing canonical action fits, use
+[fin-add-action](../fin-add-action/SKILL.md). Direction cannot be recovered
+from `amount_sign` after the parser has discarded the original sign.
+
+## Regression and sample coverage
+
+Use existing fictional writers in `tests/conftest.py` and fixtures. Cover normal
+actions, both directions of ambiguous actions, malformed/non-finite values,
+missing headers/cells, empty input, multiline fields, and any new footer boundary.
+When extending snapshots, test CLI export, copy, restore, and normal ingestion;
+assert final share balances and preservation of previous outputs after failure.
+Snapshot transport succeeding does not prove the restored CSV parses.
+
+A new broker should have a writer in `tools/build_sample_snapshot.py` and
+appropriate fictional price coverage in `samples/prices.fixture.json`. Rebuild
+the shipped snapshot only after updating the fictional generator or explaining
+a stale-sample failure:
+
+```bash
+uv run python -m tools.build_sample_snapshot
+uv run python -m pytest tests/test_snapshot_workflow.py tests/test_sample_snapshot.py tests/test_import_safety.py tests/test_parser_silent_drop.py -q -rs
+uv run python -m pytest tests/ -q -rs
+uv run python -m tools.build_demo --output _site
+npm test
 ```
 
-Order matters in `detect_broker` — more-specific patterns first (e.g. Coinbase
-Pro is checked before generic Coinbase). The function returns a broker **key**,
-or `"manual"` / `"skip"` / `"unknown"`.
-
-`_detect_by_headers` scans the **first 10 lines**, not just line 1 — some
-exports prefix the real header with metadata rows (Coinbase opens with
-`Transactions` / `User,...` before the `ID,Timestamp,...` header). If your
-broker's header isn't on the first line, that's already handled; just make sure
-your signature columns are unique enough not to match one of those preamble
-lines.
-
-## 2. Canonical prefix — `src/config.py`
-
-Add the key → rename-prefix to `CANONICAL_PREFIXES`. This is the `{prefix}.csv` /
-`{prefix}-{n}.csv` name the two-pass renamer normalizes files to:
-
-```python
-CANONICAL_PREFIXES = {
-    ...
-    "newbroker": "newbroker",
-}
-```
-
-## 3. Account mapping — usually none
-
-`ACCOUNT_GROUPS` / `ACCOUNT_TYPES` in `config.py` start **empty**; the user wires
-their accounts in `data/metadata.csv` (`Account Group` / `Account Type` rows),
-and unmapped accounts fall back to the raw account name / `Taxable`. So you
-normally add **nothing** here. Only touch these if the broker needs a built-in
-default that isn't user-specific.
-
-## 4. Parser — `src/parsers/newbroker.py`
-
-Create a new module. Return a list of the common 10-field dict via the `_txn()`
-helper. Use the shared helpers from `._helpers`:
-
-- `_num(val)` — parse a numeric string to float (handles `$`, commas, blanks).
-- `_date_mdy` / `_date_ymd` / `_date_dmy` / `_date_iso` — date → ISO `YYYY-MM-DD`.
-- `_txn(date, account, symbol, action, quantity, price, fees, amount,
-  description, source, cusip=None)` — builds the dict and applies the ticker-
-  rename layer. Pass `source=filepath.name`.
-
-Pattern (see `src/parsers/apple_savings.py` for the simplest real example):
-
-```python
-"""NewBroker taxable brokerage."""
-from __future__ import annotations
-import csv
-from pathlib import Path
-from ._helpers import Transaction, _date_mdy, _num, _txn
-
-def parse_newbroker(filepath: Path) -> list[Transaction]:
-    txns = []
-    with open(filepath, newline="", encoding="utf-8-sig") as f:
-        for row in csv.DictReader(f):
-            action = (row.get("Action") or "").strip()
-            if not action:
-                continue
-            txns.append(_txn(
-                date=_date_mdy(row["Date"]),
-                account="NewBroker",
-                symbol=(row.get("Symbol") or "").strip(),
-                action=action,
-                quantity=_num(row.get("Quantity", "")),
-                price=_num(row.get("Price", "")),
-                fees=_num(row.get("Fees", "")),
-                amount=_num(row.get("Amount", "")),
-                description=(row.get("Description") or "").strip(),
-                source=filepath.name,
-            ))
-    return txns
-```
-
-**Critical invariants for the parser:**
-
-- **Quantities, amounts, and fees must be non-negative after parsing.** Direction
-  is carried by the `action`, not by sign. `abs()` these fields on the way in.
-- **Split ambiguous actions by sign BEFORE abs().** If one raw action means both
-  inflow and outflow (e.g. an ACH that's deposit-or-withdrawal, a generic
-  Transfer, a Coinbase Convert), emit two distinct action strings based on the
-  raw amount sign (`"ACH Deposit"` vs `"ACH Withdrawal"`) *before* you abs the
-  amount. Doing this downstream is a bug. See the "Ambiguous actions" list in
-  CLAUDE.md for the existing precedents.
-- For corporate actions (mergers, splits, spinoffs, cash-in-lieu), reuse the
-  helpers in `src/reorgs.py` rather than inlining pairing/classification logic.
-
-## 5. Register in the dispatch table — `src/parsers/__init__.py`
-
-Import and add one row to `_PARSERS` (key must match step 1's broker key):
-
-```python
-from .newbroker import parse_newbroker
-...
-_PARSERS = {
-    ...
-    "newbroker": parse_newbroker,
-}
-```
-
-## 6. Normalization rules — `src/normalize.py`
-
-Add rules to `RULES` mapping the broker's **raw** action strings to canonical
-actions (`Buy`, `Sell`, `Dividend`, `Deposit`, `Withdrawal`, `Transfer In/Out`,
-`Contribution`, `Reinvest`, `Neutral`, …). **Scope each rule by `account_group`**
-so you don't collide with another broker's action names. First match wins:
-
-```python
-{"account_group": "NewBroker", "action": "Bought", "normalized": "Buy"},
-{"account_group": "NewBroker", "action": "Sold",   "normalized": "Sell"},
-```
-
-Matchers (all optional): `account_group`, `action` (case-insensitive on the raw
-action), `symbol`, `amount_sign` (`"+"`/`"-"`/`"0"`), `description` (substring).
-Unmatched actions pass through title-cased and show up un-normalized in the
-dashboard — that's your signal to add a rule.
-
-If you need a **brand-new canonical action** (not in the existing vocabulary),
-add an `Action(...)` row to `_ACTIONS` in `src/actions.py` first (set `balance` /
-`basis` / `cash_flow` / `color`) — that single source threads it through every
-consumer. See the `fin-add-action` recipe / CLAUDE.md "Adding a new normalized
-action".
-
-## 7. Test it
-
-1. **Unit test the parser** with a synthetic fixture CSV. Mirror an existing test
-   (e.g. `tests/test_voya_parser.py`) and the `write_*_csv` helpers in
-   `tests/conftest.py`. Cover every action type, especially any directional split
-   from step 4.
-2. **Add the broker to the sample portfolio** so the shipped snapshot exercises
-   it: add a per-broker CSV writer in `tools/build_sample_snapshot.py` (these
-   writers double as format documentation), then rebuild and smoke-test:
-
-   ```bash
-   python tools/build_sample_snapshot.py
-   python -m pytest tests/ -q
-   ```
-
-   (Run the full-pipeline smoke test in a scratch dir per the `fin-dev-loop`
-   skill — never against the user's real `data/`.)
-
-## Done when
-
-- `python -m pytest tests/ -q` is green, including `test_pipeline_snapshot.py`.
-- A sample run parses the new broker's rows with correct signs/actions and the
-  account's balances reconcile (no spurious negative balances, no un-normalized
-  actions leaking into the dashboard).
+Include the parser's own focused tests. Follow
+[fin-dev-loop](../fin-dev-loop/SKILL.md) for temporary paths, fixed dates, and
+blocked network. Finish when supported formats normalize and balance correctly,
+invalid imports preserve previous outputs, and the fictional demo still builds.

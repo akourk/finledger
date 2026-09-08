@@ -238,6 +238,15 @@ value. Fix the source/export format and rerun; the last successful JSON and HTML
 remain available if validation or rendering fails. `--dry-run` previews changes
 without writing outputs. The full snapshot is validated before restore writes.
 
+If a rename fails, finledger attempts to restore the original filenames. An
+incomplete rollback keeps the remaining files in a `.fin-rename-*` recovery
+directory under `data/` and blocks later scans, imports, and renames. Inspect
+those files locally, restore each to its original filename without overwriting
+another input, then remove the **empty** recovery directory and rerun. Do not
+delete a recovery directory's contents: they may be the only remaining copies.
+Legacy `.tmp-*` rename files are also reported as unknown inputs and require
+local recovery before continuing.
+
 Coinbase assets are normalized using their broker context. A crypto-to-crypto
 Coinbase Pro match without a USD valuation is reported as unsupported; provide a
 supported export with USD values rather than accepting invented zero proceeds.
