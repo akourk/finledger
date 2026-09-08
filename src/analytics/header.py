@@ -45,7 +45,8 @@ def compute_header_summary(txns: list[dict], history: list[dict],
     if not history:
         return None
     today = history[-1].get("date", "")
-    today_total = float(history[-1].get("total", 0) or 0)
+    from ..return_flows import scope_snapshot_value
+    today_total = scope_snapshot_value(history[-1])
     if not today:
         return None
 
@@ -59,7 +60,8 @@ def compute_header_summary(txns: list[dict], history: list[dict],
     # balance walk as _value_at_date, but constrained to today's
     # snapshot positions (no ledger re-walk needed).  Falls back to
     # the most recent txn price when the cache can't resolve a symbol.
-    today_positions = history[-1].get("positions", []) or []
+    today_positions = [*(history[-1].get("positions") or []),
+                       *(history[-1].get("in_transit") or [])]
     last_txn_price: dict[str, float] = {}
     for t in txns:
         p = float(t.get("price", 0) or 0)

@@ -246,12 +246,19 @@ Contributed therefore includes these transfers; whole-portfolio contributions
 and retirement tax-year contribution totals keep their external-money meaning.
 This adjustment also feeds account benchmarks and money-weighted returns.
 
+**Assets in transit** appear separately in historical holdings when a matched
+in-kind transfer arrives after its departure date. The portfolio continues to
+include their market value and carried basis. A combined account view includes
+them when both sending and receiving accounts are selected; each individual
+account continues to show its posted balance. Historical account/type breakdowns
+label the extra component **In transit**, with its route shown in holdings.
+
+A later imported arrival can confirm an earlier internal move and revise this
+reconstructed history. The valuation still uses prices available on each date.
 USD transfers, unmatched movements, and existing broker-specific exceptions
-retain their current rules. A missing transfer valuation appears in Data Health;
-resolve that price gap before relying on the affected account return. Ordinary
-transfers arriving on a later date can still cause a temporary portfolio balance
-dip while in transit. The separately detected custodian rollover bridges cover
-their established rollover cases.
+retain their current rules. Missing prices or a split during transfer appear in
+Data Health; resolve those gaps before relying on the affected returns. The
+separately detected custodian rollover bridges cover their established cash cases.
 
 
 ## Input validation and recovery

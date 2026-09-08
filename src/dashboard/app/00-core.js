@@ -78,6 +78,101 @@ const ANALYTICS_PERF = Object.assign(Object.create(null), ANALYTICS.performance_
 // to a snapshot date for a given account filter.
 const _ROLLOVER_BRIDGES = ANALYTICS.rollover_bridges || [];
 
+// Snapshot totals and positions describe posted custody. Verified in-kind
+// transfers retain market exposure between posting dates, but belong to a
+// selected scope only when that scope contains both ends of the transfer.
+function _transitAmountForGroups(h, filterSet, field = 'value') {
+  let total = 0;
+  for (const p of h?.in_transit || []) {
+    if (filterSet && (!filterSet.has(p.source_group) || !filterSet.has(p.destination_group))) continue;
+    if (Number.isFinite(p[field])) total += p[field];
+  }
+  return total;
+}
+
+function _hasTransitForGroups(h, filterSet) {
+  return (h?.in_transit || []).some(p => !filterSet
+    || (filterSet.has(p.source_group) && filterSet.has(p.destination_group)));
+}
+
+// Match Python round(value, 2), including exact binary halfway values.
+// Apply this only after combining full-precision posted and transit marks;
+// rounding the two halves independently can manufacture a cent of return.
+function _roundSnapshotCents(value) {
+  if (!Number.isFinite(value) || value === 0 || Math.abs(value) >= 1e15) return value;
+  const bytes = new DataView(new ArrayBuffer(8));
+  bytes.setFloat64(0, Math.abs(value));
+  const bits = bytes.getBigUint64(0);
+  const exponent = Number((bits >> 52n) & 0x7ffn);
+  const fraction = bits & ((1n << 52n) - 1n);
+  const significand = exponent ? (1n << 52n) + fraction : fraction;
+  const shift = (exponent || 1) - 1023 - 52;
+  const numerator = significand * 100n;
+  let cents;
+  if (shift >= 0) cents = numerator << BigInt(shift);
+  else {
+    const denominator = 1n << BigInt(-shift);
+    cents = numerator / denominator;
+    const twiceRemainder = (numerator % denominator) * 2n;
+    if (twiceRemainder > denominator || (twiceRemainder === denominator && cents % 2n)) cents++;
+  }
+  // Parse the exact decimal once: converting a large integer to Number
+  // before division by 100 would introduce a second binary rounding.
+  const rounded = Number(`${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`);
+  return value < 0 ? -rounded : rounded;
+}
+
+function _snapshotValueForGroups(h, filterSet = null) {
+  if (!h) return 0;
+  const includeTransit = _hasTransitForGroups(h, filterSet);
+  const source = includeTransit && h.valuation_precision ? h.valuation_precision : h;
+  const posted = filterSet
+    ? [...filterSet].reduce((sum, g) => sum + (source.by_account_group?.[g] || 0), 0)
+    : (source.total || 0);
+  return includeTransit ? _roundSnapshotCents(posted + _transitAmountForGroups(h, filterSet)) : posted;
+}
+
+function _snapshotBasisForGroups(h, filterSet = null) {
+  if (!h) return 0;
+  const includeTransit = _hasTransitForGroups(h, filterSet);
+  const source = includeTransit && h.valuation_precision ? h.valuation_precision : h;
+  let posted;
+  if (!filterSet && Number.isFinite(source.total_cost_basis)) posted = source.total_cost_basis;
+  else if (filterSet && source.cost_basis_by_group) {
+    posted = [...filterSet].reduce((sum, g) => sum + (source.cost_basis_by_group[g] || 0), 0);
+  } else {
+    posted = (h.positions || []).reduce((sum, p) => sum
+      + ((!filterSet || filterSet.has(p.account_group)) && Number.isFinite(p.cost_basis) ? p.cost_basis : 0), 0);
+  }
+  return includeTransit ? _roundSnapshotCents(posted + _transitAmountForGroups(h, filterSet, 'cost_basis')) : posted;
+}
+
+function _snapshotTypeGroups(type) {
+  return new Set(Object.keys(ACCOUNT_TYPE_OF).filter(g => ACCOUNT_TYPE_OF[g] === type));
+}
+
+function _snapshotTypeAmount(h, type, field = 'value') {
+  const groups = _snapshotTypeGroups(type);
+  const includeTransit = _hasTransitForGroups(h, groups);
+  const key = field === 'cost_basis' ? 'cost_basis_by_type' : 'by_account_type';
+  const posted = ((includeTransit && h.valuation_precision?.[key]) || h[key] || {})[type] || 0;
+  return includeTransit ? _roundSnapshotCents(posted + _transitAmountForGroups(h, groups, field)) : posted;
+}
+
+// This key stays inside display maps: it never enters account metadata,
+// account filters, transactions, or performance-group membership.
+const _TRANSIT_BUCKET = '\u0000in_transit';
+function _snapshotBreakdown(h, field) {
+  const out = Object.assign(Object.create(null), h?.valuation_precision?.[field] || h?.[field] || {});
+  for (const p of h?.in_transit || []) {
+    if (!Number.isFinite(p.value)) continue;
+    const key = field === 'by_sector' ? (SECTOR_OF[p.symbol] || 'Other') : _TRANSIT_BUCKET;
+    out[key] = (out[key] || 0) + p.value;
+  }
+  return out;
+}
+function _breakdownLabel(key) { return key === _TRANSIT_BUCKET ? 'In transit' : key; }
+
 // User-maintained metadata from data/metadata.csv (birthday,
 // salary history, bonus history, annual expenses, year-end targets).
 // Hoisted to the top because renderAnnualBreakdown (Overview tab,

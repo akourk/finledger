@@ -59,13 +59,13 @@ from .trading_heatmap import compute_trading_heatmap
 from ._shared import _account_filter_sets
 
 
-def _daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
+def _daily_totals(txns: list[dict], *, transit_issues=None) -> list[tuple[str, float]]:
     """Daily total-value series for the drawdown stats' resolution —
     see ``history.compute_daily_totals``.  Late import: analytics
     modules are also imported standalone in tests, and the history
     module pulls in the whole basis/broker_lots machinery."""
     from ..history import compute_daily_totals
-    return compute_daily_totals(txns)
+    return compute_daily_totals(txns, transit_issues=transit_issues)
 
 
 def build_analytics(txns: list[dict], history: list[dict],
@@ -83,7 +83,7 @@ def build_analytics(txns: list[dict], history: list[dict],
     """
     from pathlib import Path
     from ..config import CACHE_DIR
-    from ..return_flows import annotate_account_transfers
+    from ..return_flows import annotate_account_transfers, scope_snapshot_value
 
     # Recompute price-dependent account-boundary verdicts on both full and
     # refresh paths before any return consumer reads them.
@@ -161,13 +161,10 @@ def build_analytics(txns: list[dict], history: list[dict],
 
                 # Current retirement balance from latest snapshot
                 last = history[-1] if history else {}
-                ret_value = sum(
-                    (last.get("by_account_group") or {}).get(g, 0)
-                    for g in retirement_groups()
-                )
+                ret_value = scope_snapshot_value(last, retirement_groups())
 
                 # All-accounts metrics
-                total_value = float(last.get("total") or 0)
+                total_value = scope_snapshot_value(last)
                 # Cash bucket = the Cash sector, which already covers every
                 # USD position portfolio-wide: Savings-account balances
                 # (sector_of["USD"] = "Cash" hard rule), the Coinbase USD
@@ -291,7 +288,7 @@ def build_analytics(txns: list[dict], history: list[dict],
     benchmark_delta = None
     if history:
         _last_h = history[-1]
-        _pv = float(_last_h.get("total") or 0)
+        _pv = scope_snapshot_value(_last_h)
         _bv = float(_last_h.get("benchmark_spy") or 0)
         if _bv > 0:
             benchmark_delta = {
@@ -303,6 +300,10 @@ def build_analytics(txns: list[dict], history: list[dict],
 
     from .savings import compute_fees, compute_savings_by_year
 
+    # Retain coverage failures from the existing daily walk: a transfer can
+    # begin and end entirely between the exported semimonthly snapshots.
+    transit_issues: list[dict] = []
+    daily_totals = _daily_totals(txns, transit_issues=transit_issues)
     out = {
         "rollover_bridges": bridges,
         "retirement_contributions_by_year": contribs_yr,
@@ -339,7 +340,7 @@ def build_analytics(txns: list[dict], history: list[dict],
         # resolution (sparse snapshots understate peak-to-trough depth);
         # the exported series stays at snapshot cadence.
         "drawdown":        compute_drawdown(history, bridges,
-                                            daily_totals=_daily_totals(txns)),
+                                            daily_totals=daily_totals),
         "daily_pnl":       compute_daily_pnl(history, txns),
         "trading_heatmap": compute_trading_heatmap(txns),
         "income_calendar": (_income_cal := compute_income_calendar(
@@ -367,5 +368,6 @@ def build_analytics(txns: list[dict], history: list[dict],
     out["data_health"] = compute_data_health(
         txns, holdings_by_account, history, out, CACHE_DIR,
         cash_summary=cash_summary or {},
+        transit_issues=transit_issues,
     )
     return out

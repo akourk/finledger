@@ -201,6 +201,12 @@ def _snap(**kw) -> dict:
 
 SOFT_GUARD_CASES = [
     (
+        "unpriced_transfer_transit",
+        D._check_unpriced_transfer_transit,
+        ([{"in_transit": [{"value": None}]}],),
+        ([{"in_transit": [{"value": 100.0}]}],),
+    ),
+    (
         "unpriced_account_transfer",
         D._check_unpriced_account_transfers,
         ([{"account_transfer": {"counterparty_group": "Example", "flow": None}}],),
@@ -399,13 +405,33 @@ def test_every_soft_severity_check_is_covered_here():
         "warn/info data_health check(s) with no fire/near-miss test: "
         f"{sorted(missing)} — add them to SOFT_GUARD_CASES"
     )
-# Checks that need real files on disk cannot live in the table above --
-# they take a `cache_dir` and read cache sidecars. Each one named here
+# Checks that need filesystem or price fixtures cannot live in the table above.
+# Each one named here
 # MUST have the listed class in this module, so the exemption cannot
 # become a way to skip coverage.
 _COVERED_BY_A_FIXTURE_CLASS = {
     "_check_held_symbol_price_health": "TestHeldSymbolPriceHealth",
+    "_check_transfer_share_units": "TestTransferShareUnits",
 }
+
+
+class TestTransferShareUnits:
+    @pytest.mark.parametrize("arrival_factor, expected", [(1.0, True), (2.0, False)])
+    def test_endpoint_split_units_fire_only_on_incompatible_pairs(self, monkeypatch,
+                                                                arrival_factor, expected):
+        from src import valuation
+
+        rows = [{"date": "2024-06-02", "account_group": "Example A", "symbol": "TEST",
+                 "action": "Transfer Out", "quantity": 10.0, "amount": 0.0},
+                {"date": "2024-06-08", "account_group": "Example B", "symbol": "TEST",
+                 "action": "Transfer In", "quantity": 10.0, "amount": 0.0}]
+        monkeypatch.setattr(valuation, "split_factor_since",
+                            lambda symbol, day: 2.0 if day < "2024-06-08" else arrival_factor)
+        issues = D._check_transfer_share_units(rows)
+        assert bool(issues) == expected
+        if issues:
+            assert issues[0]["kind"] == "unsupported_transfer_share_units"
+            assert issues[0]["severity"] == "warn"
 
 
 def test_the_fixture_class_exemptions_are_real():

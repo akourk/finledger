@@ -32,8 +32,8 @@ function renderStats() {
     netContrib = cashSummary.net_contributed || 0;
   } else {
     const snap = getAsOfSnapshot();
-    totalValue = (snap && snap.total) || 0;
-    costBasis = (snap && snap.total_cost_basis) || 0;
+    totalValue = _snapshotValueForGroups(snap);
+    costBasis = _snapshotBasisForGroups(snap);
     unrealized = +(totalValue - costBasis).toFixed(2);
     netContrib = (snap && snap.net_contributed) || 0;
   }
@@ -63,7 +63,7 @@ function renderStats() {
   const snap = getAsOfSnapshot();
   const selectedDate = snap?.date || asOfDate;
   const selectedHistory = history.filter(h => h.date <= selectedDate);
-  const valueAt = h => (h.total || 0) + _rolloverBridgeAdjustment(h.date, null);
+  const valueAt = h => _snapshotValueForGroups(h) + _rolloverBridgeAdjustment(h.date, null);
   const peak = Math.max(0, ...selectedHistory.map(valueAt));
   const dd = isAsOfLatest()
     ? ((ANALYTICS.drawdown && ANALYTICS.drawdown.current_drawdown_pct) || 0)

@@ -119,14 +119,7 @@ function computeAnnualReturns(accountFilter) {
   // Value accessor: sum over filter set, or total for null filter.
   // Add rollover-bridge adjustment so year boundaries aren't distorted
   // by in-flight cash during custodian rollovers (Voya→Schwab, etc.).
-  const rawValueFn = filterSet
-    ? (h) => {
-      if (!h.by_account_group) return 0;
-      let s = 0;
-      for (const g of filterSet) s += h.by_account_group[g] || 0;
-      return s;
-    }
-    : (h) => h.total || 0;
+  const rawValueFn = h => _snapshotValueForGroups(h, filterSet);
   const valueFn = (h) => rawValueFn(h) + _rolloverBridgeAdjustment(h.date, filterSet);
 
   const rows = [];
@@ -338,13 +331,7 @@ function computeTimeWeightedReturn(accountFilter) {
 function computeTimeWeightedReturnForWindow(accountFilter, startDate, endDate) {
   if (history.length < 2) return null;
   const filterSet = _resolveAccountFilter(accountFilter);
-  const rawValueFn = filterSet
-    ? (h) => {
-      let s = 0;
-      if (h.by_account_group) for (const g of filterSet) s += h.by_account_group[g] || 0;
-      return s;
-    }
-    : (h) => h.total || 0;
+  const rawValueFn = h => _snapshotValueForGroups(h, filterSet);
   const valueFn = (h) => rawValueFn(h) + _rolloverBridgeAdjustment(h.date, filterSet);
 
   // Snap each requested date to the NEAREST snapshot (by absolute day
@@ -406,7 +393,7 @@ function historicalGroupPerformance(groups, cutoff) {
   const summary = computeTimeWeightedReturnForWindow(groups, null, cutoff);
   if (!summary) return null;
   const start = summary.start_date, end = summary.end_date;
-  const at = h => [...groups].reduce((total, group) => total + (h.by_account_group?.[group] || 0), 0)
+  const at = h => _snapshotValueForGroups(h, groups)
     + _rolloverBridgeAdjustment(h.date, groups);
   const first = history.find(h => h.date === start);
   const last = history.find(h => h.date === end);
@@ -450,13 +437,7 @@ function computeAnnualTWR(accountFilter) {
     return out;
   }
   const filterSet = _resolveAccountFilter(accountFilter);
-  const rawValueFn = filterSet
-    ? (h) => {
-      let s = 0;
-      if (h.by_account_group) for (const g of filterSet) s += h.by_account_group[g] || 0;
-      return s;
-    }
-    : (h) => h.total || 0;
+  const rawValueFn = h => _snapshotValueForGroups(h, filterSet);
   const valueFn = (h) => rawValueFn(h) + _rolloverBridgeAdjustment(h.date, filterSet);
 
   // Group snapshots by year
@@ -865,14 +846,7 @@ function computeWindowedMetrics(filterKey, windowKey) {
   // Same value-getter shape as computeTimeWeightedReturnForWindow,
   // ensuring the top stat cards and the By Account section consume
   // identical values for Sharpe/Sortino/MaxDD computations.
-  const rawValueAt = filterSet
-    ? (h) => {
-      if (!h.by_account_group) return 0;
-      let s = 0;
-      for (const g of filterSet) s += h.by_account_group[g] || 0;
-      return s;
-    }
-    : (h) => h.total || 0;
+  const rawValueAt = h => _snapshotValueForGroups(h, filterSet);
   const valueAt = (h) => rawValueAt(h) + _rolloverBridgeAdjustment(h.date, filterSet);
 
   const ref = history[history.length - 1].date;
@@ -1290,12 +1264,18 @@ function renderPerformance() {
     // fallback was the bug (it silently substituted today).
     const endSnap = history.find(h => h.date === _winUpperIso);
     if (endSnap && Array.isArray(endSnap.positions)) {
-      for (const p of endSnap.positions) {
+      totalValue = _snapshotValueForGroups(endSnap, _aggFilterSet);
+      const positions = _hasTransitForGroups(endSnap, _aggFilterSet)
+        ? (endSnap.valuation_precision?.positions || endSnap.positions) : endSnap.positions;
+      for (const p of positions) {
         if (_aggFilterSet && !_aggFilterSet.has(p.account_group)) continue;
-        if (typeof p.value === 'number') totalValue += p.value;
         if (typeof p.value === 'number' && typeof p.cost_basis === 'number') {
           totalUnrealized += (p.value - p.cost_basis);
         }
+      }
+      for (const p of endSnap.in_transit || []) {
+        if (_aggFilterSet && (!_aggFilterSet.has(p.source_group) || !_aggFilterSet.has(p.destination_group))) continue;
+        if (Number.isFinite(p.value) && Number.isFinite(p.cost_basis)) totalUnrealized += p.value - p.cost_basis;
       }
     } else {
       // Fallback to live holdings (lifetime + filter)
@@ -1311,10 +1291,7 @@ function renderPerformance() {
   if (_winAnchorIso) {
     const anchorSnap = history.find(h => h.date === _winAnchorIso);
     if (anchorSnap && Array.isArray(anchorSnap.positions)) {
-      for (const p of anchorSnap.positions) {
-        if (_aggFilterSet && !_aggFilterSet.has(p.account_group)) continue;
-        if (typeof p.value === 'number') _winStartValue += p.value;
-      }
+      _winStartValue = _snapshotValueForGroups(anchorSnap, _aggFilterSet);
     }
   }
   const totalReturn = _isWholeLifetime
@@ -1691,16 +1668,9 @@ ${_rowSpan}`
   // filter-aware when the filter is non-null.
   const benchFilterSet = _resolveAccountFilter(performanceAccountFilter);
   const benchFilterActive = benchFilterSet != null;
-  // Per-snapshot value-getter for the portfolio line: sums
-  // by_account_group entries when filtered, else uses h.total.
-  // Coinbase USD bridge stays included since it's part of by_account_group.
-  const portfolioValueAt = (h) => {
-    if (!benchFilterSet) return h.total || 0;
-    if (!h.by_account_group) return 0;
-    let s = 0;
-    for (const g of benchFilterSet) s += h.by_account_group[g] || 0;
-    return s;
-  };
+  // Include verified in-kind exposure within the selected scope while
+  // keeping each account's posted custody balance unchanged.
+  const portfolioValueAt = h => _snapshotValueForGroups(h, benchFilterSet);
   // Cumulative net_contributed for the filter at each snapshot date.
   // Walks once, joins by date.
   const filteredNetContribAt = (() => {

@@ -23,6 +23,7 @@ code testing or measurements.
 | Transfer matching cost | Each inbound transfer scanned all outbound rows and repeatedly parsed dates, across every basis/history walk. | Index candidates by symbol and date while preserving greedy order, quantity tolerances, ties, and validation behavior. `test_transfer_pairing_index.py` compares with the exhaustive matcher across boundary cases and seeded fictional ledgers. |
 | Mobile Risk view | The monthly returns table widened the page beyond the viewport; the smoke check visited only Returns. | Contain the table in a named, keyboard-scrollable region. Browser checks now open Risk on mobile, assert viewport containment, and exercise horizontal keyboard scrolling. |
 | Account transfer attribution | Portfolio-neutral in-kind transfers could appear as account losses or gains. | Price verified cross-group pairs once and export scope-aware flow supplements for Python/JS returns, XIRR, annual tables, account contribution/P&L cards, and filtered benchmarks. Preserve whole-portfolio external contributions and report missing transfer valuations. |
+| Delayed transfer valuation | Assets disappeared from portfolio measurements between outbound and inbound posting dates. | Retain a separately marked in-transit position with carried basis, included only in scopes containing both custodians. Reconcile history, daily totals, returns, holdings, allocation, and composition without changing posted account balances. Tests cover whole portfolios in transit, missing daily marks, splits/options, scope boundaries, and precision before rounding. |
 | Test cleanup | The session isolation directory was never released. | Retain a `TemporaryDirectory` owner for process lifetime so normal interpreter shutdown cleans up the session's own files. |
 
 The rename workflow assumes a single writer, as does the rest of the pipeline.
@@ -86,14 +87,18 @@ require candidate comparisons; this is not a claim of universal linear scaling.
 
 ## Further work, in priority order
 
-1. **Transfer coverage and transit valuation.** Verified paired in-kind transfers
-   now cross account return boundaries correctly. Ordinary delayed transfers
-   still leave an in-transit gap in whole-portfolio valuation. USD and unmatched
-   movements need separate reconciliation evidence before extending coverage;
+1. **Transfer coverage and share-unit reconciliation.** Verified paired in-kind
+   transfers now preserve portfolio exposure between posting dates and cross
+   account return boundaries correctly. USD, unmatched movements, and share-unit
+   changes during transit need separate reconciliation evidence before extending coverage;
    do not reinterpret every unmatched transfer as external or asset units as
-   dollar amounts. Any transit bridge must preserve the selected scope and
-   valuation dates across snapshots, charts, TWR, and XIRR.
-2. **Reduce duplicated financial state transitions gradually.** The lot walkers
+   dollar amounts. Preserve the selected scope and valuation dates across
+   snapshots, charts, TWR, and XIRR when extending coverage.
+2. **Single-category allocation charts.** The fictional transit visual check
+   exposed an existing donut-rendering edge case: a single category fills the
+   full circle, so the SVG arc's start and end coincide and the ring disappears.
+   Use a complete-circle path and cover the one-category view in browser checks.
+3. **Reduce duplicated financial state transitions gradually.** The lot walkers
    already share substantial helpers and strong parity coverage. Extract one
    verified transition at a time. A framework rewrite or database migration has
    no demonstrated benefit for the current workload.
@@ -137,6 +142,21 @@ full-range custom returns agree with the Python summaries. All **62 local
 documentation links and anchors** checked in the updated guidance resolve.
 All four regenerated screenshots are byte-for-byte identical to the approved
 images; their registry now references the refreshed artifact.
+
+The transit-valuation follow-up passed **1,771 tests**, with the same Windows
+symlink skip. New cases cover missing daily marks between snapshots, matching
+share units across arrival-date splits, full portfolios in transit, unchanged
+posted balances and final basis, and Python/JS rounding agreement. Chrome checks
+passed across **10 tabs**, **12 account filters**, and **12 accessibility states**.
+A separate isolated fictional transit fixture passed desktop/mobile layout
+checks and visual inspection. All four public screenshots exactly match their
+previously approved bytes; their registry references the rebuilt demo.
+Development guidance checks resolved **100 local links and anchors** and checked
+all project skill frontmatter. The existing isolated transfer benchmark's median
+times for five basis walks plus 144 snapshots were **0.331 s** for one symbol and
+**0.252 s** for eight symbols, each with 4,000 fictional rows and three repeats.
+These local measurements include the new transit handling and show no material
+slowdown against the earlier workload; they are not full-pipeline timings.
 
 An initial demo failure was traced to a working-copy sample using CRLF despite
 the repository's LF attributes. Its parsed contents matched the generator;

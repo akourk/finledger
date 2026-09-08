@@ -32,6 +32,7 @@ from .config import ACCOUNT_TYPES, CASH_SYMBOLS
 from .pipeline_stages import cash_principal_effect
 from .prices import get_price
 from .valuation import QTY_EPSILON, mark, mark_is_dust
+from .return_flows import eligible_account_transfer_pairs, transit_positions
 
 # Sourced from src/actions.py — single source of truth for the action
 # vocabulary, so any new canonical action lands here automatically.
@@ -200,6 +201,11 @@ def compute_history(txns: list[dict],
           ],
         }
 
+    These totals/maps and positions describe posted custody. Delayed matched
+    transfers add optional ``in_transit`` rows and ``valuation_precision``
+    posted components; ``return_flows.scope_snapshot_value`` and
+    ``scope_snapshot_basis`` combine them for portfolio or multi-account views.
+
     `sector_of` is `{symbol: sector}` sourced from the `sectors` module so
     sector breakdowns align with the holdings table.  The `positions`
     list enables arbitrary-date holdings filtering in the dashboard (the
@@ -284,6 +290,7 @@ def compute_history(txns: list[dict],
     # no-ops in the lot queue.  Without this, the latest history snapshot
     # would under-count total basis vs. main.py's FIFO holdings total.
     pairings = _pair_transfers(txns_sorted)
+    transfer_pairs = eligible_account_transfer_pairs(txns_sorted, pairings=pairings)
     tin_to_tout  = pairings["tin_to_tout"]
     intra_group  = pairings["intra_group"]
     paired_touts = pairings["paired_touts"]
@@ -559,12 +566,15 @@ def compute_history(txns: list[dict],
                           t.get("date", ""))
             # else: ignore / unknown → no-op
 
+        active_transfers = [(tout, tin) for tout, tin in transfer_pairs
+                            if tout["date"] <= sample_date < tin["date"]]
         by_group:       dict[str, float] = defaultdict(float)
         by_type:        dict[str, float] = defaultdict(float)
         by_sector:      dict[str, float] = defaultdict(float)
         basis_group:    dict[str, float] = defaultdict(float)
         basis_type:     dict[str, float] = defaultdict(float)
         positions:      list[dict] = []
+        precision_positions: list[dict] = []
         total = 0.0
         total_basis = 0.0
         priced = 0.0
@@ -633,6 +643,9 @@ def compute_history(txns: list[dict],
                 "value":         round(val, 2) if val is not None else None,
                 "cost_basis":    round(pos_basis, 2),
             })
+            if active_transfers:
+                precision_positions.append({**positions[-1], "value": val,
+                                            "cost_basis": pos_basis})
 
         # Implicit broker-cash bridge — the reconstructed uninvested
         # cash balance for each bridged group at this snapshot date.
@@ -659,6 +672,8 @@ def compute_history(txns: list[dict],
                 "value":         bcash,
                 "cost_basis":    bcash,
             })
+            if active_transfers:
+                precision_positions.append(positions[-1])
 
         history.append({
             "date":                  sample_date,
@@ -691,11 +706,34 @@ def compute_history(txns: list[dict],
             # the FIFO walker in JS.
             "positions":             positions,
         })
+        # Keep posted custody totals/maps intact. These lots still belong to
+        # the portfolio but neither broker currently reports them; only scopes
+        # containing both endpoints include the separate transit component.
+        in_transit = transit_positions(
+            active_transfers, sample_date, last_txn_price,
+            carried_basis={id(tout): sum(lot["qty"] * lot["basis_per_share"]
+                                        for lot in stashed_tout_lots.get(id(tout), ()))
+                           for tout, _ in active_transfers},
+            price_cache=px_on_date)
+        if in_transit:
+            history[-1]["in_transit"] = in_transit
+            # The existing custody fields are display-rounded. Preserve the
+            # underlying sums only while transit is active so combining two
+            # separately rounded halves cannot manufacture a gain/loss.
+            history[-1]["valuation_precision"] = {
+                "total": total, "by_account_group": dict(by_group),
+                "by_account_type": dict(by_type), "by_sector": dict(by_sector),
+                "total_cost_basis": total_basis,
+                "cost_basis_by_group": dict(basis_group),
+                "cost_basis_by_type": dict(basis_type),
+                "positions": precision_positions,
+            }
 
     return history
 
 
-def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
+def compute_daily_totals(txns: list[dict], *,
+                         transit_issues: list[dict] | None = None) -> list[tuple[str, float]]:
     """Daily total portfolio value from the first transaction through
     today: ``[(YYYY-MM-DD, total), ...]`` for every calendar day.
 
@@ -705,7 +743,10 @@ def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
     peak-to-trough depth.  No lots, no positions, no benchmarks, and the
     result is never exported wholesale (~3k tuples stay in memory).
 
-    Valuation mirrors the snapshot walker exactly:
+    Totals include separately marked assets in transit, unlike the snapshot's
+    raw posted-custody ``total``. Coverage failures are optionally collected in
+    ``transit_issues`` for callers whose snapshots miss the transfer interval.
+    Both walks share the same valuation rules:
       - balance walk skips USD outside Savings (matches main.py);
         NEUTRAL actions are no-ops, SUBTRACT_ACTIONS subtract
       - cache-priced: as-of-date qty × ``split_factor_since`` × close
@@ -726,8 +767,10 @@ def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
     today = clock.now(fallback=datetime.now).date().isoformat()
     last = max(max(t["date"] for t in dated), today)
 
-    # Per-day txn buckets (end-of-day balances; intra-day order is
-    # irrelevant at daily resolution).
+    # Quantities are end-of-day, but last-price fallbacks depend on order.
+    # Use the same canonical sequence as history and exact-date valuation.
+    dated = sorted(dated, key=_basis_sort_key)
+    transfer_pairs = eligible_account_transfer_pairs(dated)
     by_day: dict[str, list[dict]] = defaultdict(list)
     for t in dated:
         by_day[t["date"]].append(t)
@@ -789,6 +832,13 @@ def compute_daily_totals(txns: list[dict]) -> list[tuple[str, float]]:
             # same-day ordering artifacts, not real balances.
             if _bbal >= BRIDGE_MIN:
                 total += _bbal
+        in_transit = transit_positions(
+            transfer_pairs, d_iso, last_txn_price, price_cache=px_today)
+        total += sum(p["value"] or 0 for p in in_transit)
+        if transit_issues is not None:
+            missing = [p for p in in_transit if p["value"] is None]
+            if missing:
+                transit_issues.append({"date": d_iso, "in_transit": missing})
         out.append((d_iso, round(total, 2)))
         cur += timedelta(days=1)
     return out

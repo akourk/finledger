@@ -1377,13 +1377,68 @@ stale export annotations before rebuilding them from current rows and prices.
   returns, monthly ratios, account contribution/P&L cards, and benchmark flows.
   Transaction table totals retain the original portfolio `cash_flow` field.
 - Existing USD, unmatched, same-group, income, and external-marker rules remain
-  unchanged. This is not universal transfer reconciliation. Ordinary delayed
-  cross-group transfers still have the existing in-transit gap in portfolio
-  valuations; rollover bridges cover their separately defined same-group cases.
+  unchanged. This is not universal transfer reconciliation. Rollover bridges
+  cover their separately defined same-group cash cases.
 
 Behavioral coverage lives in `tests/test_account_transfer_flows.py` and
 `tests/test_account_transfer_frontend.py`. Include zero-return transfers, real market
 movement, exact date windows, missing prices, and export/reload reconstruction.
+
+### Assets in transit
+
+`return_flows.eligible_account_transfer_pairs` is the shared eligibility source
+for account flows and historical transit. For a delayed pair, ownership exists
+from the outbound date inclusive to the inbound date exclusive. The arrival
+confirms the historical internal move; an unmatched departure alone is not
+evidence that the asset remains inside the tracked portfolio.
+
+`history.compute_history` preserves the existing **posted custody** fields:
+`total`, account/type/sector maps, basis totals/maps, and `positions`. It adds
+`in_transit` only while a matched asset is between custodians. Each row carries
+source/destination groups, start/end dates, symbol, source quantity, target-date
+mark, and basis from the existing stashed outbound lots. Reading that stash does
+not change lot consumption, arrival basis, realized gains, or final holdings.
+
+- Use `scope_snapshot_value` / `scope_snapshot_basis` for economic values.
+  Total includes transit; a selected account set includes it only when **both**
+  endpoints belong to the set. Neither endpoint owns the custody during transit,
+  so single-account values and existing dated return flows stay consistent.
+  Keep statement reconciliation on posted balances.
+- Value transit with `valuation.mark` at the requested date and only transaction
+  prices known by that date. Use the existing dust, split-restatement, and option
+  rules. Preserve market movement while in transit; a constant-dollar bridge
+  would hide returns. A split-factor change since departure makes the current
+  raw-quantity match insufficient; emit missing valuation until arrival rather
+  than inventing a corporate-action reconciliation.
+- Keep transit values/basis at calculation precision. An active snapshot also
+  exports `valuation_precision` with unrounded posted total, group/type/sector
+  maps, total/group/type basis, and positions. Scope helpers combine those components
+  before rounding; separately rounding two halves can create a false gain.
+  Single-account scopes without transit continue to use posted custody fields.
+- `compute_daily_totals` returns economic totals and forwards daily transit
+  coverage failures to data health, including gaps entirely between snapshots.
+  Its canonical ordering matches history and exact-date valuation. A null
+  transit value or unsupported share units triggers `unpriced_transfer_transit`;
+  it is not evidence of a zero-dollar asset.
+- A split-factor mismatch between the two posting dates also triggers
+  `unsupported_transfer_share_units`, including splits effective exactly on
+  arrival. Keep valid earlier marks; the warning exposes an unsupported match
+  rather than rewriting arrival quantity or treating its balance drop as a
+  verified investment loss.
+- Python annual/TWR/XIRR, monthly returns, and drawdown share the economic-value
+  helpers. Browser equivalents drive historical returns, dollar cards, benchmark
+  lines, and holdings. Historical account/type displays use an explicit **In
+  transit** bucket with route labels, without creating a real account or its own
+  return filter. Sector displays retain the security's sector.
+
+Transfer reconstruction is retrospective: importing a later matching arrival
+can confirm an earlier internal departure and revise reconstructed ownership.
+This is distinct from using later prices, quantities, income, or transactions
+in a date's posted balances, which remains forbidden. The custody fields retain
+their ordinary as-of meaning; inferred transit is explicitly identified.
+`test_transfer_transit.py` and `test_transfer_transit_frontend.py` cover this
+contract, including an entirely in-transit portfolio, pricing gaps between
+snapshots, rounding boundaries, and unchanged final lot basis.
 
 ## Adding a new broker
 

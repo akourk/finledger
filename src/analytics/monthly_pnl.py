@@ -124,9 +124,10 @@ def compute_monthly_pnl(history: list[dict], txns: list[dict],
     # term doesn't absorb it) — corrupting the heatmap, best/worst
     # month, and (when under the magnitude cap) Sharpe/Sortino.
     from ._shared import bridge_adjustment
+    from ..return_flows import scope_snapshot_value
 
     def _val(h: dict) -> float:
-        return (float(h.get("total") or 0)
+        return (scope_snapshot_value(h)
                 + bridge_adjustment(h.get("date", ""), None, bridges or []))
 
     # Index history by (year, month) — pick the latest snapshot per month.

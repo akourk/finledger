@@ -29,7 +29,10 @@ from datetime import datetime, timedelta
 from ..basis import _basis_dollars, _sort_key, BASIS_EFFECTS  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
 from ..valuation import QTY_EPSILON, mark, mark_is_dust
-from ..return_flows import txn_cash_flow_for_groups
+from ..return_flows import (
+    txn_cash_flow_for_groups, scope_snapshot_value, eligible_account_transfer_pairs,
+    transit_positions, transit_in_scope,
+)
 from ..cash_bridge import (
     all_series as cash_bridge_series,
     balance_at as cash_balance_at,
@@ -424,13 +427,7 @@ def contributions_by_year(txns: list[dict]) -> dict:
 
 def _filter_value_fn(filter_groups: set | None):
     """Return a function mapping history snapshot -> value for this filter."""
-    if filter_groups is None:
-        return lambda h: float(h.get("total", 0) or 0)
-
-    def v(h):
-        by_group = h.get("by_account_group") or {}
-        return sum(float(by_group.get(g, 0) or 0) for g in filter_groups)
-    return v
+    return lambda h: scope_snapshot_value(h, filter_groups)
 
 
 def compute_annual_returns(txns: list[dict], history: list[dict],
@@ -809,12 +806,14 @@ def _balance_sort_key(t: dict) -> tuple:
 def _value_at_date(txns_sorted: list[dict], target: str,
                    filter_groups: frozenset | None,
                    bridges: list[dict],
-                   cash_series: dict[str, list] | None = None) -> float:
+                   cash_series: dict[str, list] | None = None, *,
+                   transfer_pairs: list[tuple[dict, dict]] | None = None) -> float:
     """Portfolio value at close-of-day `target` for the given filter.
 
     Walks a pre-sorted txn list to build running balances per
     ``(account_group, symbol)``, then values each position through
-    ``valuation.mark`` and sums.
+    ``valuation.mark`` and sums. Add eligible transit only for scopes containing
+    both custodians; one-account statement reconciliation stays on posted balances.
 
     "Applies the same valuation rules as ``history.compute_history``" is
     now a fact rather than a claim: both call the same kernel.  It used
@@ -876,6 +875,12 @@ def _value_at_date(txns_sorted: list[dict], target: str,
             continue
         total += m.value
     total += bridge_adjustment(target, filter_groups, bridges)
+    if filter_groups is None or len(filter_groups) > 1:
+        if transfer_pairs is None:
+            transfer_pairs = eligible_account_transfer_pairs(txns_sorted)
+        total += sum(p["value"] or 0 for p in transit_positions(
+            transfer_pairs, target, last_txn_price, price_cache=px_on_date)
+            if transit_in_scope(p, filter_groups))
     # Reconstructed broker cash (see cash_bridge.py).  Distinct from
     # `bridges` above, which is the rollover-bridge adjustment.
     # Passed in rather than derived here: the caller walks many
@@ -954,7 +959,9 @@ def compute_twr_daily_summary(txns: list[dict], history: list[dict],
     flow_at = dict(events)
 
     cash_series = cash_bridge_series(txns)
-    values = [_value_at_date(txns_sorted, d, filter_groups, bridges, cash_series)
+    transfer_pairs = eligible_account_transfer_pairs(txns_sorted)
+    values = [_value_at_date(txns_sorted, d, filter_groups, bridges, cash_series,
+                            transfer_pairs=transfer_pairs)
               for d in boundaries]
 
     cumulative = 1.0

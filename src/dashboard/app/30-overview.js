@@ -83,6 +83,7 @@ function renderAnnualBreakdown() {
     if (y) yearEndSnaps[y] = h;
   }
   const years = Object.keys(yearEndSnaps).sort();
+  const haveTransit = Object.values(yearEndSnaps).some(h => (h.in_transit || []).length);
 
   // Per-year capital entering each account, including verified transfers. Walk
   // txns once.  For accounts the user filters out we still walk
@@ -181,6 +182,10 @@ function renderAnnualBreakdown() {
            <th scope="col" class="num ab-sub" style="background:${cellTint};" title="Year-over-year % change of year-end balance">Δ%</th>
            <th scope="col" class="num ab-sub" style="background:${cellTint};" title="Year-over-year $ change of year-end balance">Δ$</th>`;
   }
+  if (haveTransit) {
+    h1 += '<th scope="colgroup" colspan="3" title="Verified transfers between account posting dates">In transit</th>';
+    h2 += '<th scope="col" class="num ab-sub">Σ</th><th scope="col" class="num ab-sub">Δ%</th><th scope="col" class="num ab-sub">Δ$</th>';
+  }
   // Sum group (always 3 columns)
   const sumExpanded = _annualSumExpanded;
   const sumArrow = sumExpanded ? '▾' : '▸';
@@ -221,14 +226,15 @@ function renderAnnualBreakdown() {
         cells.push('<td class="num">—</td>');
       }
     }
-    let sumNow = 0, sumPrev = 0;
+    const transitNow = _transitAmountForGroups(snap, null);
+    const transitPrev = _transitAmountForGroups(prevSnap, null);
+    const sumNow = _snapshotValueForGroups(snap);
+    const sumPrev = _snapshotValueForGroups(prevSnap);
     for (const a of accounts) {
       const v = (snap.by_account_group || {})[a] || 0;
       const vPrev = prevSnap ? ((prevSnap.by_account_group || {})[a] || 0) : 0;
       const dDollar = v - vPrev;
       const dPct = vPrev > 0 ? dDollar / vPrev : (v > 0 && !prevSnap ? null : null);
-      sumNow += v;
-      sumPrev += vPrev;
       const cellBg = _acctTint(a, TINT_CELL);
       const contribBg = _acctTint(a, TINT_CONTRIB);
       const expanded = _annualExpanded.has(a);
@@ -247,6 +253,15 @@ function renderAnnualBreakdown() {
         `<td class="num" style="background:${cellBg};">${v !== 0 ? fmtCell(v) : '—'}</td>`,
         `<td class="num ${cls(dPct)}" style="background:${cellBg};">${prevSnap ? fmtPctCell(dPct) : '—'}</td>`,
         `<td class="num ${cls(dDollar)}" style="background:${cellBg};">${prevSnap && dDollar !== 0 ? fmtSignedCell(dDollar) : '—'}</td>`,
+      );
+    }
+    if (haveTransit) {
+      const delta = transitNow - transitPrev;
+      const pct = transitPrev > 0 ? delta / transitPrev : null;
+      cells.push(
+        `<td class="num">${transitNow !== 0 ? fmtCell(transitNow) : '—'}</td>`,
+        `<td class="num ${cls(pct)}">${prevSnap ? fmtPctCell(pct) : '—'}</td>`,
+        `<td class="num ${cls(delta)}">${prevSnap && delta !== 0 ? fmtSignedCell(delta) : '—'}</td>`,
       );
     }
     const dSumDollar = sumNow - sumPrev;
@@ -411,10 +426,9 @@ function _renderOneAllocationDonut(svgEl, legendEl, field, palette) {
     }
   } else {
     const snap = getAsOfSnapshot();
-    const src = snap && (field === 'account_group' ? snap.by_account_group
-      : field === 'account_type' ? snap.by_account_type
-        : snap.by_sector);
-    if (src) agg = { ...src };
+    const sourceField = field === 'account_group' ? 'by_account_group'
+      : field === 'account_type' ? 'by_account_type' : 'by_sector';
+    agg = _snapshotBreakdown(snap, sourceField);
   }
   const entries = Object.entries(agg)
     .filter(([, v]) => v > 0)
@@ -447,7 +461,7 @@ function _renderOneAllocationDonut(svgEl, legendEl, field, palette) {
       'Z',
     ].join(' ');
     const pct = ((v / total) * 100).toFixed(1);
-    const tipText = `${k}: ${fmtMoney(v)} (${pct}%)`;
+    const tipText = `${_breakdownLabel(k)}: ${fmtMoney(v)} (${pct}%)`;
     // <title> nested inside the path is the SVG-native hover tooltip.
     // Browser delay is ~0.5s.  Also use a CSS hover effect (set in
     // styles.css) for visual feedback on rollover.
@@ -474,14 +488,14 @@ function _renderOneAllocationDonut(svgEl, legendEl, field, palette) {
   const rows = top.map(([k, v]) => {
     const color = palette[k] || '#9ca3af';
     const pct = ((v / total) * 100).toFixed(1);
-    return `<div class="allocation-legend-row" title="${_htmlEsc(k + ': ' + fmtMoney(v) + ' (' + pct + '%)')}">
-      <span class="alloc-label"><span class="alloc-swatch" style="background:${color}"></span><span class="alloc-name">${_htmlEsc(k)}</span></span>
+    return `<div class="allocation-legend-row" title="${_htmlEsc(_breakdownLabel(k) + ': ' + fmtMoney(v) + ' (' + pct + '%)')}">
+      <span class="alloc-label"><span class="alloc-swatch" style="background:${color}"></span><span class="alloc-name">${_htmlEsc(_breakdownLabel(k))}</span></span>
       <span class="alloc-value">${pct}%</span>
     </div>`;
   });
   if (rest.length) {
     rows.push(`<div class="allocation-legend-row alloc-more"
-      title="${_htmlEsc(rest.map(([k, v]) => k + ': ' + fmtMoney(v)).join('\n'))}">
+      title="${_htmlEsc(rest.map(([k, v]) => _breakdownLabel(k) + ': ' + fmtMoney(v)).join('\n'))}">
       <span class="alloc-label"><span class="alloc-swatch" style="background:#6b7280"></span>+${rest.length} more</span>
       <span class="alloc-value">${restPct}%</span>
     </div>`);

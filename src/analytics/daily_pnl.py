@@ -31,7 +31,8 @@ def compute_daily_pnl(history: list[dict],
     # Use today's positions as the constant share count, reprice at
     # recent dates.  Same trick as compute_header_summary; means we
     # only show "market movement" component, not same-day cash flows.
-    today_positions = (history[-1].get("positions") or [])
+    today_positions = [*(history[-1].get("positions") or []),
+                       *(history[-1].get("in_transit") or [])]
     today_str = history[-1].get("date") or ""
     if not today_positions or not today_str:
         return []

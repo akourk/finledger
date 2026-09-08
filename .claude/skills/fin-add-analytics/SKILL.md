@@ -29,6 +29,7 @@ Reuse the shared financial sources:
 | External cash flow | `basis.txn_external_cash_flow(t)`; JS sums exported transaction `cash_flow`. |
 | Flow for selected accounts | `return_flows.txn_cash_flow_for_groups`; JS `_txnCashFlowForGroups` reads `account_transfer` supplements prepared by `build_analytics`. |
 | Position value at a date | `valuation.mark` and `valuation.is_dust`. |
+| Historical scope value/basis | `return_flows.scope_snapshot_value` / `scope_snapshot_basis`; JS `_snapshotValueForGroups` / `_snapshotBasisForGroups` include eligible `in_transit` components. |
 | Period/chain-linked returns | `analytics/_shared.py::_period_return` and `_chain_link_return`. |
 | Portfolio basis/realized totals | `DATA.basis_totals`, built from annotated walker state. |
 | Method comparisons | `basis_methods`, for the what-if table only. |
@@ -87,8 +88,11 @@ Never use the nearest snapshot by absolute date distance for an as-of answer:
 it can include future transactions. If a historical-snapshot approximation is
 part of the feature contract, use the latest snapshot at or before D and expose
 its actual date. Reconciliation must walk to the exact statement date. Test
-that adding a later transaction cannot move a D-keyed result. Monthly ratios
-must be invariant to inserting a midmonth snapshot.
+that later prices/activity cannot move a D-keyed posted result. Matched arrivals
+can confirm reconstructed transit ownership; follow the explicit
+[transit contract](../../../docs/INVARIANTS.md#assets-in-transit) rather than
+attributing in-flight assets to either custodian. Combine precision components
+before rounding. Monthly ratios must be invariant to inserting a midmonth snapshot.
 
 Tax tables, filing statuses, and Section 1256 reference data come from
 `src/analytics/tax.py::tax_tables_to_json` under `DATA.tax_tables`. Top bracket

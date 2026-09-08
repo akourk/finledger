@@ -195,12 +195,13 @@ def compute_drawdown(history: list[dict],
                 "current_drawdown_pct": 0.0}
 
     from ._shared import bridge_adjustment
+    from ..return_flows import scope_snapshot_value
 
     def _adj(d: str, v: float) -> float:
         return v + bridge_adjustment(d, None, bridges or [])
 
     snap_points = [(h.get("date", ""), _adj(h.get("date", ""),
-                                            float(h.get("total") or 0)))
+                                            scope_snapshot_value(h)))
                    for h in history]
     snap = _walk_drawdown(snap_points)
 

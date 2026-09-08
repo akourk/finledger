@@ -455,7 +455,7 @@ function renderHistControls() {
 (function setLatestValue() {
   if (!history.length) return;
   const last = history[history.length - 1];
-  const v = last.total || 0;
+  const v = _snapshotValueForGroups(last);
   document.getElementById('historyLatestValue').textContent =
     '$' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 })();
@@ -475,35 +475,30 @@ function buildHistorySeries() {
   function accessors(key) {
     if (key === 'total') {
       return {
-        valueFn: h => (h.total || 0) + _rolloverBridgeAdjustment(h.date, null),
-        basisFn: h => (h.total_cost_basis || 0),
+        valueFn: h => _snapshotValueForGroups(h) + _rolloverBridgeAdjustment(h.date, null),
+        basisFn: h => _snapshotBasisForGroups(h),
       };
     }
     const [kind, name] = key.split(':');
     if (kind === 'account') {
       return {
-        valueFn: h => ((h.by_account_group && h.by_account_group[name]) || 0)
+        valueFn: h => _snapshotValueForGroups(h, new Set([name]))
           + _rolloverBridgeAdjustment(h.date, new Set([name])),
-        basisFn: h => (h.cost_basis_by_group && h.cost_basis_by_group[name]) || 0,
+        basisFn: h => _snapshotBasisForGroups(h, new Set([name])),
       };
     }
     if (kind === 'type') {
       // Rollover bridges are keyed on account_group; account_type
       // filter adjustment requires mapping types → groups.
-      const groupsInType = new Set(
-        holdingsByAccount
-          .filter(h => h.account_type === name)
-          .map(h => h.account_group)
-      );
+      const groupsInType = _snapshotTypeGroups(name);
       return {
-        valueFn: h => ((h.by_account_type && h.by_account_type[name]) || 0)
-          + _rolloverBridgeAdjustment(h.date, groupsInType),
-        basisFn: h => (h.cost_basis_by_type && h.cost_basis_by_type[name]) || 0,
+        valueFn: h => _snapshotTypeAmount(h, name) + _rolloverBridgeAdjustment(h.date, groupsInType),
+        basisFn: h => _snapshotTypeAmount(h, name, 'cost_basis'),
       };
     }
     if (kind === 'sector') {
       return {
-        valueFn: h => (h.by_sector && h.by_sector[name]) || 0,
+        valueFn: h => _snapshotBreakdown(h, 'by_sector')[name] || 0,
         basisFn: null,   // no per-sector basis data
       };
     }
@@ -612,7 +607,7 @@ function buildHistorySeries() {
         if (h.date && h.date <= targetIso) best = h;
         else break;
       }
-      return best ? (best.total || 0) : null;
+      return best ? _snapshotValueForGroups(best) : null;
     };
     const yoyPts = hist.map(h => ({ date: h.date, value: lookupYearAgo(h.date) }))
       .filter(p => p.value != null);
@@ -811,7 +806,7 @@ function renderHistory() {
 
 // Stacked-area composition chart: the portfolio broken down by a single
 // dimension (account_group / account_type / sector) over time.  Reads
-// the history snapshots' by_* fields (each sums to the total), stacks
+// the posted by_* fields plus an explicit transfer-in-transit bucket, stacks
 // the categories bottom-to-top, and fills each band with its category
 // color.  Self-contained — own axes/legend/hover, no overlays.
 function _renderComposition(svg, tooltip, legend, hist) {
@@ -830,12 +825,13 @@ function _renderComposition(svg, tooltip, legend, hist) {
     : dim === 'type' ? 'by_account_type' : 'by_sector';
   const colorMap = dim === 'account' ? ACCOUNT_COLORS
     : dim === 'type' ? TYPE_COLORS : SECTOR_COLORS;
+  const breakdowns = new Map(hist.map(h => [h, _snapshotBreakdown(h, field)]));
 
   // Categories ordered by lifetime magnitude; fold the long tail (mostly
   // relevant for sectors) into "Other" so the stack stays legible.
   const totals = Object.create(null);
   hist.forEach(h => {
-    const m = h[field] || {};
+    const m = breakdowns.get(h);
     for (const k in m) if (typeof m[k] === 'number') totals[k] = (totals[k] || 0) + m[k];
   });
   let cats = Object.keys(totals).sort((a, b) => (totals[b] || 0) - (totals[a] || 0));
@@ -843,10 +839,10 @@ function _renderComposition(svg, tooltip, legend, hist) {
   const folded = cats.length > CAP ? cats.slice(CAP) : [];
   if (folded.length) cats = cats.slice(0, CAP);
   const drawCats = folded.length ? [...cats, '__other__'] : cats;
-  const catLabel = c => c === '__other__' ? `Other (${folded.length})` : c;
+  const catLabel = c => c === '__other__' ? `Other (${folded.length})` : _breakdownLabel(c);
   const catColor = c => c === '__other__' ? '#6b7280' : (colorMap[c] || '#9ca3af');
   const valAt = (h, c) => {
-    const m = h[field] || {};
+    const m = breakdowns.get(h);
     if (c === '__other__') { let s = 0; for (const f of folded) s += (typeof m[f] === 'number' ? m[f] : 0); return s; }
     return typeof m[c] === 'number' ? m[c] : 0;
   };

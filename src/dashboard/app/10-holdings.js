@@ -30,14 +30,18 @@ function asOfHoldingsByAccount() {
   if (isAsOfLatest()) return holdingsByAccount;
   const snap = getAsOfSnapshot();
   if (!snap || !snap.positions) return [];
-  return snap.positions.map(p => {
+  const rows = [...(snap.valuation_precision?.positions || snap.positions), ...(snap.in_transit || []).map(p => ({
+    ...p, account_group: 'In transit', _inTransit: true,
+    _transitRoute: `${p.source_group} → ${p.destination_group}`,
+  }))];
+  return rows.map(p => {
     const value = p.value;
     const cb = p.cost_basis;
     const ug = (typeof value === 'number' && typeof cb === 'number')
-      ? +(value - cb).toFixed(2) : null;
+      ? value - cb : null;
     return {
       account_group: p.account_group,
-      account_type: ACCOUNT_TYPE_OF[p.account_group] || 'Taxable',
+      account_type: p._inTransit ? 'In transit' : (ACCOUNT_TYPE_OF[p.account_group] || 'Taxable'),
       symbol: p.symbol,
       quantity: p.quantity,
       price: p.price,
@@ -45,6 +49,7 @@ function asOfHoldingsByAccount() {
       cost_basis: cb,
       unrealized_gain: ug,
       sector: SECTOR_OF[p.symbol] || 'Other',
+      ...(p._inTransit ? { _inTransit: true, _transitRoute: p._transitRoute } : {}),
     };
   });
 }
@@ -504,17 +509,23 @@ function groupByBasisAware(rows, key) {
   const out = Object.create(null);
   for (const row of rows) {
     const k = row[key] || 'Unknown';
-    if (!out[k]) out[k] = { [key]: k, value: 0, cost_basis: 0, unrealized_gain: 0, _anyBasis: false, _groups: new Set() };
+    const mapKey = row._inTransit && key !== 'sector' ? _TRANSIT_BUCKET : k;
+    if (!out[mapKey]) out[mapKey] = { [key]: k, value: 0, cost_basis: 0, unrealized_gain: 0, _anyBasis: false, _groups: new Set() };
+    const aggregate = out[mapKey];
     // Which account groups this row is made of.  A precomputed TWR
     // filter covers a SET of account groups, so this is what lets a
     // grouped row find its own return without recomputing one.
-    if (row.account_group) out[k]._groups.add(row.account_group);
-    if (typeof row.value === 'number') out[k].value += row.value;
-    if (typeof row.cost_basis === 'number') {
-      out[k].cost_basis += row.cost_basis;
-      out[k]._anyBasis = true;
+    if (row.account_group && !row._inTransit) aggregate._groups.add(row.account_group);
+    if (row._inTransit) {
+      if (!aggregate._transitRoutes) aggregate._transitRoutes = new Set();
+      aggregate._transitRoutes.add(row._transitRoute);
     }
-    if (typeof row.unrealized_gain === 'number') out[k].unrealized_gain += row.unrealized_gain;
+    if (typeof row.value === 'number') aggregate.value += row.value;
+    if (typeof row.cost_basis === 'number') {
+      aggregate.cost_basis += row.cost_basis;
+      aggregate._anyBasis = true;
+    }
+    if (typeof row.unrealized_gain === 'number') aggregate.unrealized_gain += row.unrealized_gain;
   }
   // If no row had a known cost_basis, zero it out for display cleanliness.
   return Object.values(out).map(r => {
@@ -680,6 +691,8 @@ function renderHoldings() {
         }
       } else if (col === 'symbol') {
         html = symLabel(val);
+      } else if ((col === 'account_group' || col === 'account_type') && row._transitRoutes) {
+        html = `${_htmlEsc(val)} <span class="sub">${[...row._transitRoutes].map(_htmlEsc).join(', ')}</span>`;
       } else if (col === 'account_group' && ACCOUNT_COLORS[val]) {
         html = `<span style="color:${ACCOUNT_COLORS[val]}">${_htmlEsc(val)}</span>`;
       } else if (col === 'account_type' && TYPE_COLORS[val]) {
@@ -906,7 +919,7 @@ function lotDetailHtml(p, colspan) {
 function renderByAssetTable() {
   const realizedToDate = realizedByAccountSymbol(isAsOfLatest() ? null : getAsOfSnapshot()?.date || asOfDate);
   const rows = asOfHoldingsByAccount().map(r => {
-    const realized = realizedToDate[JSON.stringify([r.account_group || '', r.symbol || ''])] || 0;
+    const realized = r._inTransit ? 0 : (realizedToDate[JSON.stringify([r.account_group || '', r.symbol || ''])] || 0);
     const value = (typeof r.value === 'number') ? r.value : null;
     const cb = (typeof r.cost_basis === 'number') ? r.cost_basis : null;
     const unreal = (value != null && cb != null) ? +(value - cb).toFixed(2) : null;
@@ -915,7 +928,7 @@ function renderByAssetTable() {
     // closed positions divide by 0 here so render as null.
     const pct = (cb && cb > 0) ? +((totalGain / cb) * 100).toFixed(2) : null;
     return {
-      account_group: r.account_group,
+      account_group: r._inTransit ? `In transit · ${r._transitRoute}` : r.account_group,
       symbol: r.symbol,
       sector: r.sector,
       quantity: r.quantity,
@@ -1145,4 +1158,3 @@ function renderBasisTable() {
 }
 
 renderBasisTable();
-

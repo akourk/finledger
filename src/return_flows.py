@@ -13,33 +13,20 @@ import math
 from .basis import (
     _EXTERNAL_TRANSFER_MARKERS, _pair_transfers, _sort_key, txn_external_cash_flow,
 )
+from . import valuation
 from .valuation import mark
 
 
-def annotate_account_transfers(txns: list[dict]) -> None:
-    """Replace derived ``account_transfer`` metadata on matched transfer legs.
+def eligible_account_transfer_pairs(txns: list[dict], *, pairings=None) -> list[tuple[dict, dict]]:
+    """Canonical, portfolio-neutral in-kind pairs, shared by flows and transit.
 
-    Shape: ``{counterparty_group: str, flow: signed dollars | None}``.
-    Each leg uses its own quantity and closing-date mark, including split
-    restatement and option multipliers. Raw ``amount`` may be asset units;
-    carried cost basis is not a market value. Neither supplies a price.
-
-    Only cross-group pairs with two portfolio-neutral legs qualify. Existing
-    pairing excludes USD; unmatched movements, external-marker transfers,
-    income, and same-group moves retain their existing classification. A null
-    flow means no finite positive valuation was available; data health reports
-    that coverage gap. It is not an invented zero-dollar transfer.
-
-    Pair order matches the basis/history walkers, including ingest ``seq``.
-    Prices use the complete day's rows but never a later day's transaction.
-    Rebuild after price refresh, since exported metadata is only a snapshot.
-    This does not add in-transit holdings to portfolio history.
+    A caller already holding the basis walk's pairings can reuse that result.
+    The arrival confirms a historical internal move; it never supplies an
+    earlier valuation. Unmatched departures are not assumed to remain owned.
     """
-    for txn in txns:
-        txn.pop("account_transfer", None)
-    ordered = sorted(txns, key=_sort_key)
-    paired = _pair_transfers(ordered)["tin_to_tout"]
-    legs: dict[int, tuple[str, int]] = {}
+    ordered = sorted(txns, key=_sort_key) if pairings is None else txns
+    paired = (pairings if pairings is not None else _pair_transfers(ordered))["tin_to_tout"]
+    result = []
     for tin in ordered:
         tout = paired.get(id(tin))
         if tout is None:
@@ -66,8 +53,27 @@ def annotate_account_transfers(txns: list[dict]) -> None:
             continue
         if txn_external_cash_flow(tin) or txn_external_cash_flow(tout):
             continue
-        legs[id(tout)] = (destination, -1)
-        legs[id(tin)] = (source, 1)
+        result.append((tout, tin))
+    return result
+
+
+def annotate_account_transfers(txns: list[dict]) -> None:
+    """Replace ``account_transfer: {counterparty_group, flow}`` on eligible legs.
+
+    Each signed dollar mark uses its own quantity and closing date, including
+    split restatement and option multipliers. Prices use the complete day's
+    rows in canonical ingest order, never a later day. Raw transfer amounts
+    may be asset units; carried basis is not market value. Neither supplies a
+    missing price. Null flow triggers data health, rather than inventing zero.
+    Rebuild after refresh: exported metadata is only a price-dependent snapshot.
+    """
+    for txn in txns:
+        txn.pop("account_transfer", None)
+    ordered = sorted(txns, key=_sort_key)
+    legs: dict[int, tuple[str, int]] = {}
+    for tout, tin in eligible_account_transfer_pairs(ordered):
+        legs[id(tout)] = (tin["account_group"], -1)
+        legs[id(tin)] = (tout["account_group"], 1)
     if not legs:
         return
 
@@ -111,3 +117,75 @@ def txn_cash_flow_for_groups(txn: dict, filter_groups: set | None) -> float:
         if isinstance(value, (int, float)) and math.isfinite(value):
             flow += value
     return flow
+
+
+def transit_in_scope(position: dict, filter_groups: set | None) -> bool:
+    """In-transit custody belongs to neither endpoint separately."""
+    return filter_groups is None or (
+        position["source_group"] in filter_groups
+        and position["destination_group"] in filter_groups)
+
+
+def transit_positions(pairs: list[tuple[dict, dict]], target: str,
+                      last_prices: dict[str, float], *,
+                      carried_basis: dict[int, float] | None = None,
+                      price_cache: dict | None = None) -> list[dict]:
+    """Mark eligible departed assets until arrival, with separate custody/basis.
+
+    The source share quantity is valid throughout an ordinary transfer. If
+    split factors change between departure and target, the raw-quantity matcher cannot
+    establish compatible share units; expose missing coverage instead of
+    assuming a corporate-action reconciliation. Existing split-adjusted marks
+    still apply when both legs share the same share basis.
+    """
+    positions = []
+    for tout, tin in pairs:
+        start, end = tout["date"], tin["date"]
+        if not start <= target < end:
+            continue
+        symbol, quantity = tout["symbol"], float(tout["quantity"])
+        issue = None
+        factors = [valuation.split_factor_since(symbol, d) for d in (start, target)]
+        if not all(math.isfinite(f) and f > 0 and f == factors[0] for f in factors):
+            value, issue = None, "split_during_transfer"
+        else:
+            m = mark(symbol, quantity, target, last_prices, price_cache=price_cache)
+            value = m.value
+            if value is None or not math.isfinite(value) or value < 0:
+                value, issue = None, "unpriced"
+            elif valuation.mark_is_dust(m, quantity):
+                continue
+        position = {
+            "source_group": tout["account_group"],
+            "destination_group": tin["account_group"],
+            "start_date": start, "end_date": end,
+            "symbol": symbol, "quantity": quantity,
+            "price": value / quantity if value is not None else None,
+            "value": value,
+            "cost_basis": (carried_basis.get(id(tout), 0.0)
+                           if carried_basis is not None else None),
+        }
+        if issue:
+            position["valuation_issue"] = issue
+        positions.append(position)
+    return positions
+
+
+def scope_snapshot_value(snapshot: dict, filter_groups: set | None = None) -> float:
+    """Posted custody plus eligible transit; rollover cash remains separate."""
+    positions = [p for p in snapshot.get("in_transit", ()) if transit_in_scope(p, filter_groups)]
+    source = (snapshot.get("valuation_precision") or snapshot) if positions else snapshot
+    value = (float(source.get("total", 0) or 0) if filter_groups is None else
+             sum(float((source.get("by_account_group") or {}).get(g, 0) or 0)
+                 for g in filter_groups))
+    return round(value + sum(float(p.get("value") or 0) for p in positions), 2) if positions else value
+
+
+def scope_snapshot_basis(snapshot: dict, filter_groups: set | None = None) -> float:
+    """Posted basis plus carried basis for transit inside the selected scope."""
+    positions = [p for p in snapshot.get("in_transit", ()) if transit_in_scope(p, filter_groups)]
+    source = (snapshot.get("valuation_precision") or snapshot) if positions else snapshot
+    basis = (float(source.get("total_cost_basis", 0) or 0) if filter_groups is None else
+             sum(float((source.get("cost_basis_by_group") or {}).get(g, 0) or 0)
+                 for g in filter_groups))
+    return round(basis + sum(float(p.get("cost_basis") or 0) for p in positions), 2) if positions else basis

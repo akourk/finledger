@@ -541,12 +541,12 @@ function renderRetirement() {
     </tr>`;
   }).join('');
 
-  // Retirement balance over time (chart): use history snapshots' by_account_type.Retirement
+  // Preserve exposure for transfers whose two accounts are retirement accounts.
   const retPoints = history
-    .map(h => ({ date: h.date, value: (h.by_account_type && h.by_account_type.Retirement) || 0 }))
+    .map(h => ({ date: h.date, value: _snapshotTypeAmount(h, 'Retirement') }))
     .filter(p => p.value > 0);
   const retBasisPoints = history
-    .map(h => ({ date: h.date, value: (h.cost_basis_by_type && h.cost_basis_by_type.Retirement) || 0 }))
+    .map(h => ({ date: h.date, value: _snapshotTypeAmount(h, 'Retirement', 'cost_basis') }))
     .filter(p => p.value > 0);
 
   const chartHtml = renderMiniLineChart(retPoints, {
@@ -747,4 +747,3 @@ function renderRothTradBar(roth, trad) {
 }
 
 registerTabRenderer('retirement', renderRetirement);
-

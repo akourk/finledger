@@ -23,6 +23,7 @@ from __future__ import annotations
 from .. import clock
 from collections import defaultdict
 from datetime import datetime
+import math
 from pathlib import Path
 
 from ..basis import txn_external_cash_flow
@@ -47,6 +48,39 @@ def _check_unpriced_account_transfers(txns: list[dict]) -> list[dict]:
     }]
 
 
+def _check_transfer_share_units(txns: list[dict]) -> list[dict]:
+    """Matching raw quantities do not reconcile a split between posting dates.
+
+    Check both endpoints separately from transit marks: a split effective on
+    arrival has no post-split day in the half-open transit interval. Earlier
+    supported marks and the source/destination quantities remain unchanged.
+    """
+    from .. import valuation
+    from ..return_flows import eligible_account_transfer_pairs
+
+    incompatible = []
+    for tout, tin in eligible_account_transfer_pairs(txns):
+        factors = [valuation.split_factor_since(t["symbol"], t["date"])
+                   for t in (tout, tin)]
+        if not all(math.isfinite(f) and f > 0 and f == factors[0] for f in factors):
+            incompatible.append((tout, tin))
+    if not incompatible:
+        return []
+    return [{
+        "kind": "unsupported_transfer_share_units",
+        "severity": "warn",
+        "category": "Coverage",
+        "message": f"{len(incompatible)} paired transfer(s) span incompatible "
+                   "split-adjusted share units. Matching raw quantities cannot "
+                   "reconcile these movements; portfolio valuations and returns "
+                   "may be distorted. Check both transfer legs and corporate actions.",
+        "details": [f"{tout['date']} → {tin['date']} {tout['symbol']} "
+                    f"{tout['account_group']} → {tin['account_group']}"
+                    for tout, tin in incompatible[:5]],
+        "count": len(incompatible),
+    }]
+
+
 def _check_future_dated(txns: list[dict]) -> list[dict]:
     today = clock.now(fallback=datetime.now).date().isoformat()
     future = [t for t in txns if t.get("date", "") > today]
@@ -62,6 +96,35 @@ def _check_future_dated(txns: list[dict]) -> list[dict]:
                    "— parser bug or timezone issue.",
         "details": samples,
         "count": len(future),
+    }]
+
+
+def _check_unpriced_transfer_transit(history: list[dict],
+                                    transit_issues: list[dict] | None = None) -> list[dict]:
+    # Daily coverage and snapshot coverage can describe the same failed mark.
+    missing_by_key = {}
+    for h in [*history, *(transit_issues or [])]:
+        for p in h.get("in_transit", ()):
+            if p.get("value") is None:
+                day = h.get("date", "")
+                key = (day, *(p.get(k) for k in ("source_group", "destination_group",
+                       "start_date", "end_date", "symbol", "quantity")))
+                missing_by_key[key] = (day, p)
+    missing = list(missing_by_key.values())
+    if not missing:
+        return []
+    return [{
+        "kind": "unpriced_transfer_transit",
+        "severity": "warn",
+        "category": "Coverage",
+        "message": f"{len(missing)} historical in-transit position(s) have no "
+                   "supported valuation. Portfolio returns and balance declines "
+                   "may be distorted; check transfer-date prices and share units.",
+        "details": [f"{day} {p.get('symbol', '')} "
+                    f"{p.get('source_group', '')} → {p.get('destination_group', '')}: "
+                    f"{p.get('valuation_issue', 'unpriced')}"
+                    for day, p in missing[:5]],
+        "count": len(missing),
     }]
 
 
@@ -611,7 +674,8 @@ def _check_net_contributed_monotonicity(history: list[dict]) -> list[dict]:
     """
     if len(history) < 2:
         return []
-    atl_peak = max(float(h.get("total") or 0) for h in history) or 0
+    from ..return_flows import scope_snapshot_value
+    atl_peak = max(scope_snapshot_value(h) for h in history) or 0
     threshold = max(50_000.0, atl_peak * 0.20)
 
     suspect = []
@@ -1060,7 +1124,8 @@ def compute_data_health(txns: list[dict],
                         cache_dir: Path,
                         *,
                         cash_summary: dict | None = None,
-                        parse_report: list[dict] | None = None) -> list[dict]:
+                        parse_report: list[dict] | None = None,
+                        transit_issues: list[dict] | None = None) -> list[dict]:
     """Run all data-health checks and return a list sorted by severity.
 
     ``parse_report`` carries per-file parse findings that cannot be
@@ -1077,6 +1142,8 @@ def compute_data_health(txns: list[dict],
     issues.extend(_check_parser_dropped_rows(parse_report))
     issues.extend(_check_future_dated(txns))
     issues.extend(_check_unpriced_account_transfers(txns))
+    issues.extend(_check_transfer_share_units(txns))
+    issues.extend(_check_unpriced_transfer_transit(history, transit_issues))
     issues.extend(_check_negative_cost_basis(holdings_by_account))
     issues.extend(_check_value_qty_price_consistency(holdings_by_account))
     issues.extend(_check_orphan_zero_qty_basis(holdings_by_account))
