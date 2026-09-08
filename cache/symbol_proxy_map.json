@@ -15,8 +15,10 @@
     "proxy": "VWILX"
   },
   "VANG TR II 2055": {
+    "anchor_date": "2021-12-10",
+    "anchor_price": 71.79,
     "method": "scaled",
-    "note": "Target Retirement 2055 Trust II CIT. No public ticker. Uses VFFVX (retail Target 2055) return stream; acquired fund fees 0.075% vs VFFVX's 0.08% \u2014 basically identical. anchor_date / anchor_price are auto-populated on the first run from the user's earliest txn price, then frozen.",
+    "note": "Target Retirement 2055 Trust II CIT. No public ticker. Uses VFFVX (retail Target 2055) return stream; acquired fund fees 0.075% vs VFFVX's 0.08% — basically identical. anchor_date / anchor_price are auto-populated on the first run from the user's earliest txn price, then frozen.",
     "proxy": "VFFVX"
   },
   "VANG US GROWTH ADM": {
@@ -30,6 +32,8 @@
     "proxy": "VWENX"
   },
   "Vanguard Employee Benefit Index Fund": {
+    "anchor_date": "2023-06-30",
+    "anchor_price": 155.85,
     "method": "scaled",
     "note": "Vanguard 401K CIT tracking the S&P 500. Holds VFIAX shares internally (lower expense ratio: 0.006% vs VFIAX's 0.04%). Different NAV, identical return stream to VFIAX over any meaningful period. anchor_date / anchor_price are auto-populated on the first run from the user's earliest txn price, then frozen.",
     "proxy": "VFIAX"
