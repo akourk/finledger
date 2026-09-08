@@ -84,14 +84,14 @@ function renderAnnualBreakdown() {
   }
   const years = Object.keys(yearEndSnaps).sort();
 
-  // Per-year-per-account contribution events (net cash_flow).  Walk
+  // Per-year capital entering each account, including verified transfers. Walk
   // txns once.  For accounts the user filters out we still walk
   // them — the cost is negligible vs the cleanliness of data flow.
   const contribByYearAcct = Object.create(null);
   for (const t of txns) {
     const y = (t.date || '').slice(0, 4);
     const acct = t.account_group;
-    const cf = typeof t.cash_flow === 'number' ? t.cash_flow : 0;
+    const cf = _txnCashFlowForGroups(t, new Set([acct]));
     if (!y || !acct || cf === 0) continue;
     if (!contribByYearAcct[y]) contribByYearAcct[y] = {};
     contribByYearAcct[y][acct] = (contribByYearAcct[y][acct] || 0) + cf;
@@ -173,8 +173,8 @@ function renderAnnualBreakdown() {
       <button type="button" class="lot-disclosure" id="annual-${_htmlEsc(encodeURIComponent(a))}" aria-expanded="${expanded}"><span class="ab-acct-arrow">${arrow}</span>${_htmlEsc(label)}</button>
     </th>`;
     if (expanded) {
-      h2 += `<th scope="col" class="num ab-sub" style="background:${contribTint};" title="Net cash flow into this account this year">contr.</th>
-             <th scope="col" class="num ab-sub" style="background:${contribTint};" title="Cumulative net cash flow into this account through year end">Σ contr.</th>
+      h2 += `<th scope="col" class="num ab-sub" style="background:${contribTint};" title="Net capital entering this account this year, including verified in-kind transfers">contr.</th>
+             <th scope="col" class="num ab-sub" style="background:${contribTint};" title="Cumulative net capital entering this account through year end, including verified in-kind transfers">Σ contr.</th>
              <th scope="col" class="num ab-sub" style="background:${contribTint};" title="Year-over-year change in cumulative contributions">Δ contr.</th>`;
     }
     h2 += `<th scope="col" class="num ab-sub" style="background:${cellTint};" title="Year-end balance">Σ</th>

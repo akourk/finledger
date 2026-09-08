@@ -26,9 +26,10 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from ..basis import _basis_dollars, BASIS_EFFECTS  # noqa: F401
+from ..basis import _basis_dollars, _sort_key, BASIS_EFFECTS  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
 from ..valuation import QTY_EPSILON, mark, mark_is_dust
+from ..return_flows import txn_cash_flow_for_groups
 from ..cash_bridge import (
     all_series as cash_bridge_series,
     balance_at as cash_balance_at,
@@ -361,21 +362,16 @@ def net_cash_flow(txns: list[dict], start_excl: str, end_incl: str,
                  filter_groups: set | None) -> float:
     """Net cash flow in (start_excl, end_incl] for the given account filter.
 
-    Delegates the per-txn classification to ``basis.txn_external_cash_flow``
-    so the rule (incl. Contribution Reversal handling, Roth/Rollover-IRA
-    Distribution carve-out, and USAA contribution-marker Buys) stays in
-    one place.  This function only adds period filtering and account-
-    group filtering on top.
+    Uses the shared scope-aware verdict: portfolio external cash flow plus
+    verified in-kind transfers crossing this account filter. The analytics
+    builder prepares transfer annotations once before return calculations.
     """
-    from ..basis import txn_external_cash_flow
     net = 0.0
     for t in txns:
         date = t.get("date", "")
         if not date or date <= start_excl or date > end_incl:
             continue
-        if filter_groups is not None and t.get("account_group") not in filter_groups:
-            continue
-        net += txn_external_cash_flow(t)
+        net += txn_cash_flow_for_groups(t, filter_groups)
     return net
 
 
@@ -709,8 +705,9 @@ def compute_money_weighted_return(txns: list[dict], history: list[dict],
     Cash-flow convention (investor's pocket): the starting portfolio
     value and every external contribution are negative (money out of
     pocket), withdrawals and the final portfolio value are positive.
-    ``txn_external_cash_flow`` supplies the same flow classification
-    every other return metric uses.
+    ``txn_cash_flow_for_groups`` supplies the same boundary classification
+    every other return metric uses, including transfers into/out of a selected
+    account (which remain internal to the whole portfolio).
     """
     if len(history) < 2:
         return None
@@ -738,15 +735,12 @@ def compute_money_weighted_return(txns: list[dict], history: list[dict],
     if not d0 or not d1 or d1 <= d0:
         return None
 
-    from ..basis import txn_external_cash_flow
     flows: list[tuple[float, float]] = [(0.0, -val(history[start_idx]))]
     for t in txns:
         d = t.get("date", "")
         if not d or d <= start_date or d > end_date:
             continue
-        if filter_groups is not None and t.get("account_group") not in filter_groups:
-            continue
-        f = txn_external_cash_flow(t)
+        f = txn_cash_flow_for_groups(t, filter_groups)
         if f == 0:
             continue
         td = _parse_iso(d)
@@ -802,15 +796,14 @@ from ..actions import NEUTRAL_ACTIONS as _NEUTRAL_ACTIONS
 
 
 def _balance_sort_key(t: dict) -> tuple:
-    """Match main.py's balance sort: date, then adds-before-subtracts.
+    """Use the history walk's canonical order, including ingest sequence.
 
-    Required so same-day Transfer In posts before the matching Transfer
-    Out (otherwise balances would dip negative intra-day and the
-    value_at_date walk would undercount).
+    Exact-date valuation reads final daily balances, so cross-account leg
+    ordering does not affect quantities. It does decide the last same-day
+    transaction price on a cache miss; that must match history and transfer
+    marks rather than sorting every account's subtracts to the end.
     """
-    d = t.get("date", "")
-    sub = 1 if t.get("action") in _SUBTRACT_ACTIONS else 0
-    return (d, sub, t.get("account_group", ""), t.get("symbol", ""))
+    return _sort_key(t)
 
 
 def _value_at_date(txns_sorted: list[dict], target: str,
@@ -903,24 +896,15 @@ def _cash_flow_events(txns: list[dict], start_excl: str, end_incl: str,
     """List ``(date, net_flow)`` pairs (one entry per date with activity) in
     ``(start_excl, end_incl]``.  Flows on the same date are aggregated.
 
-    Delegates per-txn classification to ``basis.txn_external_cash_flow``
-    — the single source of truth ``net_cash_flow`` above also uses — so
-    the daily-TWR boundaries see the exact same carve-outs
-    (Contribution Reversal, Roth/Rollover Distribution skip, USAA
-    marker Buys, Coinbase bank-funded-Buy detection).  A previous
-    hand-rolled copy of the rule here silently missed the Coinbase
-    carve-outs; harmless while daily TWR is retirement-only, but a
-    drift trap the moment the filter set widens.
+    Uses the same scope-aware classification as ``net_cash_flow`` so daily
+    boundaries include verified transfers crossing the selected accounts.
     """
-    from ..basis import txn_external_cash_flow
     by_date: dict[str, float] = defaultdict(float)
     for t in txns:
         d = t.get("date", "")
         if not d or d <= start_excl or d > end_incl:
             continue
-        if filter_groups is not None and t.get("account_group") not in filter_groups:
-            continue
-        flow = txn_external_cash_flow(t)
+        flow = txn_cash_flow_for_groups(t, filter_groups)
         if flow:
             by_date[d] += flow
     return sorted(by_date.items())

@@ -27,6 +27,7 @@ Reuse the shared financial sources:
 | --- | --- |
 | Action effects and income membership | `src/actions.py`; income consumers derive from its `income` field. |
 | External cash flow | `basis.txn_external_cash_flow(t)`; JS sums exported transaction `cash_flow`. |
+| Flow for selected accounts | `return_flows.txn_cash_flow_for_groups`; JS `_txnCashFlowForGroups` reads `account_transfer` supplements prepared by `build_analytics`. |
 | Position value at a date | `valuation.mark` and `valuation.is_dust`. |
 | Period/chain-linked returns | `analytics/_shared.py::_period_return` and `_chain_link_return`. |
 | Portfolio basis/realized totals | `DATA.basis_totals`, built from annotated walker state. |
@@ -68,6 +69,13 @@ change, update the Python counterpart and parity tests together. In particular,
 `90-performance.js::_twrWalk` mirrors the Python chain-link and period-return
 rules. A full-range custom window must agree with lifetime, and each displayed
 return must use a benchmark measured over the same dates and accounts.
+
+For account-flow changes, cover TWR, XIRR, annual returns, monthly ratios,
+contribution/P&L cards, and filtered benchmark purchases together. Test one
+endpoint, both endpoints, and neither endpoint of a paired in-kind transfer.
+Keep portfolio contributions and retirement tax contributions distinct from
+flows crossing a selected account boundary. See `tests/test_account_transfer_flows.py`
+and the [account-transfer contract](../../../docs/INVARIANTS.md#account-transfer-return-flows).
 
 For "value on date D", use `_shared._value_at_date` with the appropriate
 transactions, group filter, rollover bridges, and cash series. It walks to D

@@ -83,7 +83,11 @@ def build_analytics(txns: list[dict], history: list[dict],
     """
     from pathlib import Path
     from ..config import CACHE_DIR
+    from ..return_flows import annotate_account_transfers
 
+    # Recompute price-dependent account-boundary verdicts on both full and
+    # refresh paths before any return consumer reads them.
+    annotate_account_transfers(txns)
     bridges = detect_rollover_bridges(txns)
     contribs_yr = contributions_by_year(txns)
 

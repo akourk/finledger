@@ -201,6 +201,12 @@ def _snap(**kw) -> dict:
 
 SOFT_GUARD_CASES = [
     (
+        "unpriced_account_transfer",
+        D._check_unpriced_account_transfers,
+        ([{"account_transfer": {"counterparty_group": "Example", "flow": None}}],),
+        ([{"account_transfer": {"counterparty_group": "Example", "flow": 100.0}}],),
+    ),
+    (
         "open_options_past_expiration",
         D._check_open_options_past_expiration,
         ({"options": {"open_contracts": [

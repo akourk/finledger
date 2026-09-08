@@ -28,6 +28,25 @@ from pathlib import Path
 from ..basis import txn_external_cash_flow
 
 
+def _check_unpriced_account_transfers(txns: list[dict]) -> list[dict]:
+    unpriced = [t for t in txns if t.get("account_transfer")
+                and t["account_transfer"].get("flow") is None]
+    if not unpriced:
+        return []
+    return [{
+        "kind": "unpriced_account_transfer",
+        "severity": "warn",
+        "category": "Coverage",
+        "message": f"{len(unpriced)} paired transfer leg(s) have no market value "
+                   "— account returns cannot neutralize these movements. "
+                   "Check price coverage on the transfer dates.",
+        "details": [f"{t.get('date', '')} {t.get('account_group', '')} "
+                    f"{t.get('action', '')} {t.get('symbol', '')}"
+                    for t in unpriced[:5]],
+        "count": len(unpriced),
+    }]
+
+
 def _check_future_dated(txns: list[dict]) -> list[dict]:
     today = clock.now(fallback=datetime.now).date().isoformat()
     future = [t for t in txns if t.get("date", "") > today]
@@ -1057,6 +1076,7 @@ def compute_data_health(txns: list[dict],
     issues: list[dict] = []
     issues.extend(_check_parser_dropped_rows(parse_report))
     issues.extend(_check_future_dated(txns))
+    issues.extend(_check_unpriced_account_transfers(txns))
     issues.extend(_check_negative_cost_basis(holdings_by_account))
     issues.extend(_check_value_qty_price_consistency(holdings_by_account))
     issues.extend(_check_orphan_zero_qty_basis(holdings_by_account))

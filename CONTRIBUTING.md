@@ -72,6 +72,7 @@ workflow instead of duplicating it for each model or client.
 | Valuation or price cache | `src/valuation.py`, `prices.py`; `test_valuation_kernel.py`, `test_value_at_date_parity.py`, `test_prices.py`, `test_price_cache_corruption.py`, `test_prices_backoff.py` | [Price invariants](docs/INVARIANTS.md#invariants-the-price-cache-relies-on) |
 | Cache persistence or interrupted-save recovery | `src/io_safe.py`, `prices.py`, `sectors.py`; `test_io_safe.py`, `test_cache_persistence.py` | [Recovery procedure](docs/USAGE.md#cache-save-recovery) and [persistence invariants](docs/INVARIANTS.md#invariants-the-price-cache-relies-on) |
 | Analytics or dashboard behavior | `src/analytics/`, `src/dashboard/app/*.js`; module tests, `test_dashboard_consistency.py`, `test_dashboard_bundling.py`, then demo browser checks | [Analytics and rendering](.claude/skills/fin-add-analytics/SKILL.md) |
+| Account-specific cash flow or return attribution | `src/return_flows.py`, `analytics/_shared.py`; `test_account_transfer_flows.py`, `test_account_transfer_frontend.py` | [Account-transfer contract](docs/INVARIANTS.md#account-transfer-return-flows) |
 | Annual tax reference update | `src/analytics/tax.py`; `test_tax_tables_vs_irs.py`, `test_tax_tables.py`, `test_tax_table_js_parity.py` | [Tax tables](.claude/skills/fin-tax-year-update/SKILL.md) |
 | Privacy or publication | `tools/privacy_guard.py`, `tools/build_demo.py`, `githooks/`; `test_privacy_guard.py`, `test_privacy_hooks.py`, `test_demo_build.py` | [Privacy](docs/PRIVACY.md) |
 

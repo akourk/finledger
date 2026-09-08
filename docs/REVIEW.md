@@ -22,6 +22,7 @@ code testing or measurements.
 | Weekend crypto coverage | Ordinary and forced requests clamped crypto dates to Friday, skipping weekend marks. | Share the asset calendar with settlement classification; retain weekend dates for crypto while preserving equity/fund cutoffs, provisional marks, and closed-position limits. `test_price_calendars.py` covers UTC settlement, mixed batches, proxy targets, and forced refreshes. |
 | Transfer matching cost | Each inbound transfer scanned all outbound rows and repeatedly parsed dates, across every basis/history walk. | Index candidates by symbol and date while preserving greedy order, quantity tolerances, ties, and validation behavior. `test_transfer_pairing_index.py` compares with the exhaustive matcher across boundary cases and seeded fictional ledgers. |
 | Mobile Risk view | The monthly returns table widened the page beyond the viewport; the smoke check visited only Returns. | Contain the table in a named, keyboard-scrollable region. Browser checks now open Risk on mobile, assert viewport containment, and exercise horizontal keyboard scrolling. |
+| Account transfer attribution | Portfolio-neutral in-kind transfers could appear as account losses or gains. | Price verified cross-group pairs once and export scope-aware flow supplements for Python/JS returns, XIRR, annual tables, account contribution/P&L cards, and filtered benchmarks. Preserve whole-portfolio external contributions and report missing transfer valuations. |
 | Test cleanup | The session isolation directory was never released. | Retain a `TemporaryDirectory` owner for process lifetime so normal interpreter shutdown cleans up the session's own files. |
 
 The rename workflow assumes a single writer, as does the rest of the pipeline.
@@ -85,12 +86,13 @@ require candidate comparisons; this is not a claim of universal linear scaling.
 
 ## Further work, in priority order
 
-1. **Account-filter transfer boundaries.** External cash-flow annotations describe
-   the whole portfolio. A tracked transfer between account groups is internal
-   at that scope, but crosses the boundary of a single-account return view.
-   Add explicit fixtures and account-boundary attribution before claiming those
-   filtered returns neutralize all transfers. Do not reinterpret every unmatched
-   transfer as external; asset-unit transfer legs need their existing rules.
+1. **Transfer coverage and transit valuation.** Verified paired in-kind transfers
+   now cross account return boundaries correctly. Ordinary delayed transfers
+   still leave an in-transit gap in whole-portfolio valuation. USD and unmatched
+   movements need separate reconciliation evidence before extending coverage;
+   do not reinterpret every unmatched transfer as external or asset units as
+   dollar amounts. Any transit bridge must preserve the selected scope and
+   valuation dates across snapshots, charts, TWR, and XIRR.
 2. **Reduce duplicated financial state transitions gradually.** The lot walkers
    already share substantial helpers and strong parity coverage. Extract one
    verified transition at a time. A framework rewrite or database migration has
@@ -123,6 +125,18 @@ same Windows symlink skip. Chrome smoke checks passed across all **10 tabs**,
 and axe checks passed across **12 states**. The updated Overview and Performance
 screenshots were visually approved; Holdings and Tax remained byte-for-byte
 identical to their previously approved images.
+
+The account-transfer follow-up passed **1,722 tests**, with the same Windows
+symlink skip, plus a focused regression for account cards without history added
+after the full run. The new fictional cases exercise account boundaries,
+TWR/XIRR, market movement, split/option marks, missing prices, external and
+income exclusions, same-day price ordering, and export/reload reconstruction.
+Chrome smoke checks passed across **10 tabs** and axe across **12 states**.
+An additional Chrome check clicked **12 account filters** and verified that
+full-range custom returns agree with the Python summaries. All **62 local
+documentation links and anchors** checked in the updated guidance resolve.
+All four regenerated screenshots are byte-for-byte identical to the approved
+images; their registry now references the refreshed artifact.
 
 An initial demo failure was traced to a working-copy sample using CRLF despite
 the repository's LF attributes. Its parsed contents matched the generator;

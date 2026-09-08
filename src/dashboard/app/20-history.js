@@ -173,10 +173,10 @@ function setHistoryGroupAll(field, on) {
 }
 
 // Returns null if no filter is active (use lifetime simulation), or
-// a (txn) => bool predicate matching the user's account/type filter.
+// the account groups matching the user's account/type filter.
 // Sector filters fall through to null since attributing a benchmark
 // simulation to a sector mix is ambiguous.
-function _activeBenchFilterFn() {
+function _activeBenchFilterGroups() {
   const accountKeys = [...historySelection].filter(k => k.startsWith('account:'));
   const typeKeys = [...historySelection].filter(k => k.startsWith('type:'));
   const sectorKeys = [...historySelection].filter(k => k.startsWith('sector:'));
@@ -185,12 +185,11 @@ function _activeBenchFilterFn() {
   if (hasTotal) return null;
   if (sectorKeys.length) return null;
   if (accountKeys.length) {
-    const set = new Set(accountKeys.map(k => k.slice('account:'.length)));
-    return (t) => set.has(t.account_group);
+    return new Set(accountKeys.map(k => k.slice('account:'.length)));
   }
   if (typeKeys.length) {
-    const set = new Set(typeKeys.map(k => k.slice('type:'.length)));
-    return (t) => set.has(t.account_type);
+    const types = new Set(typeKeys.map(k => k.slice('type:'.length)));
+    return new Set(Object.keys(ACCOUNT_TYPE_OF).filter(g => types.has(ACCOUNT_TYPE_OF[g])));
   }
   return null;
 }
@@ -229,7 +228,7 @@ function _activeBenchFilterFn() {
 // null).  For lifetime view, ``windowStartIso = ''`` and the anchor
 // is $0 — which produces the same result as Python's
 // ``_compute_benchmark_series`` (the historic benchmark_spy field).
-function _simulateFilteredBenchmark(filterFn, hist, priceField, windowStartIso, anchorValue) {
+function _simulateFilteredBenchmark(filterSet, hist, priceField, windowStartIso, anchorValue) {
   if (!hist.length) return null;
   const sortedTxns = [...txns].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const histDates = hist.map(h => h.date);
@@ -267,8 +266,7 @@ function _simulateFilteredBenchmark(filterFn, hist, priceField, windowStartIso, 
   for (const h of hist) {
     while (txnIdx < sortedTxns.length && (sortedTxns[txnIdx].date || '') <= h.date) {
       const t = sortedTxns[txnIdx++];
-      if (!filterFn(t)) continue;
-      const cf = typeof t.cash_flow === 'number' ? t.cash_flow : 0;
+      const cf = _txnCashFlowForGroups(t, filterSet);
       if (cf === 0) continue;
       const px = priceAt(t.date);
       if (!px || px <= 0) continue;
@@ -556,7 +554,7 @@ function buildHistorySeries() {
   // showing the lifetime full-portfolio simulation.  Sector filters
   // fall back to lifetime since per-symbol-to-benchmark attribution
   // is ambiguous for sector-mixed positions.
-  const benchFilterFn = _activeBenchFilterFn();
+  const benchFilterGroups = _activeBenchFilterGroups();
   const _benchSpec = [
     { key: 'spy', ticker: 'SPY', color: '#60a5fa', priceField: 'benchmark_spy_price', dollarField: 'benchmark_spy' },
     { key: 'bnd', ticker: 'BND', color: '#f472b6', priceField: 'benchmark_bnd_price', dollarField: 'benchmark_bnd' },
@@ -566,9 +564,9 @@ function buildHistorySeries() {
     if (!historyOverlays.has(spec.key)) continue;
     let points;
     let labelSuffix = '';
-    if (benchFilterFn && hist.length && hist[0][spec.priceField] != null) {
+    if (benchFilterGroups && hist.length && hist[0][spec.priceField] != null) {
       // Filter-aware: re-simulate contributions into this benchmark.
-      const simulated = _simulateFilteredBenchmark(benchFilterFn, hist, spec.priceField);
+      const simulated = _simulateFilteredBenchmark(benchFilterGroups, hist, spec.priceField);
       if (simulated) {
         points = simulated;
         labelSuffix = ' (filtered)';
@@ -957,4 +955,3 @@ window.addEventListener('resize', () => {
 
 renderHistControls();
 renderHistory();
-

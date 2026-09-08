@@ -1302,8 +1302,9 @@ Normal local output lives in `exports/transactions.json` and
 
   **The DASHBOARD is a sixth consumer, and reaches the same verdict a
   different way**: the helper's per-txn result is exported on every txn
-  as `cash_flow`, and `90-performance.js`'s `_netFlowBetween` sums that
-  field.  It must NOT re-derive the classification from the action
+  as `cash_flow`. The browser's `_txnCashFlowForGroups` reads that field
+  and adds verified account-boundary supplements when appropriate (below);
+  `_netFlowBetween` delegates to it. It must NOT re-derive classification from the action
   catalog — it did, and the copy was missing the Coinbase bank-funded
   Buy rule and the measurement-boundary transfer rule, so the JS TWR
   walk saw tens of thousands of dollars less external money arrive than
@@ -1343,6 +1344,46 @@ Normal local output lives in `exports/transactions.json` and
   (birthday, salary, account-group overrides, etc.) that the
   transaction pipeline ignores via `broker = "skip"` in `scanner.py`.
   Don't confuse it with actual transaction data.
+
+### Account-transfer return flows
+
+`src/return_flows.py` keeps portfolio external contributions separate from
+movements crossing a selected account scope. `build_analytics` calls
+`annotate_account_transfers` once, on both the full and refresh paths, clearing
+stale export annotations before rebuilding them from current rows and prices.
+
+- Only matched cross-group in-kind pairs whose **two** portfolio flows are
+  zero qualify: `Transfer In` paired with `Transfer Out` or `Synthetic Transfer Out`.
+  Explicit external markers and airdrops remain excluded even if their amount
+  is absent. Pairing uses `basis._pair_transfers` with `basis._sort_key`,
+  including `seq`, so export ordering cannot change the chosen counterparty.
+- Each leg exports `account_transfer: {counterparty_group, flow}`. `flow` is
+  signed market value at that leg's closing date, using `valuation.mark`, its
+  own quantity, and all-symbol transaction prices available by that day.
+  Preserve split restatement and option multipliers. Raw transfer `amount`
+  can be asset units; cost basis is not market value. Neither substitutes for
+  a missing price. A null flow triggers `unpriced_account_transfer` data health
+  and leaves the preexisting return-flow classification in place.
+  Exact-date return valuations use the same canonical transaction ordering as
+  history, including `seq`, so fallback prices agree on same-day cache misses.
+- `txn_cash_flow_for_groups` applies the supplement only when the leg's group
+  is selected and its counterparty is excluded. `None` means Total; an empty
+  set means no accounts. Selecting both endpoints ignores both supplements,
+  including periods between departure and arrival. Portfolio contribution,
+  savings-rate, tax contribution, and whole-portfolio benchmark series remain
+  external-only.
+- Python annual returns, TWR, daily flow boundaries, and XIRR share this helper.
+  Browser `_txnCashFlowForGroups` consumes its exported inputs for interactive
+  returns, monthly ratios, account contribution/P&L cards, and benchmark flows.
+  Transaction table totals retain the original portfolio `cash_flow` field.
+- Existing USD, unmatched, same-group, income, and external-marker rules remain
+  unchanged. This is not universal transfer reconciliation. Ordinary delayed
+  cross-group transfers still have the existing in-transit gap in portfolio
+  valuations; rollover bridges cover their separately defined same-group cases.
+
+Behavioral coverage lives in `tests/test_account_transfer_flows.py` and
+`tests/test_account_transfer_frontend.py`. Include zero-return transfers, real market
+movement, exact date windows, missing prices, and export/reload reconstruction.
 
 ## Adding a new broker
 

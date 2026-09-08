@@ -1,6 +1,23 @@
 const DATA = __JSON_DATA__;
 
 const txns = DATA.transactions || [];
+
+// Python decides portfolio cash flow and marks verified account transfers.
+// An in-kind transfer is capital crossing a selected account's boundary only
+// when its counterpart is outside that selection. Total keeps its original
+// external-flow accounting; older exports without the annotation still work.
+function _txnCashFlowForGroups(t, filterSet) {
+  if (filterSet && !filterSet.has(t.account_group)) return 0;
+  const external = Number.isFinite(t.cash_flow) ? t.cash_flow : 0;
+  const transfer = t.account_transfer;
+  if (!filterSet || !transfer || external !== 0
+    || typeof transfer.counterparty_group !== 'string'
+    || !transfer.counterparty_group
+    || filterSet.has(transfer.counterparty_group)
+    || !Number.isFinite(transfer.flow)) return external;
+  return external + transfer.flow;
+}
+
 const holdingsByAsset = DATA.holdings || [];
 const holdingsByAccount = DATA.holdings_by_account || [];
 const history = DATA.history || [];

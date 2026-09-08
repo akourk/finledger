@@ -998,12 +998,19 @@ class TestTheJsWalkDoesNotReclassifyCashFlow:
         src = self._perf_src()
         body = src[src.index("function _netFlowBetween"):]
         body = body[:body.index("\n}")]
-        assert "t.cash_flow" in body, (
-            "_netFlowBetween no longer reads the per-txn cash_flow "
+        assert "_txnCashFlowForGroups" in body, (
+            "_netFlowBetween no longer reads the shared per-txn cash-flow "
             "annotation — external cash flow is classified once, in "
             "basis.txn_external_cash_flow, and re-deriving it here is how "
             "the two return engines drifted apart"
         )
+        core = (Path(__file__).resolve().parents[1]
+                / "src" / "dashboard" / "app" / "00-core.js").read_text(
+                    encoding="utf-8")
+        helper = core[core.index("function _txnCashFlowForGroups"):]
+        helper = helper[:helper.index("\n}")]
+        assert "t.cash_flow" in helper
+        body += helper
         for token in ("_TWR_ADD_ACTIONS", "_TWR_SUB_ACTIONS",
                       "retirementContribInfo", "cash_flow', 'in"):
             assert token not in body, (

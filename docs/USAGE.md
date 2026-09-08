@@ -239,6 +239,20 @@ observed balances. Trailing windows end at the latest date in the export.
 The Calmar ratio was removed because combining investment return with this
 cash-flow-sensitive balance decline would misstate investment risk.
 
+**Account-specific returns** treat a matched in-kind transfer as cash leaving
+the sending account and entering the receiving account, valued at each leg's
+date. Selecting both accounts keeps the transfer internal. Account-level Net
+Contributed therefore includes these transfers; whole-portfolio contributions
+and retirement tax-year contribution totals keep their external-money meaning.
+This adjustment also feeds account benchmarks and money-weighted returns.
+
+USD transfers, unmatched movements, and existing broker-specific exceptions
+retain their current rules. A missing transfer valuation appears in Data Health;
+resolve that price gap before relying on the affected account return. Ordinary
+transfers arriving on a later date can still cause a temporary portfolio balance
+dip while in transit. The separately detected custodian rollover bridges cover
+their established rollover cases.
+
 
 ## Input validation and recovery
 

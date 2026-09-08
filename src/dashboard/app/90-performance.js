@@ -108,36 +108,12 @@ function computeAnnualReturns(accountFilter) {
   }
   const years = Object.keys(byYear).sort();
 
-  const addActions = new Set(['Deposit', 'Contribution']);
-  const subActions = new Set(['Withdrawal', 'Distribution']);
   for (const t of txns) {
     const y = yearOf(t.date);
     if (!y || !byYear[y]) continue;
-    if (filterSet && !filterSet.has(t.account_group)) continue;
-    if (addActions.has(t.action)) {
-      byYear[y].contrib = (byYear[y].contrib || 0) + (t.amount || 0);
-      continue;
-    }
-    if (subActions.has(t.action)) {
-      // Distribution from Roth IRA / Rollover IRA is overwhelmingly a
-      // custodian rollover (e.g. Voya 401K → Schwab Rollover IRA).
-      // Skip to match the Transfer In skip on the receiving side, so
-      // the two legs of a rollover cancel out instead of showing up
-      // as net -$X for the year.
-      if (t.action === 'Distribution'
-        && (t.account_group === 'Roth IRA' || t.account_group === 'Rollover IRA')) {
-        continue;
-      }
-      byYear[y].withdraw = (byYear[y].withdraw || 0) + (t.amount || 0);
-      continue;
-    }
-    // USAA-style "Buy" with CURRENT/PRIOR YEAR CONTRIBUTION marker in
-    // the description — treat as a user contribution.  Use calendar
-    // year of the txn (not tax-attribution year) so period returns
-    // line up with when the cash actually flowed.
-    if (retirementContribInfo(t).isContrib) {
-      byYear[y].contrib = (byYear[y].contrib || 0) + (t.amount || 0);
-    }
+    const flow = _txnCashFlowForGroups(t, filterSet);
+    if (flow > 0) byYear[y].contrib = (byYear[y].contrib || 0) + flow;
+    if (flow < 0) byYear[y].withdraw = (byYear[y].withdraw || 0) - flow;
   }
 
   // Value accessor: sum over filter set, or total for null filter.
@@ -264,46 +240,14 @@ function setPerfTwrEnd(d) {
 //
 // Sub-periods here are the gaps between consecutive history snapshots
 // (monthly resolution).  Returns null if the filter has no activity yet.
-// Sourced from the action catalog (DATA.action_catalog) — adding a
-// new contribution-/withdrawal-style action in src/actions.py
-// automatically picks it up here.
-// External cash flow per txn is ALREADY DECIDED, once, in Python:
-// `basis.txn_external_cash_flow` is the documented single source of
-// truth for "did this txn move money in or out of the user's pocket",
-// and every txn carries its verdict in the exported `cash_flow` field.
-// So read it.  Do not re-derive it here.
-//
-// This function used to re-derive it, from the catalog's cash_flow
-// column plus two hand-written special cases — a THIRD implementation
-// of a rule CLAUDE.md says must have exactly one.  It had drifted, in
-// the direction that flatters the portfolio.  Measured on real data it
-// saw $35.6k LESS external money arrive than Python did, because it was
-// missing two of the classifier's carve-outs entirely:
-//
-//   * Coinbase bank-funded Buys — a buy settled straight from a bank
-//     account with no separate ACH row is new capital entering
-//     (basis.py documents both CSV formats this appears in)
-//   * transfers CROSSING fin's measurement boundary — crypto sent to
-//     self-custody is economically a withdrawal, an inbound receive a
-//     contribution, keyed on the RAW action
-//
-// Under-counting money IN is not a neutral error: the value it buys has
-// to be attributed to something, and a Modified-Dietz numerator with no
-// flow to net out books it as market return.  Lifetime TWR read +418%
-// against the Python summary's +332% on the same span, and the two
-// engines sat one chip-click apart on the same screen — 'lifetime'
-// reads Python's summary, every other window ran this walk.  Reading
-// the annotation moves it to +328%, i.e. onto the summary, and deletes
-// the third implementation rather than repairing it.
-//
-// The remaining consumers of the catalog sets are gone with it; if you
-// need "is this external money", the answer is `t.cash_flow`.
+// Python supplies the portfolio cash-flow verdict and verified account-transfer
+// marks. Read them through the shared scope helper; do not classify actions
+// or value transferred shares again in the browser.
 function _netFlowBetween(prevDate, currDate, filterSet) {
   let net = 0;
   for (const t of txns) {
     if (!t.date || t.date <= prevDate || t.date > currDate) continue;
-    if (filterSet && !filterSet.has(t.account_group)) continue;
-    net += t.cash_flow || 0;
+    net += _txnCashFlowForGroups(t, filterSet);
   }
   return net;
 }
@@ -470,8 +414,9 @@ function historicalGroupPerformance(groups, cutoff) {
   const years = date => (new Date(date) - new Date(start)) / (365.25 * 86400000);
   const flows = [[0, -at(first)]];
   for (const txn of txns) {
-    if (txn.date <= start || txn.date > end || !groups.has(txn.account_group)) continue;
-    if (Number.isFinite(txn.cash_flow) && txn.cash_flow) flows.push([years(txn.date), -txn.cash_flow]);
+    if (txn.date <= start || txn.date > end) continue;
+    const flow = _txnCashFlowForGroups(txn, groups);
+    if (flow) flows.push([years(txn.date), -flow]);
   }
   flows.push([years(end), at(last)]);
   const npv = rate => flows.reduce((total, [t, amount]) => total + amount / Math.pow(1 + rate, t), 0);
@@ -1021,13 +966,7 @@ function computeWindowedMetrics(filterKey, windowKey) {
     const startV = valueAt(prev);
     const endV = valueAt(curr);
     if (startV <= 0) continue;
-    let flow = 0;
-    for (const t of txns) {
-      const d = t.date || '';
-      if (d <= prev.date || d > curr.date) continue;
-      if (filterSet && !filterSet.has(t.account_group)) continue;
-      if (typeof t.cash_flow === 'number') flow += t.cash_flow;
-    }
+    let flow = _netFlowBetween(prev.date, curr.date, filterSet);
     // Whole-portfolio ratios use the same cumulative contribution
     // delta as Python's monthly_pnl. Filtered views read the pipeline's
     // per-transaction external-flow decisions above.
@@ -1229,7 +1168,7 @@ function renderPerformance() {
   const _isWholeLifetime = performanceWindow === 'lifetime'
     && performanceAccountFilter === null;
   // Window bounds — same logic as everywhere else on the tab.
-  const _winRefIso = history.length ? history[history.length - 1].date : '';
+  const _winRefIso = history.length ? history[history.length - 1].date : SNAPSHOT_DATE;
   let _winLowerIso = '', _winUpperIso = _winRefIso;
   if (performanceWindow === 'custom') {
     _winLowerIso = perfTwrStart || '';
@@ -1334,15 +1273,9 @@ function renderPerformance() {
   }
   const rolloverDominates = Math.abs(rolloverRealized) >= 100
     && Math.abs(rolloverRealized) >= Math.abs(totalRealized) * 0.5;
-  // Net contributed in window: sum per-txn cash_flow over the same
-  // filter+window.
-  const netContrib = _isWholeLifetime ? _whole_netContrib : txns.reduce((s, t) => {
-    if (!_aggMatchesTxn(t)) return s;
-    const d = t.date || '';
-    if (_winAnchorIso && d <= _winAnchorIso) return s;
-    if (_winUpperIso && d > _winUpperIso) return s;
-    return s + (t.cash_flow || 0);
-  }, 0);
+  // Capital crossing the selected accounts' boundary over the same window.
+  const netContrib = _isWholeLifetime ? _whole_netContrib
+    : _netFlowBetween(_winAnchorIso, _winUpperIso, _aggFilterSet);
   // For unrealized / total value at window END, prefer snapshot
   // positions when window != lifetime so we get the as-of-window-end
   // values; for lifetime, use live holdings_by_account so the figure
@@ -1534,7 +1467,7 @@ This is a LEVEL measured at one date, not a gain accrued over the window — so 
     {
       htmlLabel: true, label: `Net Contributed <span class="sub">${_winLabel}</span>`,
       value: fmtMoney(netContrib),
-      title: `Net cash flow into the filtered account(s) during the window (deposits − withdrawals).  Window: ${performanceWindow}.
+      title: `Net capital entering the filtered account(s), including verified in-kind transfers across the selection. Transfers within the selection remain internal.  Window: ${performanceWindow}.
 
 ${_rowSpan}`
     },
@@ -1768,11 +1701,6 @@ ${_rowSpan}`
     for (const g of benchFilterSet) s += h.by_account_group[g] || 0;
     return s;
   };
-  // Per-txn predicate matching the filter — for filter-aware
-  // benchmark simulations and net-contributed totals.
-  const benchTxnFilter = benchFilterActive
-    ? (t) => benchFilterSet.has(t.account_group)
-    : null;
   // Cumulative net_contributed for the filter at each snapshot date.
   // Walks once, joins by date.
   const filteredNetContribAt = (() => {
@@ -1786,8 +1714,7 @@ ${_rowSpan}`
       let s = 0;
       for (const t of sortedTxns) {
         if ((t.date || '') > h.date) break;
-        if (!benchTxnFilter(t)) continue;
-        if (typeof t.cash_flow === 'number') s += t.cash_flow;
+        s += _txnCashFlowForGroups(t, benchFilterSet);
       }
       cache.set(h.date, s);
       return s;
@@ -1843,14 +1770,12 @@ ${_rowSpan}`
   // For lifetime (no cutoff), windowStartIso = '' and anchor = 0
   // (line grows from zero with lifetime cash flows, matching the
   // legacy Python simulation).
-  const _passthroughFilter = (_t) => true;
   const _windowStartIso = (windowedHistory.length && performanceWindow !== 'lifetime')
     ? windowedHistory[0].date : '';
   const _anchorValue = _windowStartIso ? portfolioValueAt(windowedHistory[0]) : 0;
   const _filteredBenchPoints = (priceField, lifetimeKey) => {
-    const filterFn = benchTxnFilter || _passthroughFilter;
     if (windowedHistory[0] && windowedHistory[0][priceField] != null) {
-      const sim = _simulateFilteredBenchmark(filterFn, history, priceField,
+      const sim = _simulateFilteredBenchmark(benchFilterSet, history, priceField,
         _windowStartIso, _anchorValue);
       if (sim) {
         return sim.filter(p => windowedHistory.some(h => h.date === p.date));
@@ -2238,7 +2163,7 @@ const HIDDEN_BY_DEFAULT = new Set([
 ]);
 
 const columns = txns.length > 0
-  ? Object.keys(txns[0]).filter(k => k !== '_hash')
+  ? Object.keys(txns[0]).filter(k => k !== '_hash' && k !== 'account_transfer')
   : ['date', 'account_group', 'account_type', 'account', 'symbol', 'action', 'quantity', 'price', 'fees', 'amount', 'description', 'source'];
 
 // Column visibility state
@@ -2265,4 +2190,3 @@ FILTER_FIELDS.forEach(f => {
 
 // Track which popover is open (field name or 'columns' or null)
 let openPopover = null;
-
