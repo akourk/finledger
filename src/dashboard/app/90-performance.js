@@ -193,7 +193,7 @@ function computeAnnualReturns(accountFilter) {
 let performanceAccountFilter = null;   // null = Total
 // Performance tab metric window: one of PERF_WINDOWS below.
 // Affects the headline stat cards (Cum/Ann return, Sharpe, Sortino,
-// MaxDD, Calmar) so the user can see "what's this portfolio doing
+// Balance Drawdown) so the user can see "what's this portfolio doing
 // recently" without lifetime history dominating.
 let performanceWindow = 'lifetime';
 // Rebase override for the benchmark chart.  null = "auto" (rebase iff
@@ -795,7 +795,7 @@ function _buildDrawdownSection() {
 
   const cards = [
     {
-      label: 'Max Drawdown',
+      label: 'Max Balance Drawdown',
       value: (maxDd * 100).toFixed(2) + '%',
       cls: maxDd < 0 ? 'negative' : '',
       sub: win.peak_date && win.trough_date
@@ -814,7 +814,7 @@ function _buildDrawdownSection() {
       sub: win.recovery_date || ''
     },
     {
-      label: 'Current Drawdown',
+      label: 'Current Balance Drawdown',
       value: (curDd * 100).toFixed(2) + '%',
       cls: curDd < 0 ? 'negative' : '',
       sub: curDd < 0 ? 'from peak' : 'at all-time high'
@@ -831,7 +831,7 @@ function _buildDrawdownSection() {
   const chartHtml = `<div class="chart-wrap">
     <svg class="chart-svg" id="${chartId}" preserveAspectRatio="none" style="height:180px;"
            role="img"
-           aria-label="Drawdown from the running peak over time. The cards above give the maximum and current drawdown as text."></svg>
+           aria-label="Portfolio balance decline from the running peak over time, including cash movements. The cards above give the maximum and current drawdown as text."></svg>
   </div>`;
 
   // Render after DOM insertion
@@ -870,9 +870,11 @@ function _buildDrawdownSection() {
 
   return `
     <div class="section-header" style="margin-top:24px;">
-      <h2><span style="color:var(--accent);">Drawdown</span></h2>
-      <span class="as-of-hint" style="margin-left:auto;">Peak-to-trough portfolio decline — shows historical risk.</span>
+      <h2><span style="color:var(--accent);">Balance Drawdown</span></h2>
+      <span class="as-of-hint" style="margin-left:auto;">Whole portfolio · ${dd.resolution === 'daily' ? 'daily' : 'snapshot'} statistics · chart sampled at history dates.</span>
     </div>
+    <p class="as-of-hint">Withdrawals can deepen a balance decline; contributions can restore a peak.
+      Maximum excludes peaks below 5% of the all-time balance peak.</p>
     <div class="drawdown-stats">${statsHtml}</div>
     ${chartHtml}
   `;
@@ -886,7 +888,7 @@ function _buildDrawdownSection() {
 
 // Single source of truth for windowed performance metrics on the
 // Performance tab.  Returns ``{cum, ann, sharpe, sortino, mdd,
-// mddPeak, mddTrough, calmar, nMonths, nInRatio}`` for any
+// mddPeak, mddTrough, nMonths, nInRatio}`` for any
 // (filterKey, windowKey) pair.  Both the top stat cards and the
 // "By Account" TWR section consume this so toggling the window or
 // account selector updates every figure consistently — no drift
@@ -901,13 +903,12 @@ function _buildDrawdownSection() {
 //   significant per-period returns (start_value ≥ 1% of the
 //   filtered all-time peak, |return| ≤ 50% magnitude cap).  Same
 //   filter rules as Python's ``monthly_pnl.compute_monthly_pnl``.
-// - ``mdd``: deepest peak-to-trough decline within the window's
-//   filtered values.  In percentage points (-65.16 = -65.16%).
-// - ``calmar``: ``ann × 100 / |mdd|``.  > 1 solid, > 3 exceptional.
+// - ``mdd``: deepest balance decline within the selected accounts/window,
+//   including cash movements. In percentage points (-25 = -25%).
 function computeWindowedMetrics(filterKey, windowKey) {
   const empty = {
     cum: null, ann: null, sharpe: null, sortino: null,
-    mdd: null, mddPeak: null, mddTrough: null, calmar: null,
+    mdd: null, mddPeak: null, mddTrough: null,
     nMonths: 0, nInRatio: 0,
     startDate: null, endDate: null, spyCum: null, spyAnn: null,
   };
@@ -1056,16 +1057,9 @@ function computeWindowedMetrics(filterKey, windowKey) {
     }
   }
 
-  // Max drawdown over the windowed FILTERED values.  Resets the
-  // running peak at window start so a high pre-window peak doesn't
-  // dominate.  For the LIFETIME window, mirror Python's
-  // drawdown.compute_drawdown small-base rule: drawdowns whose peak
-  // was below 5% of the filtered all-time peak are excluded — an
-  // early-portfolio crash on a tiny base isn't comparable to today's
-  // risk profile (the Calmar tooltip has always described this rule;
-  // the JS recompute previously skipped it and disagreed with the
-  // Python Drawdown section on the same tab).  Shorter windows skip
-  // the gate, same as Python's windowed slices.
+  // Balance decline at snapshot cadence, including cash movements.
+  // Lifetime retains Python's 5%-of-all-time-balance-peak size filter;
+  // shorter windows reset the peak and include all observed balances.
   const ddSmallBase = windowKey === 'lifetime' ? filteredPeak * 0.05 : 0;
   let runningPeak = 0;
   let curPeakDate = windowed[0].date;
@@ -1085,14 +1079,11 @@ function computeWindowedMetrics(filterKey, windowKey) {
     }
   }
   const mddPct = mdd < 0 ? +(mdd * 100).toFixed(2) : 0;
-  const calmar = (ann != null && mddPct < -0.01)
-    ? (ann * 100) / Math.abs(mddPct)
-    : null;
+
 
   return {
     cum, ann, sharpe, sortino,
     mdd: mddPct, mddPeak, mddTrough,
-    calmar,
     nMonths: periodReturns.length,
     nInRatio: sigReturns.length,
     startDate, endDate, spyCum, spyAnn,
@@ -1412,24 +1403,12 @@ function renderPerformance() {
   const annStr = win.ann != null ? ((win.ann >= 0 ? '+' : '') + (win.ann * 100).toFixed(2) + '%') : '—';
   const sharpeStr = win.sharpe != null ? win.sharpe.toFixed(2) : '—';
   const sortinoStr = win.sortino != null ? win.sortino.toFixed(2) : '—';
-  const mddStr = win.mdd != null && win.mdd < 0 ? win.mdd.toFixed(2) + '%' : '—';
-  const calmarStr = win.calmar != null ? ((win.calmar >= 0 ? '+' : '') + win.calmar.toFixed(2)) : '—';
+  const mddStr = win.mdd != null ? win.mdd.toFixed(2) + '%' : '—';
   const cumCls = win.cum != null ? (win.cum >= 0 ? 'positive' : 'negative') : '';
   const annCls = win.ann != null ? (win.ann >= 0 ? 'positive' : 'negative') : '';
   const sharpeCls = win.sharpe != null ? (win.sharpe >= 1 ? 'positive' : (win.sharpe < 0 ? 'negative' : '')) : '';
   const sortinoCls = win.sortino != null ? (win.sortino >= 1 ? 'positive' : (win.sortino < 0 ? 'negative' : '')) : '';
   const mddCls = win.mdd != null && win.mdd < 0 ? 'negative' : '';
-  const calmarCls = win.calmar != null ? (win.calmar >= 1 ? 'positive' : (win.calmar < 0 ? 'negative' : '')) : '';
-
-  const calmarTitle = win.calmar != null
-    ? (
-      `${(win.ann * 100).toFixed(2)}% annualized return ÷ ${Math.abs(win.mdd).toFixed(1)}% max drawdown ` +
-      `(${win.mddPeak || '?'} → ${win.mddTrough || '?'}) = ${win.calmar.toFixed(3)}.\n\n` +
-      `Calmar measures return per unit of worst-case pain.  > 1 is solid, > 3 is exceptional, ` +
-      `< 0.5 means drawdowns swamp returns.\n\n` +
-      `Window: ${performanceWindow}.  Lifetime drawdowns from when the portfolio was below 5% of all-time peak are excluded.`
-    )
-    : 'Annualized return ÷ |max drawdown|.';
 
   const windowChips = PERF_TWR_PRESETS.map(w =>
     `<button class="tbtn ${w === performanceWindow ? 'active' : ''}" data-perf-window="${w}">${PERF_TWR_PRESET_LABEL[w]}</button>`
@@ -1588,16 +1567,10 @@ ${_rowSpan}`
       title: `Like Sharpe, but only counts downside volatility (months below the risk-free return).  Closer to "how much pain per unit of return".  Window: ${performanceWindow}.` + filteredHint
     },
     {
-      htmlLabel: true, label: `Calmar Ratio <span class="sub">${performanceWindow}</span>`,
-      value: calmarStr + ' <span class="sub">return / max DD</span>',
-      cls: calmarCls,
-      title: calmarTitle
-    },
-    {
-      htmlLabel: true, label: `Max Drawdown <span class="sub">${performanceWindow}</span>`,
+      htmlLabel: true, label: `Max Balance Drawdown <span class="sub">${performanceWindow}</span>`,
       value: mddStr + (win.mddPeak ? ` <span class="sub">${win.mddPeak}→${win.mddTrough}</span>` : ''),
       cls: mddCls,
-      title: `Largest peak-to-trough decline within the selected window.  Window: ${performanceWindow}.`
+      title: `Largest balance decline for the selected accounts/window, sampled at history dates. Withdrawals can deepen a decline; contributions can restore a peak. Lifetime excludes peaks below 5% of the all-time balance peak. Window: ${performanceWindow}.`
     },
   ];
 

@@ -122,8 +122,17 @@ async function main() {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert.ok(overflow <= 1, `${tab} overflows mobile viewport by ${overflow}px`);
     }
+    await page.click('#perfViewBtnRisk');
+    const riskOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    assert.ok(riskOverflow <= 1, `performance risk view overflows mobile viewport by ${riskOverflow}px`);
+    const monthlyScroll = await page.$('[aria-label="Monthly returns table"]');
+    assert.ok(monthlyScroll, 'monthly returns must have a scrollable region');
+    await monthlyScroll.focus();
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => document.querySelector('[aria-label="Monthly returns table"]').scrollLeft > 0);
+    await page.click('#perfViewBtnReturns');
     assert.deepEqual(errors, []);
-    console.log('PASS: 10 tabs, per-key input, historical gains, Python/JS monthly risk parity, keyboard disclosures, CSV export, deep link, mobile layout, no console/network errors.');
+    console.log('PASS: 10 tabs, per-key input, historical gains, Python/JS monthly risk parity, keyboard disclosures, CSV export, deep link, mobile Returns/Risk layout and table scrolling, no console/network errors.');
   } finally {
     await browser.close();
     await fs.rm(downloads, {recursive: true, force: true});

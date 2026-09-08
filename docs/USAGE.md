@@ -164,7 +164,7 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   1-Day Change), alerts / "what changed since last run" /
   **reconciliation** (finledger vs broker-reported figures) feedback panels,
   stat cards (Cost Basis, Unrealized/Realized P&L, Net Contributed,
-  Income, Current Drawdown), history chart with overlay toggles (Cost
+  Income, Current Balance Drawdown), history chart with overlay toggles (Cost
   Basis, Unrealized Gain, SPY Benchmark, Net Contributed,
   Year-over-Year), top 10 holdings, recent transactions, allocation
   donut.
@@ -218,15 +218,26 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   conversion/wrap log.
 - **Performance** — anchor stat cards (Total Return, Realized,
   Unrealized, Net Contributed, Fees Paid), account + window selectors,
-  windowed cards (incl. Sharpe / Sortino / Calmar / Max Drawdown), then
+  windowed cards (incl. Sharpe / Sortino / Max Balance Drawdown), then
   a **Returns ↔ Risk** sub-view.  Returns: Your Portfolio vs SPY / BND /
   VXUS / 60-40 multi-benchmark chart, By-Account TWR (Modified Dietz +
   money-weighted XIRR), Annual Returns table, top 10 winners / losers.
-  Risk: Drawdown chart, year × month Monthly P&L heatmap (with YTD
+  Risk: Balance Drawdown chart, year × month Monthly P&L heatmap (with YTD
   column + best/worst-month summary), Recent Daily P&L bars.
 
 Dark theme, tabular-numeric formatting, mobile responsive
 (including narrow mobile viewports), no JS framework.
+
+**Balance Drawdown** measures how far the balance has fallen from its running
+peak. Withdrawals can deepen a decline; contributions can restore the peak
+without recovering investment losses. The Risk section shows whole-portfolio
+daily statistics when available and a chart sampled at history dates. The
+account/window card uses the selected accounts and those snapshot dates, so
+it can miss dips between snapshots. Lifetime maxima exclude declines from
+peaks below 5% of the all-time balance peak; shorter windows include all
+observed balances. Trailing windows end at the latest date in the export.
+The Calmar ratio was removed because combining investment return with this
+cash-flow-sensitive balance decline would misstate investment risk.
 
 
 ## Input validation and recovery
@@ -281,6 +292,13 @@ cache at a time. Individual replacements are atomic, but a multi-file save is
 not an atomic filesystem transaction and does not promise power-loss durability.
 
 ## Market data and privacy
+
+Crypto coverage includes Saturday and Sunday. A daily crypto mark stays
+provisional until its UTC day ends; finledger treats equity closes as settled
+after 16:20 ET and mutual-fund marks after 18:00 ET. Equities and funds use the
+last weekday for weekend requests. Normal refreshes retry unsettled marks and skip covered,
+settled dates; these timing rules also apply when crypto coverage extends
+over a weekend.
 
 Local ingestion can request prices and sectors for symbols through yfinance.
 The provider sees those market-data requests, not an uploaded transaction ledger.

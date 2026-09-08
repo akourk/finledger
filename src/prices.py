@@ -1620,15 +1620,18 @@ def _last_trading_day(d: date) -> date:
     return d
 
 
+def _last_quote_day(symbol: str, day: date) -> date:
+    """Latest requestable day on the symbol's calendar, regardless of settlement."""
+    return day if _settle_class(symbol) == "crypto" else _last_trading_day(day)
+
+
 def _missing_ranges(symbol: str, start: date, end: date) -> list[tuple[date, date]]:
     """Return the date ranges needed to extend coverage to [start, end].
 
-    The ``end`` date is clamped back to the most recent weekday — asking
-    yfinance for weekend data produces no results (markets closed) but
-    every extra request adds noise to the console and a small network
-    cost.  Mutual funds publish their NAV ~1-2 hours after Friday's
-    close, so by the time we run over a weekend, Friday's price is the
-    correct "latest close" anyway.
+    Equities and funds clamp ``end`` to the most recent weekday to avoid
+    empty weekend requests. Crypto keeps the requested calendar date:
+    its daily bars continue through Saturday and Sunday. The same asset
+    classification controls both the request calendar and settlement.
 
     **A date is only covered once its bar can no longer change.**
     ``covered_end`` records what we ASKED for, not what has settled, so
@@ -1645,7 +1648,7 @@ def _missing_ranges(symbol: str, start: date, end: date) -> list[tuple[date, dat
     awareness landed) falls back to "today is never settled", which is
     the prior behaviour — so old caches keep working with no migration.
     """
-    end = _last_trading_day(end)
+    end = _last_quote_day(symbol, end)
     meta = _load_meta()
     entry = meta["symbols"].get(symbol)
     if not entry or not entry.get("covered_start"):
@@ -1825,16 +1828,12 @@ def ensure_coverage(symbols: list[str], start, end, *,
     yfinance for "today" on a position you no longer hold.
 
     ``force_today_for``: optional set of original (pre-proxy-expansion)
-    symbol names to force-refresh the latest trading day for, even if
-    the cache claims it is already covered.  ``main.py`` passes held +
-    benchmark + option-underlying symbols — passing every symbol-ever
-    would re-fetch hundreds of closed positions for nothing.  This is
-    the layer that covers what ``_missing_ranges``' "today is never
-    covered" clamp cannot: over a weekend or holiday the requested end
-    walks back to the last trading day, which IS settled-looking, so
-    only an explicit force re-pulls (e.g. a mutual-fund NAV that hadn't
-    posted when Friday evening's run went out).  Doesn't bypass backoff
-    or no-fetch rules — a tombstoned symbol still won't be hit.
+    symbol names to force-refresh the latest quote day for, even if
+    the cache claims it is already settled. This is a caller-controlled
+    escape hatch; normal pipeline runs rely on settlement awareness.
+    Equities and funds use the last weekday; crypto uses the requested
+    date, including weekends. It does not bypass backoff, no-fetch rules,
+    or the closed-position end clamp.
     """
     force_today_set: set[str] = set(force_today_for or set())
     global _splits_dirty, _meta_dirty
@@ -1902,14 +1901,13 @@ def ensure_coverage(symbols: list[str], start, end, *,
             effective_end = end_d
         gaps = _missing_ranges(sym, start_d, effective_end)
         # force_today_for: also append a 1-day fetch for the last
-        # trading day, but ONLY for symbols the caller asked to refresh
-        # (held + benchmarks in --refresh-prices mode).  Closed
+        # quote day, but ONLY for symbols the caller asked to refresh. Closed
         # positions and historical-only symbols are deliberately not
         # re-fetched today — re-pulling a delisted ticker just produces
         # network noise.
         if (sym in force_today_for_targets
                 and effective_end >= end_d):
-            today_d = _last_trading_day(end_d)
+            today_d = _last_quote_day(sym, end_d)
             already_in_gaps = any(g[0] <= today_d <= g[1] for g in gaps)
             if not already_in_gaps:
                 gaps = list(gaps) + [(today_d, today_d)]

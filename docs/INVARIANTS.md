@@ -417,17 +417,30 @@ Normal local output lives in `exports/transactions.json` and
     - `concentration` — positions / sectors / account_groups /
       account_types each as a sorted-by-pct list, plus Herfindahl
       index, top-5 share, and risk flags.
-    - `drawdown` — series of `{date, drawdown_pct, running_peak,
-      value}`, max-drawdown window with peak/trough/recovery dates,
-      and current_drawdown_pct.  Takes `bridges` — a custodial
-      rollover's in-flight window is not a drawdown.  HEADLINE stats
+    - `drawdown` — **balance drawdown**: series of `{date, drawdown_pct,
+      running_peak, value}`, maximum decline with peak/trough/recovery
+      dates, and `current_drawdown_pct`. Withdrawals can deepen a decline;
+      contributions can restore a balance peak without recovering investment
+      losses. Takes `bridges` so custodial rollovers remain in the balance
+      while in transit. HEADLINE whole-portfolio stats
       (max DD, its window, current DD, trailing windows) are computed
       at DAILY resolution via `history.compute_daily_totals` (a
       lightweight balances×prices day walker mirroring the snapshot
       walker's valuation rules; never exported wholesale) — sparse
       sampling structurally understates peak-to-trough depth.  The
       exported `series` stays at snapshot cadence for the chart;
-      `resolution` reports which basis the stats used.
+      `resolution` reports which basis the stats used. Lifetime maximum
+      excludes declines whose running peak was below 5% of the all-time
+      balance peak; chart and current decline retain every observation.
+      Disclose that size filter. Shorter windows reset the peak at their
+      start and have no size filter. Python trailing windows end at the
+      latest data date and match the browser's `PERF_WINDOW_DAYS` cutoffs,
+      so reopening an old export does not move its window boundaries.
+      `tests/test_drawdown_semantics.py` pins cash-flow effects, rollover
+      bridges, sampling, and Python/JS window agreement. These balance
+      declines must not be used as return drawdown: the Calmar card was
+      removed because dividing a cash-flow-neutral return by a balance
+      decline mixes incompatible measures.
     - `daily_pnl` — list of `{date, value, change, change_pct}` for
       the last 30 calendar days, walking back from today's positions
       and re-pricing at recent dates (market-only moves; same-day
@@ -692,8 +705,12 @@ Normal local output lives in `exports/transactions.json` and
       activity, conversion/wrap log.
     - **Performance** — anchor stat cards (Total Return, Realized,
       Unrealized, Net Contributed, **Fees Paid**), account + window
-      selectors, filtered/windowed cards (incl. Sharpe/Sortino/Calmar/
-      MaxDD), then a **Returns ↔ Risk sub-toggle**.
+      selectors, filtered/windowed cards (incl. Sharpe, Sortino, and
+      Max Balance Drawdown), then a **Returns ↔ Risk sub-toggle**.
+      The windowed balance-decline card uses the selected accounts and
+      snapshot observations. The Risk section's balance-decline headlines
+      describe the whole portfolio at daily resolution when available;
+      its chart stays at snapshot cadence. Keep these scopes visible.
       **Two rows, one quantity each.**  The anchor row is whole-
       portfolio / all-time / never filtered; the windowed row is
       filtered + windowed.  At filter=Total + window=lifetime every
@@ -725,7 +742,7 @@ Normal local output lives in `exports/transactions.json` and
       multi-benchmark chart, By-Account TWR section (Mod-Dietz +
       daily TWR for retirement filters + **Money-Weighted XIRR** with
       behavior-gap tooltip), Annual Returns table, Top 10 Winners /
-      Losers.  Risk view: Drawdown chart, Monthly P&L year×month
+      Losers. Risk view: Balance Drawdown chart, Monthly P&L year×month
       heatmap (YTD column footnoted — compounded monthly vs the
       Annual table's Modified Dietz), Recent Daily P&L bars.
       (Trading Activity heatmap was removed from the UI.)
@@ -1693,7 +1710,13 @@ process.
   without a corresponding update here.
 - **Transfer pairing is pre-computed**: `_pair_transfers` walks once to
   build `{id(TIN): TOUT}` so the walker doesn't care about same-day sort
-  order. Intra-group pairs (same `(account_group, symbol)` on both legs)
+  order. Candidates are indexed by canonical symbol and date; only outbound
+  rows in the preceding 0–14 days are considered. Greedy assignment preserves
+  inbound date order, then prefers relative quantity match, shortest lag,
+  and original outbound order for ties. Each outbound is used once; keep
+  tolerance and validation behavior in parity with the exhaustive reference
+  in `tests/test_transfer_pairing_index.py`. Intra-group pairs (same
+  `(account_group, symbol)` on both legs)
   are marked as `intra_group_noop` and skipped entirely — main.py adds
   then subtracts for a net-zero balance change, and we leave lots
   undisturbed.  EXCEPTION: a pair whose Transfer In carries a user
@@ -1845,14 +1868,15 @@ process.
   `analytics/header.py`, `analytics/daily_pnl.py`, `prices.option_intrinsic`).
   Intraday freshness is represented by `settled_through` and `last_fetch`, not
   by adding a second time resolution. Generated price shards stay local.
-- **Known gap: crypto is not refetched over a weekend.**
-  `_missing_ranges` runs `end = _last_trading_day(end)` for every asset
-  class, so a Saturday request walks back to Friday and Saturday's
-  crypto bar is skipped until the next weekday run (which then fetches
-  the whole Sat–Mon gap, so nothing is lost permanently — the weekend
-  just displays Friday's mark).  `_settle_horizon` is already
-  weekend-correct for crypto, so making the end-clamp class-aware is a
-  small change if weekend marks start to matter.
+- **Coverage scheduling uses the asset's calendar.** `_last_quote_day`
+  shares `_settle_class` with settlement: equities and funds clamp requests
+  to the last weekday; crypto retains Saturday and Sunday. Both
+  `_missing_ranges` and caller-forced refreshes use this helper, including
+  proxy targets. Requestable does not mean settled: the UTC-day rule for
+  crypto and ET cutoffs for equities/funds still decide whether a fetched
+  mark needs another refresh. Preserve closed-position end limits and
+  backoff. `tests/test_price_calendars.py` covers weekend cold/incremental
+  fetches, UTC settlement, mixed-asset batches, proxies, and force limits.
 - **Weekend / holiday lookup walks backward** up to 7 days. Outside that
   window, `get_price` returns None and `compute_history` silently skips
   the position (reflected in `priced_pct`). Don't "fix" this with

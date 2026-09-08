@@ -90,6 +90,19 @@ general speed claims. In parallel reviews, assign file ownership and share
 qualitative findings or independently fictional reproducers, never private
 inputs or local audit output. Review the combined diff before final validation.
 
+Use the reproducible transfer/basis/history benchmark to compare code changes:
+
+```bash
+uv run python -m tools.benchmark_transfers --cycles 250 500 1000 --symbols 1 8
+```
+
+It constructs fictional transactions and prices in temporary directories with
+network access blocked. Each cycle contributes four rows. The output reports
+median pairing and combined-walk times plus a semantic digest; matching digests
+check output agreement for that workload. This does not measure ingestion,
+network fetching, analytics, or browser rendering. Matcher changes also require
+`tests/test_transfer_pairing_index.py` and the existing lot/history parity tests.
+
 For cache persistence changes, inject failures with fictional files at
 serialization, replacement, deletion, rollback, and marker removal. Assert
 byte-for-byte preservation or intact recovery evidence, retained dirty state,

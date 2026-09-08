@@ -290,8 +290,9 @@ def _pair_transfers(txns: list[dict]) -> dict:
                       TOUTs to skip vs. treat as orphaned)
 
     Matching rule: same canonical symbol, TIN date within 0–14 days after
-    TOUT date, quantity within 0.1% relative tolerance.  Greedy
-    assignment, earliest-TIN-first, closest-TOUT-preferred.
+    TOUT date, quantity within 0.1% relative or 1e-6 absolute tolerance.
+    Greedy assignment, earliest TIN first; prefer the smallest relative
+    quantity mismatch, then shortest lag, then original outbound order.
     """
     outs = [t for t in txns if _basis_effect(t) == "transfer_out"]
     ins  = [t for t in txns if _basis_effect(t) == "transfer_in"]
@@ -300,32 +301,37 @@ def _pair_transfers(txns: list[dict]) -> dict:
     paired_touts: set[int] = set()
     used_out_ids: set[int] = set()
 
-    def _d(iso: str):
-        try:
-            return datetime.strptime(iso, "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            return None
+    # Only the matching symbol's preceding fourteen days can supply a
+    # transfer. Index dates once instead of reparsing every outbound date
+    # for every inbound, in each of the basis/history walks.
+    outs_by_symbol_date = defaultdict(lambda: defaultdict(list))
+    for index, tout in enumerate(outs):
+        tout_d = _safe_date(tout.get("date", ""))
+        if tout_d is not None:
+            day = tout_d.toordinal()
+            outs_by_symbol_date[tout.get("symbol", "")][day].append(
+                (index, tout, day))
 
     ins_sorted = sorted(ins, key=lambda t: t.get("date", ""))
     for tin in ins_sorted:
         tin_sym = tin.get("symbol", "")
         tin_qty = float(tin.get("quantity", 0) or 0)
-        tin_d   = _d(tin.get("date", ""))
+        tin_d   = _safe_date(tin.get("date", ""))
         if tin_d is None or tin_qty <= 0:
             continue
         best = None
         best_score = None
-        for tout in outs:
+        tin_day = tin_d.toordinal()
+        by_date = outs_by_symbol_date.get(tin_sym, {})
+        candidates = [entry for delta in range(15)
+                      for entry in by_date.get(tin_day - delta, ())]
+        # Keep the original outbound order: equal scores choose the first
+        # row, and quantity validation must retain its evaluation order.
+        candidates.sort(key=lambda entry: entry[0])
+        for _index, tout, tout_day in candidates:
             if id(tout) in used_out_ids:
                 continue
-            if tout.get("symbol", "") != tin_sym:
-                continue
-            tout_d = _d(tout.get("date", ""))
-            if tout_d is None:
-                continue
-            delta = (tin_d - tout_d).days
-            if delta < 0 or delta > 14:
-                continue
+            delta = tin_day - tout_day
             qp = float(tout.get("quantity", 0) or 0)
             if qp <= 0:
                 continue

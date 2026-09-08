@@ -966,10 +966,12 @@ function _buildMonthlyPnlSection() {
       </span>
     </div>
     <div class="panel">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Monthly returns table">
       <table class="monthly-pnl-table"><caption class="sr-only">Investment return for each month of each year, with a year-to-date column</caption>
         <thead><tr><th scope="col"></th>${headerCells}<th scope="col" class="num">YTD</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
+      </div>
       ${summary}
     </div>
   `;
@@ -1137,4 +1139,3 @@ function _renderAccountChip(account, active, onclickJs, label) {
   const styleAttr = (!active && color) ? ` style="color:${color};"` : '';
   return `<button class="tbtn${active ? ' active' : ''}"${styleAttr} id="chip-${_htmlEsc(encodeURIComponent(onclickJs))}" aria-pressed="${active}" onclick="${_htmlEsc(onclickJs)}">${_htmlEsc(text)}</button>`;
 }
-

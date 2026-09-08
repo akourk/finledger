@@ -18,6 +18,10 @@ code testing or measurements.
 | Transaction startup | Up to thousands of hidden rows were formatted on every page load; search text was rebuilt each keystroke. | Render the table on its first visit and cache immutable row search text. Tests cover initial deep links, repeated visits, and hidden-column search. |
 | CSV renaming | Fixed temporary filenames could collide; an I/O failure could leave inputs renamed or unavailable to the next import. | Use a unique staging directory, recover both phases, preserve every source on recovery failure, and block subsequent ingestion until recovery is resolved. `test_scanner.py` injects failures during staging, final renames, and rollback. |
 | Cache persistence | In-place writes could leave truncated JSON or mismatched prices, splits, and coverage; deletion errors discarded pending work. | Serialize the entire dirty price set before mutation, stage replacements and original backups, retire old files last, and retain dirty state on failure. A recovery manifest blocks cold loads after an interrupted save or failed rollback. `test_cache_persistence.py` and `test_io_safe.py` cover serialization, disk errors, migration, rollback, and abrupt process exit. Sector saves use the same helper separately. |
+| Drawdown meaning and dates | Raw balance declines were presented as investment risk, and a Calmar card divided investment return by cash-flow-sensitive balance drawdown. Python trailing windows also used the wall clock. | Label Balance Drawdown, disclose cash movements, sampling scope, and the lifetime size filter; remove the incompatible Calmar ratio. Anchor trailing windows to the latest data date with matching Python/JS durations. `test_drawdown_semantics.py` covers withdrawals, deposits, losses, bridges, and window agreement. |
+| Weekend crypto coverage | Ordinary and forced requests clamped crypto dates to Friday, skipping weekend marks. | Share the asset calendar with settlement classification; retain weekend dates for crypto while preserving equity/fund cutoffs, provisional marks, and closed-position limits. `test_price_calendars.py` covers UTC settlement, mixed batches, proxy targets, and forced refreshes. |
+| Transfer matching cost | Each inbound transfer scanned all outbound rows and repeatedly parsed dates, across every basis/history walk. | Index candidates by symbol and date while preserving greedy order, quantity tolerances, ties, and validation behavior. `test_transfer_pairing_index.py` compares with the exhaustive matcher across boundary cases and seeded fictional ledgers. |
+| Mobile Risk view | The monthly returns table widened the page beyond the viewport; the smoke check visited only Returns. | Contain the table in a named, keyboard-scrollable region. Browser checks now open Risk on mobile, assert viewport containment, and exercise horizontal keyboard scrolling. |
 | Test cleanup | The session isolation directory was never released. | Retain a `TemporaryDirectory` owner for process lifetime so normal interpreter shutdown cleans up the session's own files. |
 
 The rename workflow assumes a single writer, as does the rest of the pipeline.
@@ -58,21 +62,36 @@ JavaScript initialization measurement with a DOM stub, **not** a claim about
 end-to-end browser loading speed. The first transaction visit still does the
 necessary rendering work.
 
+Profiling a transfer-heavy fictional ledger established a second bottleneck:
+transfer pairing consumed about 96% of the profiled basis/history workload.
+The symbol/date index removes repeated searches outside the eligible window.
+Measured wall-clock times for five basis walks plus 144 history snapshots:
+
+| Rows | Symbols | Exhaustive matching | Indexed matching |
+| --- | --- | --- | --- |
+| 1,000 | 1 | 0.782 s | 0.062 s |
+| 2,000 | 1 | 4.732 s | 0.211 s |
+| 4,000 | 1 | 16.762 s | 0.382 s |
+| 4,000 | 8 | 3.364 s | 0.241 s |
+
+These are local single-run measurements, excluding input/cache preparation and
+network activity, not end-to-end pipeline speed claims. Every before/after
+comparison produced identical transaction annotations, holdings, all four lot
+methods, and history snapshots. The reusable
+[transfer benchmark](../tools/benchmark_transfers.py) runs the same isolated
+fictional workload, reports median timings, and emits a semantic digest for
+comparison across future changes. Dense transfers within one date window still
+require candidate comparisons; this is not a claim of universal linear scaling.
+
 ## Further work, in priority order
 
-1. **Clarify drawdown semantics.** Some drawdown views use raw portfolio-value
-   declines, so external withdrawals contribute to the reported drawdown.
-   Decide whether each view describes balance declines or investment
-   performance. Add a withdrawal-only fixture before changing labels or math.
-2. **Market calendars by asset class.** The existing weekend crypto limitation
-   remains: coverage scheduling clamps through the weekday calendar. Any fix
-   must respect crypto settlement, equity close timing, and provisional marks;
-   test those independently of live quotes.
-3. **Profile repeated walks before broader optimization.** Transfer pairing and
-   historical lot processing are plausible scaling costs, but this review did
-   not establish an end-to-end bottleneck. Measure larger fictional ledgers
-   before introducing indexes, checkpoints, or persistent incremental state.
-4. **Reduce duplicated financial state transitions gradually.** The lot walkers
+1. **Account-filter transfer boundaries.** External cash-flow annotations describe
+   the whole portfolio. A tracked transfer between account groups is internal
+   at that scope, but crosses the boundary of a single-account return view.
+   Add explicit fixtures and account-boundary attribution before claiming those
+   filtered returns neutralize all transfers. Do not reinterpret every unmatched
+   transfer as external; asset-unit transfer legs need their existing rules.
+2. **Reduce duplicated financial state transitions gradually.** The lot walkers
    already share substantial helpers and strong parity coverage. Extract one
    verified transition at a time. A framework rewrite or database migration has
    no demonstrated benefit for the current workload.
@@ -98,6 +117,12 @@ screenshots, and their provenance records now mark them reviewed. Documentation
 checks validate skill metadata and local links and anchors; the bundled skill
 validator could not run without PyYAML, so dependency-free structural checks
 were used instead.
+
+The drawdown/calendar/performance follow-up passed **1,667 tests**, with the
+same Windows symlink skip. Chrome smoke checks passed across all **10 tabs**,
+and axe checks passed across **12 states**. The updated Overview and Performance
+screenshots were visually approved; Holdings and Tax remained byte-for-byte
+identical to their previously approved images.
 
 An initial demo failure was traced to a working-copy sample using CRLF despite
 the repository's LF attributes. Its parsed contents matched the generator;

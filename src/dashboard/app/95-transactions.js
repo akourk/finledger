@@ -58,9 +58,8 @@ function renderStats() {
   const gainCls = (v) => v == null ? '' : (v >= 0 ? 'positive' : 'negative');
   const lifeTag = isAsOfLatest() ? '' : ' <span class="sub">lifetime</span>';
 
-  // Current drawdown — peak-to-trough decline as of latest snapshot.
-  // Shown only when latest is in view (the as-of snapshot is what most
-  // users default to).  0 means "at all-time high".
+  // Balance drawdown includes cash movements. Latest uses the daily
+  // exported statistic; historical dates use snapshots through that date.
   const snap = getAsOfSnapshot();
   const selectedDate = snap?.date || asOfDate;
   const selectedHistory = history.filter(h => h.date <= selectedDate);
@@ -95,11 +94,17 @@ function renderStats() {
     { label: 'Realized P&L', value: fmtSigned(realized) + lifeTag, cls: gainCls(realized) },
     { label: 'Net Contributed', value: fmtMoney(netContrib) },
     { label: 'Income', value: fmtMoney(income) + lifeTag },
-    { label: isAsOfLatest() ? 'Current Drawdown' : 'Drawdown at selected date', value: ddDisplay, cls: ddCls },
+    {
+      label: isAsOfLatest() ? 'Current Balance Drawdown' : 'Balance Drawdown at selected date',
+      value: ddDisplay, cls: ddCls,
+      title: 'Whole-portfolio balance decline, including deposits and withdrawals. '
+        + (isAsOfLatest() && ANALYTICS.drawdown?.resolution === 'daily'
+          ? 'Measured against daily balance peaks.' : 'Measured against history snapshot peaks.'),
+    },
   ];
   el.innerHTML = cards.map(c => {
     const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
-    return `<div class="${cls}"><div class="label">${_htmlEsc(c.label)}</div><div class="value">${c.value}</div></div>`;
+    return `<div class="${cls}"${c.title ? ` title="${_htmlEsc(c.title)}"` : ''}><div class="label">${_htmlEsc(c.label)}</div><div class="value">${c.value}</div></div>`;
   }).join('');
 }
 renderStats();

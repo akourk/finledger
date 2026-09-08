@@ -1,4 +1,4 @@
-"""Drawdown analytics — peak-to-trough decline series and stats.
+"""Balance drawdown — peak-to-trough portfolio balance declines.
 
 Drawdown at time t = (current_value − running_max) / running_max.  Always
 ≤ 0.  The running max only moves up; whenever the portfolio sets a new
@@ -12,26 +12,26 @@ Returned figures:
 - ``current_drawdown_pct``:  drawdown right now (0 if at all-time high)
 - ``windowed``:      per-trailing-window max drawdown (1y/3y/5y/lifetime)
 
-Useful because returns alone hide risk: a 12% annualized return that
-went through a 40% drawdown is psychologically different from a
-steady 12% with no drawdown >5%.
+These are balance changes, including external cash movements. A withdrawal
+can deepen a decline and a contribution can restore the balance peak without
+recovering an investment loss. Do not use this series as return drawdown or
+as the denominator of a Calmar ratio.
 """
 
 from __future__ import annotations
 
-from .. import clock
 from datetime import date, datetime, timedelta
 
 
-_WINDOW_MONTHS = {
+_WINDOW_DAYS = {
     "lifetime": None,
-    "5y":       60,
-    "3y":       36,
-    "2y":       24,
-    "1y":       12,
-    "6mo":       6,
-    "3mo":       3,
-    "30day":     1,
+    "5y":       5 * 365,
+    "3y":       3 * 365,
+    "2y":       2 * 365,
+    "1y":       365,
+    "6mo":      183,
+    "3mo":      91,
+    "30day":    30,
     "ytd":       "ytd",
 }
 
@@ -76,16 +76,10 @@ def _walk_drawdown(points: list[tuple[str, float]]) -> dict:
     """Core drawdown walk over ``[(date, value), ...]`` (values already
     bridge-adjusted).  Returns the per-point series plus headline stats.
 
-    Max-drawdown computation filters out periods where the running
-    peak is below 5% of all-time peak — drawdowns that ran on a
-    portfolio under that size are dominated by early-portfolio
-    volatility (often crypto roller-coasters on $X0k of capital)
-    and aren't comparable to the current portfolio's risk profile.
-    A $19k → $1.7k early crash is mathematically -91% but treating
-    that as the "max drawdown" of a $400k+ portfolio is misleading
-    — Calmar built on it makes the portfolio look uninvestable when
-    today's drawdown risk is more like -10% to -20%.  The full
-    series still flows to the chart so the shape stays visible.
+    The lifetime headline retains the established size filter: periods
+    whose running balance peak is below 5% of the all-time balance peak
+    are excluded. The chart and current decline retain every observation.
+    Consumers must disclose this filter; it is not a risk adjustment.
     """
     atl_peak = max(v for _, v in points) or 1.0
     significant_threshold = atl_peak * 0.05
@@ -122,11 +116,8 @@ def _walk_drawdown(points: list[tuple[str, float]]) -> dict:
                 current_dd_trough = v
                 current_dd_trough_date = d
 
-        # Capture the largest drawdown observed — but only if the
-        # window peak is above the small-base threshold.  Otherwise
-        # an early-portfolio crash from $19k → $1.7k dominates as
-        # "max drawdown" forever despite the user having since grown
-        # the portfolio 25x.
+        # The lifetime headline excludes declines from small balance
+        # peaks; the full series below retains those observations.
         if dd_pct < max_dd and current_dd_peak >= significant_threshold:
             max_dd = dd_pct
             max_dd_peak_date = current_dd_peak_date
@@ -230,13 +221,18 @@ def compute_drawdown(history: list[dict],
     # the slice itself rules out early-portfolio noise.
     pseudo = [{"date": d, "v": v} for d, v in stat_points]
     val_fn = lambda h: h["v"]
-    today = clock.now(fallback=datetime.now).date()
     latest_iso = stat_points[-1][0]
+    # Match the browser's PERF_WINDOW_DAYS and data-date anchor. Reopening
+    # an older export must not silently move its trailing windows forward.
+    try:
+        latest_date = date.fromisoformat(latest_iso)
+    except (ValueError, TypeError):
+        latest_date = None
     latest_year = latest_iso[:4] if latest_iso else ""
     max_dd = stats["max_drawdown"]
     max_dd_window = stats["max_drawdown_window"]
     windowed: dict[str, dict] = {}
-    for label, spec in _WINDOW_MONTHS.items():
+    for label, spec in _WINDOW_DAYS.items():
         if spec is None:
             windowed[label] = {
                 "magnitude_pct": round(max_dd * 100, 2) if max_dd < 0 else 0.0,
@@ -245,10 +241,13 @@ def compute_drawdown(history: list[dict],
                 "n_snapshots":   len(pseudo),
             }
             continue
+        if latest_date is None:
+            windowed[label] = _max_dd_in_window([], val_fn)
+            continue
         if spec == "ytd":
             cutoff = f"{latest_year}-01-01" if latest_year else ""
         else:
-            cutoff = (today - timedelta(days=int(int(spec) * 30.5))).isoformat()
+            cutoff = (latest_date - timedelta(days=spec)).isoformat()
         slice_ = [h for h in pseudo if h["date"] >= cutoff]
         windowed[label] = _max_dd_in_window(slice_, val_fn)
 
