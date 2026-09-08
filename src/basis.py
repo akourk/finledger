@@ -21,14 +21,13 @@ Per-holding annotations (merged by main.py):
 
 Key invariants
 --------------
-- A same-day Transfer Out is processed before its paired Transfer In
-  under basis.py's own sort, regardless of main.py's sort.  This lets the
-  transfer pool have content to hand off to the inbound leg.
-- Same-(account_group, symbol) transfers (Voya 401K → Schwab Rollover IRA,
-  Coinbase ↔ Coinbase Pro) don't need pairing — the FIFO queue is keyed
-  on account_group, so basis sails through.  Cross-group transfers
-  (USAA Roth → Schwab Roth) DO need pairing.  The USAA reconciler
-  synthesizes same-date same-qty legs so those pair trivially.
+- Canonical account ordering can place a same-day arrival before departure.
+  That arrival eagerly consumes the source lots, and both legs retain their
+  basis annotations when the departure later walks.
+- Verified same-(account_group, symbol) transfers in equal share units are
+  lot no-ops. Cross-group transfers carry the actual consumed lots; a verified
+  split conversion changes their quantities and per-share basis together.
+  Unverified quantity differences require reconciliation, not silent scaling.
 - Dollars-for-basis: `amount` when >0 (includes fees), else `qty × price`
   with the option contract multiplier.
   Matches conventional tax-lot basis.
@@ -36,6 +35,8 @@ Key invariants
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+from bisect import bisect_right
+import math
 
 # ---------------------------------------------------------------------------
 # Action → basis effect classification
@@ -283,29 +284,70 @@ def _sort_key(t: dict) -> tuple:
 # ---------------------------------------------------------------------------
 
 def _pair_transfers(txns: list[dict]) -> dict:
-    """Match Transfer Out txns with Transfer In txns.
+    """Verify transfers in compatible share units; diagnose remaining candidates.
 
-    Returns a dict with three keys:
-      "tin_to_tout":  id(TIN) -> TOUT txn (the Transfer Out that supplies
-                      basis for this Transfer In)
-      "intra_group":  set of id(txn)s for BOTH legs of any intra-group
-                      transfer (same (account_group, symbol) on both sides
-                      — these are no-ops for FIFO since they stay in the
-                      same lot queue; skipping avoids double-counting)
-      "paired_touts": set of id(TOUT) that are paired (so we know which
-                      TOUTs to skip vs. treat as orphaned)
+    Match the same canonical symbol within 0–14 days. Quantities must agree
+    in the cache's common split-adjusted units, apart from floating-point
+    noise. A quantity difference does not establish rounding or fee treatment.
+    Greedy assignment prefers quantity agreement, shortest lag, then original
+    outbound order. Only verified pairs consume an outbound candidate.
 
-    Matching rule: same canonical symbol, TIN date within 0–14 days after
-    TOUT date, quantity within 0.1% relative or 1e-6 absolute tolerance.
-    Greedy assignment, earliest TIN first; prefer the smallest relative
-    quantity mismatch, then shortest lag, then original outbound order.
+    Return ``tin_to_tout``, ``paired_touts`` and ordinary ``intra_group`` no-op
+    ids, plus ``share_ratios`` (arrival id -> departure/arrival split factor).
+    ``issues`` describes the best unused candidate for each unverified arrival;
+    ``unverified_tins`` identifies those arrivals without publishing object ids.
+    Changed-unit same-group moves and destination Split rows in the interval
+    need explicit reconciliation before their balance effects can be inferred.
     """
+    from .prices import split_factor_since
+
     outs = [t for t in txns if _basis_effect(t) == "transfer_out"]
     ins  = [t for t in txns if _basis_effect(t) == "transfer_in"]
     tin_to_tout: dict[int, dict] = {}
     intra_group: set[int] = set()
     paired_touts: set[int] = set()
-    used_out_ids: set[int] = set()
+    share_ratios: dict[int, float] = {}
+    factors: dict[tuple, float] = {}
+
+    def factor(symbol, day):
+        key = (symbol, day)
+        if key not in factors:
+            factors[key] = split_factor_since(
+                symbol, datetime.fromordinal(day).date().isoformat())
+        return factors[key]
+
+    split_days = defaultdict(list)
+    for txn in txns:
+        if _basis_effect(txn) == "split":
+            when = _safe_date(txn.get("date", ""))
+            if when is not None:
+                split_days[(txn.get("account_group"), txn.get("symbol"))].append(
+                    when.toordinal())
+    for days in split_days.values():
+        days.sort()
+
+    def compare(tout, tin, qp, tin_qty, out_day, in_day):
+        """Return common-unit relative mismatch, ratio, and rejection reason."""
+        f_out, f_in = (factor(tin.get("symbol", ""), day)
+                       for day in (out_day, in_day))
+        if not all(math.isfinite(f) and f > 0 for f in (f_out, f_in)):
+            return math.inf, None, "share_unit_mismatch"
+        q_out, q_in = qp * f_out, tin_qty * f_in
+        if not all(math.isfinite(q) and q > 0 for q in (q_out, q_in)):
+            return math.inf, None, "share_unit_mismatch"
+        ratio = f_out / f_in
+        if not math.isfinite(ratio) or ratio <= 0:
+            return math.inf, None, "share_unit_mismatch"
+        rel = abs(q_out - q_in) / max(q_out, q_in)
+        if not math.isclose(q_out, q_in, rel_tol=1e-12, abs_tol=0.0):
+            reason = "quantity_mismatch" if f_out == f_in else "share_unit_mismatch"
+            return rel, ratio, reason
+        days = split_days.get((tin.get("account_group"), tin.get("symbol")), ())
+        if (bisect_right(days, out_day) < bisect_right(days, in_day)
+                or (f_out != f_in
+                    and tout.get("account_group") == tin.get("account_group"))):
+            return rel, ratio, "unsupported_split_transfer"
+        return rel, ratio, None
 
     # Only the matching symbol's preceding fourteen days can supply a
     # transfer. Index dates once instead of reparsing every outbound date
@@ -318,15 +360,17 @@ def _pair_transfers(txns: list[dict]) -> dict:
             outs_by_symbol_date[tout.get("symbol", "")][day].append(
                 (index, tout, day))
 
+    pending = []
     ins_sorted = sorted(ins, key=lambda t: t.get("date", ""))
     for tin in ins_sorted:
         tin_sym = tin.get("symbol", "")
         tin_qty = float(tin.get("quantity", 0) or 0)
         tin_d   = _safe_date(tin.get("date", ""))
-        if tin_d is None or tin_qty <= 0:
+        if tin_d is None or not math.isfinite(tin_qty) or tin_qty <= 0:
             continue
         best = None
         best_score = None
+        best_ratio = None
         tin_day = tin_d.toordinal()
         by_date = outs_by_symbol_date.get(tin_sym, {})
         candidates = [entry for delta in range(15)
@@ -334,24 +378,29 @@ def _pair_transfers(txns: list[dict]) -> dict:
         # Keep the original outbound order: equal scores choose the first
         # row, and quantity validation must retain its evaluation order.
         candidates.sort(key=lambda entry: entry[0])
+        rejected = []
         for _index, tout, tout_day in candidates:
-            if id(tout) in used_out_ids:
+            if id(tout) in paired_touts:
                 continue
             delta = tin_day - tout_day
             qp = float(tout.get("quantity", 0) or 0)
-            if qp <= 0:
+            if not math.isfinite(qp) or qp <= 0:
                 continue
-            rel = abs(tin_qty - qp) / max(qp, 1e-9)
-            if rel > 0.001 and abs(tin_qty - qp) > 1e-6:
+            rel, ratio, issue = compare(tout, tin, qp, tin_qty, tout_day, tin_day)
+            if issue is not None:
+                raw_delta = abs(tin_qty - qp)
+                near = raw_delta <= qp * 0.001 or raw_delta <= 1e-6
+                rejected.append(((not near, rel, delta, _index), tout, issue))
                 continue
             score = (rel, delta)
             if best_score is None or score < best_score:
                 best = tout
                 best_score = score
+                best_ratio = ratio
         if best is not None:
-            used_out_ids.add(id(best))
             paired_touts.add(id(best))
             tin_to_tout[id(tin)] = best
+            share_ratios[id(tin)] = best_ratio
             # Intra-group check: same (account_group, symbol) on both
             # legs → stays in the same lot queue, so both should be
             # skipped.  (Main.py's balance simply adds then subtracts,
@@ -360,11 +409,32 @@ def _pair_transfers(txns: list[dict]) -> dict:
                     and best.get("symbol") == tin.get("symbol")):
                 intra_group.add(id(tin))
                 intra_group.add(id(best))
+        else:
+            pending.append((tin, rejected))
+
+    issues = []
+    unverified_tins = set()
+    for tin, candidates in pending:
+        available = [entry for entry in candidates if id(entry[1]) not in paired_touts]
+        if not available:
+            continue
+        _score, tout, reason = min(available, key=lambda entry: entry[0])
+        issues.append({
+            "source_group": tout.get("account_group", ""),
+            "destination_group": tin.get("account_group", ""),
+            "start_date": tout.get("date", ""),
+            "end_date": tin.get("date", ""),
+            "symbol": tin.get("symbol", ""), "reason": reason,
+        })
+        unverified_tins.add(id(tin))
 
     return {
         "tin_to_tout":  tin_to_tout,
         "intra_group":  intra_group,
         "paired_touts": paired_touts,
+        "share_ratios": share_ratios,
+        "issues": issues,
+        "unverified_tins": unverified_tins,
     }
 
 
@@ -1065,6 +1135,25 @@ def _push_carried_lots(state: dict, method: str, key: tuple, carried: list[dict]
     return total
 
 
+def _push_transfer_lots(state: dict, method: str, key: tuple,
+                        carried: list[dict], share_ratio: float) -> float:
+    """Receive the reconstructed source lots in verified destination units.
+
+    Scale actual consumed shares, never the incoming row's entire quantity:
+    missing source history must not inflate the known lot inventory. Acquired
+    dates, origins, and total basis survive the conversion under every method.
+    Both the annotated and historical walkers use this transition.
+    """
+    if not math.isfinite(share_ratio) or share_ratio <= 0:
+        raise ValueError("Transfer share ratio must be finite and positive")
+    if share_ratio == 1.0:
+        return _push_carried_lots(state, method, key, carried)
+    converted = [{**lot, "qty": lot["qty"] * share_ratio,
+                  "basis_per_share": lot["basis_per_share"] / share_ratio}
+                 for lot in carried]
+    return _push_carried_lots(state, method, key, converted)
+
+
 def reserved_for(disposal_lots: dict | None, sym_families: dict,
                  acct: str, date: str, sym: str) -> dict[str, float] | None:
     """Acquired-date reservation for UNDIRECTED lot consumption.
@@ -1192,19 +1281,20 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
 
     # Pre-pair transfers across accounts.  Each Transfer In either has a
     # matching Transfer Out (cross-group — basis carries), belongs to an
-    # intra-group pair (no-op in the lot queue since both legs share the
-    # same (account_group, symbol) key), or is unpaired (zero basis).
+    # intra-group pair (no-op in equal share units), or is unpaired
+    # (FMV/explicit override, without inferred basis continuity).
     pairings = _pair_transfers(txns_sorted)
     tin_to_tout:  dict[int, dict] = pairings["tin_to_tout"]
     intra_group:  set[int]        = pairings["intra_group"]
     paired_touts: set[int]        = pairings["paired_touts"]
+    share_ratios = pairings["share_ratios"]
 
     # Lots stashed by a processed Transfer Out, awaiting pickup by its
     # paired Transfer In.
     stashed_tout_lots: dict[int, list[dict]] = {}
-    # Transfer Out ids whose basis was already moved eagerly by a same-
-    # day Transfer In that walked first — skip them when we reach them.
-    tout_handled: set[int] = set()
+    # Transfer Out ids and basis already moved by an earlier same-day
+    # arrival. Skip repeated consumption, retaining the source annotation.
+    tout_handled: dict[int, float] = {}
 
     # Wrap/unwrap groups (basis-carrying conversions), processed
     # atomically the first time any leg is met.
@@ -1384,6 +1474,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
             if id(t) in tout_handled:
                 # Already moved eagerly by the paired TIN — skip.
                 final_effect = "transfer_out_eager_consumed"
+                cost_basis_value = tout_handled[id(t)]
             else:
                 basis_removed, carried = _consume_from_key(state, _method_for(acct), key, qty)
                 if id(t) in paired_touts:
@@ -1413,7 +1504,8 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 cost_basis_value = basis
             elif id(paired) in stashed_tout_lots:
                 carried = stashed_tout_lots.pop(id(paired))
-                cost_basis_value = _push_carried_lots(state, method, key, carried)
+                cost_basis_value = _push_transfer_lots(
+                    state, method, key, carried, share_ratios[id(t)])
             else:
                 # Paired TOUT hasn't walked yet (same-day, alphabetically
                 # later account_group).  Eager-consume from source now
@@ -1422,8 +1514,9 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                 qty_tout = float(paired.get("quantity", 0) or 0)
                 _bsum, carried = _consume_from_key(
                     state, _method_for(src_key[0]), src_key, qty_tout)
-                cost_basis_value = _push_carried_lots(state, method, key, carried)
-                tout_handled.add(id(paired))
+                cost_basis_value = _push_transfer_lots(
+                    state, method, key, carried, share_ratios[id(t)])
+                tout_handled[id(paired)] = _bsum
 
         elif effect in ("wrap_out", "wrap_in"):
             # Basis-carrying conversion (e.g. ETH↔CBETH).  Process the whole
@@ -1670,6 +1763,7 @@ def derive_basis_by_key_from_txns(txns: list[dict]) -> dict[tuple[str, str], flo
     - ``transfer_in``          → +cost_basis  (paired cross-group, basis carries from source)
     - ``transfer_in_unpaired`` → +cost_basis  (cb is 0; arrival from external wallet)
     - ``transfer_out``         → -cost_basis  (paired cross-group OR unpaired send to external)
+    - ``transfer_out_eager_consumed`` → -cost_basis (source lots moved by the earlier arrival)
     - ``rebase_in``            → +cost_basis  (intra-group pair with a user basis
                                                override: the new customer-provided basis)
     - ``rebase_out``           → -cost_basis  (its counter-leg: the carried basis consumed)
@@ -1705,7 +1799,8 @@ def derive_basis_by_key_from_txns(txns: list[dict]) -> dict[tuple[str, str], flo
                   "wrap_in", "wrap_in_unpaired", "rebase_in",
                   "rebase_neutral"):
             by_key[key] = by_key.get(key, 0.0) + float(cb)
-        elif be in ("remove", "transfer_out", "wrap_out", "wrap_out_unpaired",
+        elif be in ("remove", "transfer_out", "transfer_out_eager_consumed",
+                    "wrap_out", "wrap_out_unpaired",
                     "rebase_out", "roc"):
             by_key[key] = by_key.get(key, 0.0) - float(cb)
         # intra_group_noop / split / ignore / wrap_carry_noop / roc_noop:

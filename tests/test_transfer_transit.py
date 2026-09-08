@@ -326,23 +326,18 @@ def test_transit_does_not_expand_existing_pair_eligibility(market, case):
     assert all(not h.get("in_transit") for h in history)
 
 
-@pytest.mark.parametrize("issue", ["unpriced", "split_during_transfer"])
-def test_unavailable_transit_value_is_explicit_and_warns(market, issue):
+def test_unavailable_transit_value_is_explicit_and_warns(market):
     from src.analytics.data_health import compute_data_health
     from src.config import CACHE_DIR
     from src.return_flows import scope_snapshot_value
 
     rows = _case(price=0)
-    if issue == "unpriced":
-        market["quotes"].clear()
-    else:
-        market["split"] = lambda day: 2.0 if day < "2024-03-01" else 1.0
+    market["quotes"].clear()
     _, history = _walk(rows)
-    target = "2024-03-01" if issue == "split_during_transfer" else "2024-02-29"
-    h = next(h for h in history if h["date"] == target)
+    h = next(h for h in history if h["date"] == "2024-02-29")
     transit, = h["in_transit"]
     assert transit["value"] is None
-    assert transit["valuation_issue"] == issue
+    assert transit["valuation_issue"] == "unpriced"
     assert scope_snapshot_value(h) == h["total"]
     json.dumps(history, allow_nan=False)
     warnings = compute_data_health(rows, [], history, {}, CACHE_DIR, parse_report=[])
@@ -383,7 +378,7 @@ def test_export_reload_reconstructs_transit_and_whole_portfolio_analytics(
 
 
 @pytest.mark.parametrize("split_on_arrival", [False, True])
-def test_arrival_share_units_warn_without_rewriting_prior_transit_marks(market, split_on_arrival):
+def test_incompatible_arrival_units_warn_without_claiming_transit(market, split_on_arrival):
     from src import analytics
     from src.history import compute_daily_totals
     from src.return_flows import scope_snapshot_value
@@ -397,13 +392,16 @@ def test_arrival_share_units_warn_without_rewriting_prior_transit_marks(market, 
     _, history = _walk(rows)
     issues = []
     daily = dict(compute_daily_totals(rows, transit_issues=issues))
-    assert daily["2024-03-04"] == 1000
+    assert daily["2024-03-04"] == (0 if split_on_arrival else 1000)
     assert daily["2024-03-05"] == (500 if split_on_arrival else 1000)
-    assert not issues  # All marks within the transit interval are supported.
+    assert not issues  # Unverified transfers never enter the transit valuation path.
     prior = next(h for h in history if h["date"] == "2024-03-04")
-    assert scope_snapshot_value(prior) == 1000
-    assert prior["in_transit"][0]["value"] == 1000
-    assert "valuation_issue" not in prior["in_transit"][0]
+    assert scope_snapshot_value(prior) == (0 if split_on_arrival else 1000)
+    if split_on_arrival:
+        assert not prior.get("in_transit")
+    else:
+        assert prior["in_transit"][0]["value"] == 1000
+        assert "valuation_issue" not in prior["in_transit"][0]
 
     holdings = [{**p, "account_type": "Taxable", "sector": "Other"}
                 for p in history[-1]["positions"]]
@@ -419,7 +417,7 @@ def test_arrival_share_units_warn_without_rewriting_prior_transit_marks(market, 
         assert warning["count"] == 1
         assert all(text in warning["details"][0] for text in (
             "2024-02-27", "2024-03-05", SOURCE, DESTINATION, SYMBOL))
-        assert actual["drawdown"]["max_drawdown"] == -0.5
+        assert actual["drawdown"]["max_drawdown"] == -1
 
 
 def test_daily_only_price_gap_warns_when_snapshot_and_transfer_marks_are_priced(

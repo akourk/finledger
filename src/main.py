@@ -196,14 +196,100 @@ def _reconcile_apex_conversions(txns: list[dict]) -> list[dict]:
     return txns
 
 
+def _build_basis_methods(txns, last_prices, holdings_by_account):
+    """Rebuild all comparison walks from the same finalized evidence."""
+    method_states = compute_basis_all_methods(txns)
+    basis_methods: dict[str, dict] = {}
+    for m, st in method_states.items():
+        rows = state_to_holdings(st, m)
+        # Per-holding unrealized using today's cache price
+        from .config import contract_multiplier as _cmult
+        for r in rows:
+            px = last_prices.get(r["symbol"], 0.0)
+            value = (round(r["quantity"] * px * _cmult(r["symbol"]), 2)
+                     if px else None)
+            r["price"] = round(px, 2)
+            r["value"] = value
+            r["account_type"] = ACCOUNT_TYPES.get(r["account_group"], "Taxable")
+            r["unrealized_gain"] = (round(value - r["cost_basis"], 2)
+                                    if value is not None else None)
+        # Sum only the positions that have a known value; count the ones
+        # we couldn't price so the dashboard can note it.
+        from .pipeline_stages import (
+            totals_by_type_from_rows, totals_from_rows,
+        )
+        basis_methods[m] = {
+            "holdings":        rows,
+            "totals":          totals_from_rows(rows, st["realized_total"]),
+            "totals_by_type":  totals_by_type_from_rows(rows),
+        }
+
+    from .pipeline_stages import fold_cash_into_basis_methods
+    fold_cash_into_basis_methods(basis_methods, holdings_by_account)
+
+    return basis_methods
+
+
+def _current_transaction_prices(txns, target):
+    """Resolve the latest known transaction quotes in target-date share units."""
+    from .basis import _sort_key
+    from .valuation import rebase_transaction_prices
+
+    prices, quote_dates = {}, {}
+    for txn in sorted(txns, key=_sort_key):
+        day = txn.get("date", "")
+        price = float(txn.get("price", 0) or 0)
+        symbol = txn.get("symbol", "")
+        if symbol and day and day <= target and price > 0:
+            prices[symbol] = price
+            quote_dates[symbol] = day
+    return rebase_transaction_prices(prices, quote_dates, target)
+
+
+def _refresh_split_evidence(txns, *, force=False):
+    """Revalidate split evidence and backfill only histories whose units changed.
+
+    The weekly throttle still applies. A newly learned or corrected split
+    history can change transfer matching, and corrected histories invalidate
+    existing market prices; finish those requests before any lot walk.
+    """
+    from .config import BENCHMARK_SYMBOLS
+    from .pipeline_stages import compute_position_endings
+    from .prices import _load_splits, _proxy_entry
+
+    endings, trivial = compute_position_endings(txns)
+    symbols = {t["symbol"] for t in txns if t.get("symbol")} - trivial
+    symbols.update(BENCHMARK_SYMBOLS)
+    symbols.update(option_underlyings(symbols))
+    for symbol in BENCHMARK_SYMBOLS:
+        endings.pop(symbol, None)
+
+    targets = {}
+    for symbol in symbols:
+        entry = _proxy_entry(symbol)
+        targets[symbol] = entry[0] if entry and entry[1] == "direct" else symbol
+    before = {target: list(_load_splits().get(target, []))
+              for target in targets.values()}
+    revalidate_stale_caches(sorted(symbols), force=force)
+    after = _load_splits()
+    changed = {symbol for symbol, target in targets.items()
+               if before[target] != after.get(target, [])}
+    earliest = min((t["date"] for t in txns if t.get("date")), default="")
+    if changed and earliest:
+        ensure_coverage(sorted(changed), earliest,
+                        now(fallback=datetime.now).date().isoformat(),
+                        symbol_end_overrides=endings)
+
+
 def _refresh_prices_only(args) -> None:
     """Fast path: re-pull today's prices and regenerate the dashboard
     without re-processing CSVs.
 
-    Loads the previously-exported ``transactions.json``, re-walks basis
-    over those rows, then runs the price-fetch + holdings rebuild +
-    history + analytics + export pipeline.  Saves ~2-3 seconds vs the
-    full pipeline by skipping CSV scan / parse / dedupe / normalize.
+    Loads the previously exported transactions, finalizes split evidence
+    and prices, then rebuilds annotated/comparison basis, holdings, history,
+    analytics, and output. Skips CSV scan / parse / dedupe / normalize.
+    Split revalidation retains its weekly throttle; changed split histories
+    receive the historical backfill needed to restore compatible price units.
 
     **Speed only.**  This used to be the one path that re-pulled a
     price the cache already claimed to cover, which made a speed flag
@@ -216,15 +302,16 @@ def _refresh_prices_only(args) -> None:
     same dashboard layout — so consumers don't need to special-case
     "this came from refresh mode".  The only thing that changes is
     the displayed prices and any figures derived from them
-    (current value, unrealized P&L, today's snapshot, history's
-    final point, basis_methods totals).
+    (current value, unrealized P&L, snapshots, basis-method totals).
+    New split evidence can also correct transfer matching and carried basis;
+    every walk uses the same finalized evidence for that run.
     """
     import json as _json
     from collections import defaultdict
     from pathlib import Path
 
     from .pipeline_stages import (
-        build_basis_methods_totals, build_holdings, compute_cash_principal,
+        build_holdings, compute_cash_principal,
         restore_ingest_order, walk_balances,
     )
 
@@ -295,6 +382,31 @@ def _refresh_prices_only(args) -> None:
     # see main()'s sequence).
     walked, balances = walk_balances(txns)
 
+    # Held symbols across all account groups (for the price refresh).
+    final_bal: dict[str, float] = defaultdict(float)
+    for (_, sym), q in balances.items():
+        final_bal[sym] += q
+    held_symbols = sorted({s for s, q in final_bal.items() if abs(q) > 1e-9})
+
+    # Refresh split evidence before basis/override matching. Only changed
+    # split histories need historical backfill; ordinary refreshes retain
+    # the existing batched latest-price request.
+    ensure_proxy_anchors(txns, verbose=False)
+    _refresh_split_evidence(txns, force=getattr(args, "refresh_caches", False))
+
+    # Refresh today's close for held + benchmark symbols via a single
+    # batched yfinance call (one HTTP roundtrip for ~150 symbols, ~3s
+    # vs ~30s individually). Unchanged histories retain the prior full
+    # pipeline's coverage.
+    from .config import BENCHMARK_SYMBOLS as _BENCHMARK_SYMBOLS
+    # Option underlyings ride along so the intrinsic-value floor below
+    # has a fresh underlying close to read.
+    refresh_set = sorted(set(held_symbols) | set(_BENCHMARK_SYMBOLS)
+                         | option_underlyings(held_symbols))
+    print(f"Refreshing latest close for {len(refresh_set)} "
+          f"held + benchmark symbol(s) (batched)...")
+    fetch_latest_close_batch(refresh_set)
+
     # Stamp user-supplied cost-basis overrides and broker-reported lot
     # data onto the loaded txns.  The exported JSON strips the stamps,
     # so they must be re-applied before anything walks lots — the basis
@@ -332,34 +444,9 @@ def _refresh_prices_only(args) -> None:
     for row in state_to_holdings(fifo_state, "fifo"):
         fifo_basis_by_key[(row["account_group"], row["symbol"])] = row["cost_basis"]
 
-    # Held symbols across all account groups (for the price refresh).
-    final_bal: dict[str, float] = defaultdict(float)
-    for (_, sym), q in balances.items():
-        final_bal[sym] += q
-    held_symbols = sorted({s for s, q in final_bal.items() if abs(q) > 1e-9})
-
-    # Refresh today's close for held + benchmark symbols via a single
-    # batched yfinance call (one HTTP roundtrip for ~150 symbols, ~3s
-    # vs ~30s individually).  Historical backfill is NOT re-run —
-    # refresh-prices mode assumes the prior full pipeline already
-    # filled in the historical cache.
-    from .config import BENCHMARK_SYMBOLS as _BENCHMARK_SYMBOLS
-    # Option underlyings ride along so the intrinsic-value floor below
-    # has a fresh underlying close to read.
-    refresh_set = sorted(set(held_symbols) | set(_BENCHMARK_SYMBOLS)
-                         | option_underlyings(held_symbols))
-    print(f"Refreshing latest close for {len(refresh_set)} "
-          f"held + benchmark symbol(s) (batched)...")
-    ensure_proxy_anchors(txns, verbose=False)
-    fetch_latest_close_batch(refresh_set)
-
     # Build last_prices: txn-fallback + cache lookup at today's date.
     today_str = now(fallback=datetime.now).date().isoformat()
-    last_prices: dict[str, float] = {}
-    for txn in txns:
-        price = float(txn.get("price", 0) or 0)
-        if price > 0:
-            last_prices[txn.get("symbol", "")] = price
+    last_prices = _current_transaction_prices(txns, today_str)
     for sym in held_symbols:
         cached = get_price(sym, today_str)
         if cached is not None:
@@ -391,22 +478,9 @@ def _refresh_prices_only(args) -> None:
     enrich_holdings(holdings, verbose=False)
     enrich_holdings(holdings_by_account, verbose=False)
 
-    # Stage: rebuild basis_methods totals from per-method holdings (with
-    # fresh prices) + fold cash.  Mirrors the full pipeline exactly.
-    from .config import contract_multiplier as _cmult
-    basis_methods = data.get("basis_methods", {}) or {}
-    for m, block in basis_methods.items():
-        for r in block.get("holdings", []):
-            px = last_prices.get(r.get("symbol", ""), 0.0)
-            r["price"] = round(px, 2)
-            r["value"] = (round(r["quantity"] * px * _cmult(r.get("symbol", "")), 2)
-                          if px else None)
-            r["unrealized_gain"] = (
-                round(r["value"] - r["cost_basis"], 2)
-                if (r.get("value") is not None and r.get("cost_basis") is not None) else None
-            )
-            r["account_type"] = ACCOUNT_TYPES.get(r.get("account_group", ""), "Taxable")
-    build_basis_methods_totals(basis_methods, holdings_by_account)
+    # Stored comparison quantities and basis may predate corrected split
+    # evidence; repricing those rows cannot repair their lot attribution.
+    basis_methods = _build_basis_methods(txns, last_prices, holdings_by_account)
 
     cash = data.get("cash_summary", {}) or {}
 
@@ -728,76 +802,6 @@ def main():
     from .pipeline_stages import assign_ingest_seq
     assign_ingest_seq(txns)
 
-    # --- Step 4e-bis: Cost basis (FIFO, annotated onto txns in place) ---
-    # Annotates each txn with cost_basis, realized_gain (sells only), and
-    # basis_effect.  Returns the final lot state keyed on
-    # (account_group, symbol) for merging into the holdings table below.
-    # Stamp user-supplied off-platform cost basis onto matching lots
-    # (metadata `Cost Basis` rows) before the walk consumes them.
-    from .cost_basis_overrides import match_and_stamp as _stamp_cb
-    _cb_applied, _cb_warn = _stamp_cb(txns, retirement_meta.get("cost_basis_overrides"))
-    if retirement_meta.get("cost_basis_overrides"):
-        print(f"  Cost-basis overrides: {_cb_applied} applied"
-              + (f", {len(_cb_warn)} warning(s)" if _cb_warn else ""))
-        for _w in _cb_warn:
-            print(f"    ! {_w}")
-
-    # Broker-reported disposal lots (Coinbase gain/loss report + Robinhood
-    # consolidated 1099 in data/, scanner-skipped) — direct sell-consumption
-    # to the exact lots the broker reported, superseding the method order
-    # where the report has rows.  Robinhood needs `txns` to resolve the
-    # 1099-B security name to fin's symbol.  See src/broker_lots.py.
-    from .broker_lots import (load_acquisition_lots, load_disposal_lots,
-                              load_robinhood_1099_income,
-                              merge_auto_reconcile_rows,
-                              stamp_acquisition_basis)
-    disposal_lots = load_disposal_lots(DATA_DIR, txns)
-    if disposal_lots:
-        _n_lots = sum(len(v) for v in disposal_lots.values())
-        print(f"  Broker lot report: {_n_lots} disposal lot(s) across "
-              f"{len(disposal_lots)} disposal day(s) — directing lot relief")
-
-    # Auto Reconcile Income rows from the consolidated 1099s' DIV/INT
-    # sections (broker ground truth per tax year).  Hand-entered
-    # Reconcile rows for the same (kind, account, year) win.
-    _auto_income = load_robinhood_1099_income(DATA_DIR)
-    if _auto_income:
-        _before = len(retirement_meta.get("reconcile") or [])
-        retirement_meta["reconcile"] = merge_auto_reconcile_rows(
-            retirement_meta.get("reconcile"), _auto_income)
-        _added = len(retirement_meta["reconcile"]) - _before
-        if _added:
-            print(f"  1099 income cross-check: {_added} auto Reconcile "
-                  f"Income row(s) from consolidated 1099s")
-
-    # Broker-reported ACQUISITION basis (Coinbase RAWTX report) — adopts
-    # Coinbase's own cost basis (incl. customer-provided receives and
-    # the gain-0 ETH2-deprecation rebases) onto matching lots.  Runs
-    # AFTER the user's Cost Basis rows so hand-entered values win.
-    _acq_rows = load_acquisition_lots(DATA_DIR)
-    if _acq_rows:
-        _n_st, _n_un = stamp_acquisition_basis(txns, _acq_rows)
-        print(f"  Broker acquisition basis: {_n_st} lot(s) stamped from "
-              f"RAWTX ({_n_un} report row(s) unmatched)")
-
-    fifo_state = compute_basis_default(
-        txns, account_methods=retirement_meta.get("lot_methods"),
-        disposal_lots=disposal_lots)
-    fifo_basis_by_key: dict[tuple[str, str], float] = {}
-    for row in state_to_holdings(fifo_state, "fifo"):
-        fifo_basis_by_key[(row["account_group"], row["symbol"])] = row["cost_basis"]
-
-    # Annotate per-txn cash flow.  Single source of truth is
-    # basis.txn_external_cash_flow; the dashboard surfaces this as a
-    # column so the user can sort/sum to verify portfolio-level
-    # contributions match the per-row classification.
-    from .basis import txn_external_cash_flow as _cf
-    for t in txns:
-        cf = _cf(t)
-        # Round to 2dp to keep the JSON readable; preserve the sign so
-        # negative withdrawals stay negative.
-        t["cash_flow"] = round(cf, 2) if cf else 0.0
-
     # --- Step 4f: Sort + walk balances + annotate txns ---
     # Stage extracted to src/pipeline_stages.py so the refresh-prices
     # path uses the same logic.  Includes the USD-non-Savings skip rule.
@@ -870,6 +874,81 @@ def main():
                         earliest_date, today_str,
                         symbol_end_overrides=closed_position_ends)
 
+    # Split evidence is finalized before matching overrides or walking lots.
+    # Restore ingest order for broker/override candidates after balance sorting.
+    from .pipeline_stages import restore_ingest_order
+    basis_txns = restore_ingest_order(txns)
+
+    # --- Cost basis (annotated onto txns in place) ---
+    # Annotates each txn with cost_basis, realized_gain (sells only), and
+    # basis_effect.  Returns the final lot state keyed on
+    # (account_group, symbol) for merging into the holdings table below.
+    # Stamp user-supplied off-platform cost basis onto matching lots
+    # (metadata `Cost Basis` rows) before the walk consumes them.
+    from .cost_basis_overrides import match_and_stamp as _stamp_cb
+    _cb_applied, _cb_warn = _stamp_cb(basis_txns, retirement_meta.get("cost_basis_overrides"))
+    if retirement_meta.get("cost_basis_overrides"):
+        print(f"  Cost-basis overrides: {_cb_applied} applied"
+              + (f", {len(_cb_warn)} warning(s)" if _cb_warn else ""))
+        for _w in _cb_warn:
+            print(f"    ! {_w}")
+
+    # Broker-reported disposal lots (Coinbase gain/loss report + Robinhood
+    # consolidated 1099 in data/, scanner-skipped) — direct sell-consumption
+    # to the exact lots the broker reported, superseding the method order
+    # where the report has rows.  Robinhood needs `txns` to resolve the
+    # 1099-B security name to fin's symbol.  See src/broker_lots.py.
+    from .broker_lots import (load_acquisition_lots, load_disposal_lots,
+                              load_robinhood_1099_income,
+                              merge_auto_reconcile_rows,
+                              stamp_acquisition_basis)
+    disposal_lots = load_disposal_lots(DATA_DIR, basis_txns)
+    if disposal_lots:
+        _n_lots = sum(len(v) for v in disposal_lots.values())
+        print(f"  Broker lot report: {_n_lots} disposal lot(s) across "
+              f"{len(disposal_lots)} disposal day(s) — directing lot relief")
+
+    # Auto Reconcile Income rows from the consolidated 1099s' DIV/INT
+    # sections (broker ground truth per tax year).  Hand-entered
+    # Reconcile rows for the same (kind, account, year) win.
+    _auto_income = load_robinhood_1099_income(DATA_DIR)
+    if _auto_income:
+        _before = len(retirement_meta.get("reconcile") or [])
+        retirement_meta["reconcile"] = merge_auto_reconcile_rows(
+            retirement_meta.get("reconcile"), _auto_income)
+        _added = len(retirement_meta["reconcile"]) - _before
+        if _added:
+            print(f"  1099 income cross-check: {_added} auto Reconcile "
+                  f"Income row(s) from consolidated 1099s")
+
+    # Broker-reported ACQUISITION basis (Coinbase RAWTX report) — adopts
+    # Coinbase's own cost basis (incl. customer-provided receives and
+    # the gain-0 ETH2-deprecation rebases) onto matching lots.  Runs
+    # AFTER the user's Cost Basis rows so hand-entered values win.
+    _acq_rows = load_acquisition_lots(DATA_DIR)
+    if _acq_rows:
+        _n_st, _n_un = stamp_acquisition_basis(basis_txns, _acq_rows)
+        print(f"  Broker acquisition basis: {_n_st} lot(s) stamped from "
+              f"RAWTX ({_n_un} report row(s) unmatched)")
+
+    fifo_state = compute_basis_default(
+        basis_txns, account_methods=retirement_meta.get("lot_methods"),
+        disposal_lots=disposal_lots)
+    fifo_basis_by_key: dict[tuple[str, str], float] = {}
+    for row in state_to_holdings(fifo_state, "fifo"):
+        fifo_basis_by_key[(row["account_group"], row["symbol"])] = row["cost_basis"]
+
+    # Annotate per-txn cash flow.  Single source of truth is
+    # basis.txn_external_cash_flow; the dashboard surfaces this as a
+    # column so the user can sort/sum to verify portfolio-level
+    # contributions match the per-row classification.
+    from .basis import txn_external_cash_flow as _cf
+    for t in txns:
+        cf = _cf(t)
+        # Round to 2dp to keep the JSON readable; preserve the sign so
+        # negative withdrawals stay negative.
+        t["cash_flow"] = round(cf, 2) if cf else 0.0
+
     # Build last_prices for holdings.  Preference:
     #   1. Cache lookup at today's date (handles buy-and-hold assets whose
     #      last transaction was years ago — far better than the stale price
@@ -877,11 +956,7 @@ def main():
     #   2. Most recent non-zero transaction price (fallback for symbols the
     #      cache doesn't cover — mutual funds with multi-word display names,
     #      delisted tickers, etc.).
-    last_prices: dict[str, float] = {}
-    for txn in txns:
-        price = float(txn.get("price", 0) or 0)
-        if price > 0:
-            last_prices[txn.get("symbol", "")] = price
+    last_prices = _current_transaction_prices(txns, today_str)
     for sym in symbols_with_balance:
         cached = get_price(sym, today_str)
         if cached is not None:
@@ -912,46 +987,8 @@ def main():
         balances, last_prices, fifo_basis_by_key, cash_principal_by_key,
     )
 
-    # --- Step 4f-bis: Per-method basis comparison ---
-    # Walks the same txns under LIFO / HIFO / Average (in addition to the
-    # FIFO walk we already did).  For each method, roll up per-holding
-    # basis into totals per account_type so the dashboard can show a
-    # side-by-side comparison — particularly useful for retirement
-    # accounts where the tax treatment is identical but the bookkeeping
-    # question "which lot method best characterises my position" is
-    # meaningful.
-    method_states = compute_basis_all_methods(txns)
-    basis_methods: dict[str, dict] = {}
-    for m, st in method_states.items():
-        rows = state_to_holdings(st, m)
-        # Per-holding unrealized using today's cache price
-        from .config import contract_multiplier as _cmult
-        for r in rows:
-            px = last_prices.get(r["symbol"], 0.0)
-            value = (round(r["quantity"] * px * _cmult(r["symbol"]), 2)
-                     if px else None)
-            r["price"] = round(px, 2)
-            r["value"] = value
-            r["account_type"] = ACCOUNT_TYPES.get(r["account_group"], "Taxable")
-            r["unrealized_gain"] = (round(value - r["cost_basis"], 2)
-                                    if value is not None else None)
-        # Sum only the positions that have a known value; count the ones
-        # we couldn't price so the dashboard can note it.
-        from .pipeline_stages import (
-            totals_by_type_from_rows, totals_from_rows,
-        )
-        basis_methods[m] = {
-            "holdings":        rows,
-            "totals":          totals_from_rows(rows, st["realized_total"]),
-            "totals_by_type":  totals_by_type_from_rows(rows),
-        }
-
-    # Fold cash holdings (Apple Savings USD) into every method's
-    # totals.  The basis walker skips USD; without this fold, the
-    # dashboard's headline Cost Basis / Value / Unrealized P&L cards
-    # would miss the HYSA's full return.
-    from .pipeline_stages import fold_cash_into_basis_methods
-    fold_cash_into_basis_methods(basis_methods, holdings_by_account)
+    # Recompute comparisons from the same split evidence as annotated basis.
+    basis_methods = _build_basis_methods(txns, last_prices, holdings_by_account)
 
     # --- Step 4f-ter: Cash-flow summary for header stat cards ---
     cash = compute_cash_summary(txns)

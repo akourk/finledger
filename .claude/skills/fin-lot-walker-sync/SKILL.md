@@ -116,6 +116,7 @@ precisely how the two documented misses happened.
 checklist is not following it: if the rule can live at module level in
 `basis.py` and be called from both walkers, put it there. Already
 shared: `_push_txn_lots` (broker acquisition pieces and origin metadata),
+`_push_transfer_lots` (per-lot share conversion for stashed/eager arrivals),
 `_consume_lots`, `_consume_lots_directed`,
 `_consume_lots_reserving`, `_consume_for_rebase`, `_pair_transfers`,
 `_pair_wraps`, `_rescale_lots`, `_rebase_is_move`,
@@ -143,6 +144,12 @@ safety net — if the numbers move, either your change is wrong or the
 snapshot's known-good figures need a *justified* update.
 
 ## Test additions expected with any rule change
+
+For transfers, use `test_transfer_reconciliation.py` and its matcher/pipeline
+companions. Check quantities as well as basis, source shortfalls, acquisition
+lineage, and both receipt orders. Cached split evidence must be finalized before
+every walk; approximate matches cannot establish basis continuity. See the
+[transfer contract](../../../docs/INVARIANTS.md#invariants-the-cost-basis-walker-relies-on).
 
 - A `basis.py`-level test in `tests/test_basis_walker.py` proving the
   new rule's realized/basis math.

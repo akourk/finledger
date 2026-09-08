@@ -253,6 +253,11 @@ class TestTheSharedRulesAreStillShared:
             assert 'get("basis_override_lots")' not in src, (
                 f"{name} has re-inlined broker acquisition pieces")
 
+    def test_both_walkers_share_transfer_carry_for_stashed_and_eager_arrivals(self):
+        for fn in (B._walk, H.compute_history):
+            source = inspect.getsource(fn)
+            assert source.count("_push_transfer_lots(") == 2
+
     def test_history_uses_the_shared_cash_principal_rule(self):
         """Cash has no lots, so its basis is the one figure neither
         walker can read off a lot queue — each had to answer separately,

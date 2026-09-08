@@ -16,6 +16,7 @@ fetch cost are decoupled (the cache stores every trading day either way).
 from . import clock
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+import math
 
 from .basis import (
     BASIS_EFFECTS, _apply_split_to_lots, _basis_dollars, _basis_effect,
@@ -23,7 +24,7 @@ from .basis import (
     zero_basis_origin,
     _consume_for_rebase, _consume_lots, _consume_lots_directed,
     _consume_lots_reserving, _pair_transfers, _pair_wraps, _rebase_is_move,
-    _push_txn_lots,
+    _push_txn_lots, _push_transfer_lots,
     _sort_key as _basis_sort_key,
     apply_roc_to_lots, basis_override_or, fmv_basis, pair_roc_events,
 )
@@ -32,7 +33,7 @@ from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS
 from .pipeline_stages import cash_principal_effect
 from .prices import get_price
-from .valuation import QTY_EPSILON, mark, mark_is_dust
+from .valuation import QTY_EPSILON, mark, mark_is_dust, rebase_transaction_prices
 from .return_flows import eligible_account_transfer_pairs, transit_positions
 
 # Sourced from src/actions.py — single source of truth for the action
@@ -348,6 +349,7 @@ def compute_history(txns: list[dict],
     # tickers, etc.).  This mirrors what main.py's holdings computation does
     # for "now" and lets history stay in lockstep with the holdings total.
     last_txn_price: dict[str, float] = {}
+    quote_dates: dict[str, str] = {}
     idx = 0
 
     # Broker-report disposal hints — own copy, exactly like basis._walk
@@ -389,8 +391,9 @@ def compute_history(txns: list[dict],
             acct = t.get("account_group", "")
             sym  = t.get("symbol", "")
             p    = float(t.get("price", 0) or 0)
-            if sym and p > 0:
+            if sym and math.isfinite(p) and p > 0:
                 last_txn_price[sym] = p
+                quote_dates[sym] = t.get("date", "")
             action = t.get("action", "")
             qty = float(t.get("quantity", 0) or 0)
 
@@ -478,13 +481,14 @@ def compute_history(txns: list[dict],
                     _push_txn(key, t, qty, fmv_basis(t, qty),
                               t.get("date", ""), origin="fmv")
                 elif id(paired) in stashed_tout_lots:
-                    for lot in stashed_tout_lots.pop(id(paired)):
-                        lots[key].append(dict(lot))
+                    _push_transfer_lots(
+                        lot_state, "fifo", key, stashed_tout_lots.pop(id(paired)),
+                        pairings["share_ratios"][id(t)])
                 else:
                     src_key = (paired.get("account_group", ""), paired.get("symbol", ""))
                     _basis, carried = _consume(src_key, float(paired.get("quantity", 0) or 0))
-                    for lot in carried:
-                        lots[key].append(dict(lot))
+                    _push_transfer_lots(lot_state, "fifo", key, carried,
+                                        pairings["share_ratios"][id(t)])
                     tout_handled.add(id(paired))
             elif effect in ("wrap_out", "wrap_in"):
                 # Basis-carrying conversion (ETH↔CBETH).  Process the whole
@@ -562,11 +566,12 @@ def compute_history(txns: list[dict],
         total_basis = 0.0
         priced = 0.0
         attempted = 0.0
+        prices_on_date = rebase_transaction_prices(last_txn_price, quote_dates, sample_date)
         px_on_date: dict[str, float | None] = {}
         for (acct, sym), qty in balances.items():
             # Price + today-basis quantity, resolved by the shared
             # kernel (see src/valuation.py for the ladder).
-            m = mark(sym, qty, sample_date, last_txn_price,
+            m = mark(sym, qty, sample_date, prices_on_date,
                      price_cache=px_on_date)
             price, adj_qty = m.price, m.qty
 
@@ -693,7 +698,7 @@ def compute_history(txns: list[dict],
         # the portfolio but neither broker currently reports them; only scopes
         # containing both endpoints include the separate transit component.
         in_transit = transit_positions(
-            active_transfers, sample_date, last_txn_price,
+            active_transfers, sample_date, prices_on_date,
             carried_basis={id(tout): sum(lot["qty"] * lot["basis_per_share"]
                                         for lot in stashed_tout_lots.get(id(tout), ()))
                            for tout, _ in active_transfers},
@@ -766,6 +771,7 @@ def compute_daily_totals(txns: list[dict], *,
 
     balances: dict[tuple[str, str], float] = defaultdict(float)
     last_txn_price: dict[str, float] = {}
+    quote_dates: dict[str, str] = {}
 
     out: list[tuple[str, float]] = []
     cur = datetime.strptime(first, "%Y-%m-%d").date()
@@ -776,8 +782,9 @@ def compute_daily_totals(txns: list[dict], *,
             acct = t.get("account_group", "")
             sym = t.get("symbol", "")
             p = float(t.get("price", 0) or 0)
-            if sym and p > 0:
+            if sym and math.isfinite(p) and p > 0:
                 last_txn_price[sym] = p
+                quote_dates[sym] = d_iso
             action = t.get("action", "")
             qty = float(t.get("quantity", 0) or 0)
             if sym in CASH_SYMBOLS and ACCOUNT_TYPES.get(acct) != "Savings":
@@ -796,6 +803,7 @@ def compute_daily_totals(txns: list[dict], *,
                 bridge_idx[_bgroup] += 1
 
         total = 0.0
+        prices_today = rebase_transaction_prices(last_txn_price, quote_dates, d_iso)
         # Scoped to THIS date: one symbol is typically held in several
         # account groups, and the memo collapses those to one lookup.
         # It must not outlive the day or a stale price leaks forward.
@@ -803,7 +811,7 @@ def compute_daily_totals(txns: list[dict], *,
         for (acct, sym), qty in balances.items():
             if abs(qty) < QTY_EPSILON:
                 continue
-            m = mark(sym, qty, d_iso, last_txn_price, price_cache=px_today)
+            m = mark(sym, qty, d_iso, prices_today, price_cache=px_today)
             # Unpriceable positions contribute nothing — same as the
             # snapshot walker's priced_pct gap.
             if m.value is None or mark_is_dust(m, qty):
@@ -816,7 +824,7 @@ def compute_daily_totals(txns: list[dict], *,
             if _bbal >= BRIDGE_MIN:
                 total += _bbal
         in_transit = transit_positions(
-            transfer_pairs, d_iso, last_txn_price, price_cache=px_today)
+            transfer_pairs, d_iso, prices_today, price_cache=px_today)
         total += sum(p["value"] or 0 for p in in_transit)
         if transit_issues is not None:
             missing = [p for p in in_transit if p["value"] is None]

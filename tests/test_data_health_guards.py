@@ -416,16 +416,19 @@ _COVERED_BY_A_FIXTURE_CLASS = {
 
 
 class TestTransferShareUnits:
-    @pytest.mark.parametrize("arrival_factor, expected", [(1.0, True), (2.0, False)])
+    @pytest.mark.parametrize("arrival_factor, quantity, expected", [
+        (1.0, 10.0, True), (2.0, 10.0, False), (1.0, 20.0, False),
+    ])
     def test_endpoint_split_units_fire_only_on_incompatible_pairs(self, monkeypatch,
-                                                                arrival_factor, expected):
-        from src import valuation
+                                                                arrival_factor, quantity,
+                                                                expected):
+        from src import prices
 
         rows = [{"date": "2024-06-02", "account_group": "Example A", "symbol": "TEST",
                  "action": "Transfer Out", "quantity": 10.0, "amount": 0.0},
                 {"date": "2024-06-08", "account_group": "Example B", "symbol": "TEST",
-                 "action": "Transfer In", "quantity": 10.0, "amount": 0.0}]
-        monkeypatch.setattr(valuation, "split_factor_since",
+                 "action": "Transfer In", "quantity": quantity, "amount": 0.0}]
+        monkeypatch.setattr(prices, "split_factor_since",
                             lambda symbol, day: 2.0 if day < "2024-06-08" else arrival_factor)
         issues = D._check_transfer_share_units(rows)
         assert bool(issues) == expected

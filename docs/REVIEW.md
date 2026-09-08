@@ -92,21 +92,24 @@ require candidate comparisons; this is not a claim of universal linear scaling.
 
 ## Further work, in priority order
 
-1. **Transfer coverage and share-unit reconciliation.** Verified paired in-kind
-   transfers now preserve portfolio exposure between posting dates and cross
-   account return boundaries correctly. USD, unmatched movements, and share-unit
-   changes during transit need separate reconciliation evidence before extending coverage;
-   do not reinterpret every unmatched transfer as external or asset units as
-   dollar amounts. Preserve the selected scope and valuation dates across
-   snapshots, charts, TWR, and XIRR when extending coverage.
-   Two reproduced boundaries remain: approximate raw-quantity matches can carry
-   more lot shares than the recipient posts, and split-restated counterpart
-   quantities can evade both raw matching and its share-unit warning. Diagnose
-   these discrepancies before assuming rounding, fees, or tax-basis adjustments.
-2. **Reduce duplicated financial state transitions gradually.** The lot walkers
-   already share substantial helpers and strong parity coverage. Extract one
-   verified transition at a time. A framework rewrite or database migration has
-   no demonstrated benefit for the current workload.
+1. **Use actual basis in recent-activity summaries.** `analytics/changes.py`
+   reads the hypothetical FIFO comparison even when the annotated account uses
+   HIFO or broker-directed relief. An isolated fictional sale reproduced a
+   wrong basis delta and realized-gain delta. Derive the summary from the same
+   annotated holdings/state totals used elsewhere; preserve cash-principal rules.
+2. **Advance the activity baseline only after successful publication.** The
+   same module writes `last_run.json` during analytics construction, before later
+   analytics, invariant checks, and output publication. An injected downstream
+   error advanced the baseline, causing the successful retry to omit the pending
+   activity. Separate snapshot preparation from persistence after publication;
+   cover both analytics and publication failures.
+3. **Extend transfer coverage only with reconciliation evidence.** Approximate
+   quantities now remain unverified with explicit warnings; supported cached split
+   conversions carry each source lot through a shared transition in both walkers.
+   Same-group changed-unit moves, ambiguous destination split rows, USD, and
+   unmatched movements retain their limited coverage. Do not infer fees or basis
+   adjustments from discrepancies. Further extraction should target a demonstrated
+   duplicated rule; a framework rewrite has no demonstrated benefit.
 
 ## Validation and limits
 
@@ -178,6 +181,26 @@ An initial demo failure was traced to a working-copy sample using CRLF despite
 the repository's LF attributes. Its parsed contents matched the generator;
 restoring LF restored exact agreement with the committed fixture. Do not relax
 byte-level provenance checks to hide this class of checkout problem.
+
+The transfer reconciliation and shared carry follow-up passed **1,929 tests**,
+with the same Windows symlink skip. Regressions cover approximate receipts,
+forward/reverse and cancelling splits, lot lineage and shortages, same-day
+source annotations, dated fallback prices, and cold/changed split evidence in
+both pipeline paths. Python/JavaScript checks compare six account scopes and
+historical TWR/XIRR. In-memory prior-behavior probes demonstrated failures for
+the old matcher, unconverted lot receipt, stale quote fallback, and pipeline
+ordering. The corrected full run includes a guard fixture updated to exercise
+the authoritative split matcher, with a valid conversion as a control.
+
+Chrome checks passed across **10 tabs**, **12 account filters**, and **12
+accessibility states**. The public artifact and all four approved screenshots
+remain byte-for-byte unchanged. **102 local documentation links and anchors**
+resolve and all six skill entrypoints pass metadata/size checks. Final isolated
+transfer benchmark medians were **0.345 s** for one symbol and **0.276 s** for
+eight symbols, with both semantic digests unchanged. These measurements cover
+five basis walks and 144 snapshots over 4,000 fictional rows, not complete
+pipeline or network timing. The further-work findings above were separately
+reproduced with fictional inputs and downstream failure injection.
 
 The visual review follows [Privacy](PRIVACY.md) and remains separate from
 automated scanning. Passing scans and fictional-input tests do not prove that

@@ -64,6 +64,12 @@ python -m src.main --import-snapshot snap.json   # restore data/ from a snapshot
 Open `exports/dashboard.html` in any browser. It's a single file with the
 full dataset inlined — no network calls at view time.
 
+`--refresh-prices` reuses the imported transactions and rebuilds lot-method
+comparisons after refreshing prices and split evidence. Split revalidation
+keeps its usual weekly throttle; if split records changed, refresh backfills
+only the affected price histories before recalculating holdings and returns.
+Use `--refresh-caches` with it to force that revalidation.
+
 ### Portable snapshots
 
 `--export-snapshot` bundles every CSV in `data/` into a single JSON file
@@ -261,10 +267,17 @@ label the extra component **In transit**, with its route shown in holdings.
 A later imported arrival can confirm an earlier internal move and revise this
 reconstructed history. The valuation still uses prices available on each date.
 USD transfers, unmatched movements, and existing broker-specific exceptions
-retain their current rules. Missing prices or a split during transfer appear in
-Data Health; resolve those gaps before relying on the affected returns. The
+retain their current rules. Split-restated transfers carry original lot basis
+when cached split records reconcile both quantities. Quantity differences,
+same-account split moves, and ambiguous destination split rows appear in Data
+Health. These candidates do not establish ownership during transit; the receipt
+uses your explicit basis override or an estimated receipt value. Check original
+acquisition records and both transfer legs rather than assuming a fee or rounding
+adjustment. Missing transit prices after a split also appear in Data Health;
+resolve those gaps before relying on the affected returns. The
 separately detected custodian rollover bridges cover their established cash cases.
-A transfer arrival already matched to another tracked account cannot also
+A transfer arrival matched to another tracked account, or awaiting quantity
+reconciliation with a possible account departure, cannot also
 confirm rollover cash from a Distribution. An independent arrival is required;
 otherwise the unresolved Distribution remains flagged in Data Health.
 

@@ -198,6 +198,22 @@ def test_verified_account_arrival_cannot_also_confirm_rollover_cash(overlapping_
     assert [issue["kind"] for issue in issues] == ["unbridged_retirement_distribution"]
 
 
+def test_unreconciled_account_arrival_cannot_confirm_rollover_cash(overlapping_transfer):
+    from src.basis import _pair_transfers
+    from src.return_flows import eligible_account_transfer_pairs
+
+    txns = overlapping_transfer
+    txns[-1]["quantity"] = 9.995
+    assert eligible_account_transfer_pairs(txns) == []
+    assert _pair_transfers(txns)["issues"]
+    assert detect_rollover_bridges(txns) == []
+    # Independent cash evidence remains usable despite an unresolved asset move.
+    txns.append(_tin("2024-01-06", group="Roth IRA", amount=1000.0))
+    assert detect_rollover_bridges(txns) == [
+        {"group": "Roth IRA", "start_date": "2024-01-02",
+         "end_date": "2024-01-06", "amount": 1000.0}]
+
+
 def test_claimed_arrival_does_not_create_a_loss_when_transit_ends(overlapping_transfer):
     from src.analytics._shared import (
         _balance_sort_key, _value_at_date, compute_twr_daily_summary,

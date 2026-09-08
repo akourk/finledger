@@ -78,6 +78,7 @@ def annotate_account_transfers(txns: list[dict]) -> None:
         return
 
     last_prices: dict[str, float] = {}
+    quote_dates: dict[str, str] = {}
     for day, rows in groupby(ordered, key=lambda t: t.get("date", "")):
         rows = list(rows)
         for txn in rows:
@@ -85,6 +86,15 @@ def annotate_account_transfers(txns: list[dict]) -> None:
             symbol = txn.get("symbol", "")
             if symbol and math.isfinite(price) and price > 0:
                 last_prices[symbol] = price
+                quote_dates[symbol] = day
+        # Transfer legs may straddle a split. A carried transaction quote
+        # must use this day's share units before it can price an arrival.
+        leg_symbols = {txn["symbol"] for txn in rows if id(txn) in legs}
+        if not leg_symbols:
+            continue
+        prices_on_date = valuation.rebase_transaction_prices(
+            {symbol: last_prices[symbol] for symbol in leg_symbols if symbol in last_prices},
+            quote_dates, day)
         price_cache: dict[str, float | None] = {}
         for txn in rows:
             leg = legs.get(id(txn))
@@ -92,7 +102,7 @@ def annotate_account_transfers(txns: list[dict]) -> None:
                 continue
             counterparty, sign = leg
             value = mark(txn["symbol"], float(txn["quantity"]), day,
-                         last_prices, price_cache=price_cache).value
+                         prices_on_date, price_cache=price_cache).value
             flow = (sign * value if value is not None
                     and math.isfinite(value) and value > 0 else None)
             txn["account_transfer"] = {
@@ -132,11 +142,10 @@ def transit_positions(pairs: list[tuple[dict, dict]], target: str,
                       price_cache: dict | None = None) -> list[dict]:
     """Mark eligible departed assets until arrival, with separate custody/basis.
 
-    The source share quantity is valid throughout an ordinary transfer. If
-    split factors change between departure and target, the raw-quantity matcher cannot
-    establish compatible share units; expose missing coverage instead of
-    assuming a corporate-action reconciliation. Existing split-adjusted marks
-    still apply when both legs share the same share basis.
+    The matcher has reconciled both endpoints using cached split evidence.
+    Keep exported quantities in departure units; convert only the temporary
+    valuation quantity to the target date. After a split, undated transaction
+    fallbacks cannot establish price units, so require a cached market quote.
     """
     positions = []
     for tout, tin in pairs:
@@ -146,14 +155,19 @@ def transit_positions(pairs: list[tuple[dict, dict]], target: str,
         symbol, quantity = tout["symbol"], float(tout["quantity"])
         issue = None
         factors = [valuation.split_factor_since(symbol, d) for d in (start, target)]
-        if not all(math.isfinite(f) and f > 0 and f == factors[0] for f in factors):
+        if not all(math.isfinite(f) and f > 0 for f in factors):
             value, issue = None, "split_during_transfer"
         else:
-            m = mark(symbol, quantity, target, last_prices, price_cache=price_cache)
+            ratio = factors[0] / factors[1]
+            target_quantity = quantity * ratio
+            m = mark(symbol, target_quantity, target,
+                     last_prices if ratio == 1 else {}, price_cache=price_cache)
             value = m.value
+            if ratio != 1 and m.source != "cache":
+                value = None
             if value is None or not math.isfinite(value) or value < 0:
                 value, issue = None, "unpriced"
-            elif valuation.mark_is_dust(m, quantity):
+            elif valuation.mark_is_dust(m, target_quantity):
                 continue
         position = {
             "source_group": tout["account_group"],

@@ -49,36 +49,33 @@ def _check_unpriced_account_transfers(txns: list[dict]) -> list[dict]:
 
 
 def _check_transfer_share_units(txns: list[dict]) -> list[dict]:
-    """Matching raw quantities do not reconcile a split between posting dates.
+    """Surface unresolved candidates without claiming basis or ownership."""
+    from ..basis import _pair_transfers, _sort_key
 
-    Check both endpoints separately from transit marks: a split effective on
-    arrival has no post-split day in the half-open transit interval. Earlier
-    supported marks and the source/destination quantities remain unchanged.
-    """
-    from .. import valuation
-    from ..return_flows import eligible_account_transfer_pairs
-
-    incompatible = []
-    for tout, tin in eligible_account_transfer_pairs(txns):
-        factors = [valuation.split_factor_since(t["symbol"], t["date"])
-                   for t in (tout, tin)]
-        if not all(math.isfinite(f) and f > 0 and f == factors[0] for f in factors):
-            incompatible.append((tout, tin))
-    if not incompatible:
-        return []
-    return [{
-        "kind": "unsupported_transfer_share_units",
-        "severity": "warn",
-        "category": "Coverage",
-        "message": f"{len(incompatible)} paired transfer(s) span incompatible "
-                   "split-adjusted share units. Matching raw quantities cannot "
-                   "reconcile these movements; portfolio valuations and returns "
-                   "may be distorted. Check both transfer legs and corporate actions.",
-        "details": [f"{tout['date']} → {tin['date']} {tout['symbol']} "
-                    f"{tout['account_group']} → {tin['account_group']}"
-                    for tout, tin in incompatible[:5]],
-        "count": len(incompatible),
-    }]
+    issues = _pair_transfers(sorted(txns, key=_sort_key))["issues"]
+    result = []
+    for split_related in (False, True):
+        selected = [i for i in issues
+                    if (i["reason"] != "quantity_mismatch") == split_related]
+        if not selected:
+            continue
+        result.append({
+            "kind": ("unsupported_transfer_share_units" if split_related else
+                     "unreconciled_transfer_quantity"),
+            "severity": "warn",
+            "category": "Coverage",
+            "message": f"{len(selected)} possible transfer(s) have unreconciled "
+                       + ("share units. " if split_related else "quantities. ")
+                       + "Original basis and ownership during transit are unverified; "
+                       "arrivals use an explicit basis override or estimated receipt value. "
+                       "Check both legs and corporate actions; no fee or basis adjustment "
+                       "has been inferred. Returns may be distorted.",
+            "details": [f"{i['start_date']} → {i['end_date']} {i['symbol']} "
+                        f"{i['source_group']} → {i['destination_group']}: {i['reason']}"
+                        for i in selected[:5]],
+            "count": len(selected),
+        })
+    return result
 
 
 def _check_future_dated(txns: list[dict]) -> list[dict]:

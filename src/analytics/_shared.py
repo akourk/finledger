@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 
 from ..basis import _basis_dollars, _sort_key, BASIS_EFFECTS  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
-from ..valuation import QTY_EPSILON, mark, mark_is_dust
+from ..valuation import QTY_EPSILON, mark, mark_is_dust, rebase_transaction_prices
 from ..return_flows import (
     txn_cash_flow_for_groups, scope_snapshot_value, eligible_account_transfer_pairs,
     transit_positions, transit_in_scope,
@@ -279,8 +279,14 @@ def detect_rollover_bridges(txns: list[dict]) -> list[dict]:
     events.sort(key=lambda e: e["components"][0]["date"])
 
     bridges: list[dict] = []
-    claimed_account_arrivals = ({id(tin) for _, tin in eligible_account_transfer_pairs(txns)}
-                                if events else set())
+    claimed_account_arrivals = set()
+    if events:
+        from ..basis import _pair_transfers, _sort_key
+        pairings = _pair_transfers(sorted(txns, key=_sort_key))
+        claimed_account_arrivals = {
+            id(tin) for _, tin in eligible_account_transfer_pairs(txns, pairings=pairings)}
+        # An unresolved in-kind candidate is not evidence of a cash rollover.
+        claimed_account_arrivals.update(pairings["unverified_tins"])
     used_tin: set[int] = set()
     for ev in events:
         start_date = ev["components"][0]["date"]
@@ -831,6 +837,7 @@ def _value_at_date(txns_sorted: list[dict], target: str,
     """
     balances: dict[tuple[str, str], float] = defaultdict(float)
     last_txn_price: dict[str, float] = {}
+    quote_dates: dict[str, str] = {}
 
     for t in txns_sorted:
         d = t.get("date", "")
@@ -851,8 +858,9 @@ def _value_at_date(txns_sorted: list[dict], target: str,
         # silently disagreed with `history` for any symbol the price
         # cache cannot resolve.  That matters because reconciliation
         # ALWAYS filters to one account group.
-        if sym and price > 0:
+        if sym and math.isfinite(price) and price > 0:
             last_txn_price[sym] = price
+            quote_dates[sym] = d
         if filter_groups is not None and acct not in filter_groups:
             continue
         # Skip USD balance tracking for non-Savings accounts (matches main.py).
@@ -866,6 +874,7 @@ def _value_at_date(txns_sorted: list[dict], target: str,
             balances[(acct, sym)] += qty
 
     total = 0.0
+    prices_on_date = rebase_transaction_prices(last_txn_price, quote_dates, target)
     # Valuation goes through the shared kernel (src/valuation.py), which
     # is what this function's docstring has always claimed: the same
     # rules as `history.compute_history`.  Two of them were not actually
@@ -876,7 +885,7 @@ def _value_at_date(txns_sorted: list[dict], target: str,
     for (acct, sym), qty in balances.items():
         if abs(qty) < QTY_EPSILON:
             continue
-        m = mark(sym, qty, target, last_txn_price, price_cache=px_on_date)
+        m = mark(sym, qty, target, prices_on_date, price_cache=px_on_date)
         if m.value is None or mark_is_dust(m, qty):
             continue
         total += m.value
@@ -885,7 +894,7 @@ def _value_at_date(txns_sorted: list[dict], target: str,
         if transfer_pairs is None:
             transfer_pairs = eligible_account_transfer_pairs(txns_sorted)
         total += sum(p["value"] or 0 for p in transit_positions(
-            transfer_pairs, target, last_txn_price, price_cache=px_on_date)
+            transfer_pairs, target, prices_on_date, price_cache=px_on_date)
             if transit_in_scope(p, filter_groups))
     # Reconstructed broker cash (see cash_bridge.py).  Distinct from
     # `bridges` above, which is the rollover-bridge adjustment.

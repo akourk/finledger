@@ -53,6 +53,7 @@ date before a recent split.
 from __future__ import annotations
 
 from typing import NamedTuple
+import math
 
 from .config import CASH_SYMBOLS, contract_multiplier
 from .prices import get_price, option_intrinsic, split_factor_since
@@ -81,6 +82,36 @@ class Mark(NamedTuple):
     @property
     def priced(self) -> bool:
         return self.value is not None
+
+
+def rebase_transaction_prices(last_prices: dict[str, float],
+                              quote_dates: dict[str, str],
+                              target: str) -> dict[str, float]:
+    """Convert known transaction quotes to ``target``'s posted share units.
+
+    Transaction prices describe the units on their own trade date. After a
+    split, a stale quote must change inversely to the posted share quantity.
+    Keep the original maps intact so advancing dates never adjusts a quote
+    twice. Unknown/future quote dates and invalid marks provide no fallback.
+    ``mark`` still owns price selection and the option contract multiplier.
+    """
+    result = {}
+    for symbol, price in last_prices.items():
+        quoted = quote_dates.get(symbol)
+        if (not isinstance(quoted, str) or not quoted or quoted > target
+                or not math.isfinite(price) or price <= 0):
+            continue
+        if quoted == target:
+            result[symbol] = price
+            continue
+        quote_factor = split_factor_since(symbol, quoted)
+        target_factor = split_factor_since(symbol, target)
+        if not all(math.isfinite(f) and f > 0 for f in (quote_factor, target_factor)):
+            continue
+        adjusted = price * (target_factor / quote_factor)
+        if math.isfinite(adjusted) and adjusted > 0:
+            result[symbol] = adjusted
+    return result
 
 
 

@@ -1415,9 +1415,15 @@ not change lot consumption, arrival basis, realized gains, or final holdings.
 - Value transit with `valuation.mark` at the requested date and only transaction
   prices known by that date. Use the existing dust, split-restatement, and option
   rules. Preserve market movement while in transit; a constant-dollar bridge
-  would hide returns. A split-factor change since departure makes the current
-  raw-quantity match insufficient; emit missing valuation until arrival rather
-  than inventing a corporate-action reconciliation.
+  would hide returns. Verified split conversions value the source quantity in
+  target-date units. Export `quantity` in departure units so current-position
+  repricing can use `start_date` exactly once. After a split, transit requires a
+  cached quote: its undated transaction fallback cannot establish price units.
+- Posted holdings, history, exact-date values, and account-flow fallbacks use
+  `valuation.rebase_transaction_prices` to convert each transaction quote from
+  its own date's share units to the valuation date. A cache miss on arrival
+  must not multiply new shares by a pre-split price. Keep quote dates through
+  the walk and never use a later quote for an earlier value.
 - Keep transit values/basis at calculation precision. An active snapshot also
   exports `valuation_precision` with unrounded posted total, group/type/sector
   maps, total/group/type basis, and positions. Scope helpers combine those components
@@ -1428,11 +1434,11 @@ not change lot consumption, arrival basis, realized gains, or final holdings.
   Its canonical ordering matches history and exact-date valuation. A null
   transit value or unsupported share units triggers `unpriced_transfer_transit`;
   it is not evidence of a zero-dollar asset.
-- A split-factor mismatch between the two posting dates also triggers
-  `unsupported_transfer_share_units`, including splits effective exactly on
-  arrival. Keep valid earlier marks; the warning exposes an unsupported match
-  rather than rewriting arrival quantity or treating its balance drop as a
-  verified investment loss.
+- Unreconciled candidates never establish account flows or transit ownership.
+  `unreconciled_transfer_quantity` and `unsupported_transfer_share_units` warn
+  about quantity and split-evidence gaps, including splits effective on arrival.
+  Their receipt basis follows the existing explicit override / FMV estimate
+  rule. They also cannot confirm a cash rollover from a Distribution.
 - Python annual/TWR/XIRR, monthly returns, and drawdown share the economic-value
   helpers. Browser equivalents drive historical returns, dollar cards, benchmark
   lines, and holdings. Historical account/type displays use an explicit **In
@@ -1830,8 +1836,13 @@ process.
   rows in the preceding 0–14 days are considered. Greedy assignment preserves
   inbound date order, then prefers relative quantity match, shortest lag,
   and original outbound order for ties. Each outbound is used once; keep
-  tolerance and validation behavior in parity with the exhaustive reference
-  in `tests/test_transfer_pairing_index.py`. Intra-group pairs (same
+  strict quantity and validation behavior in parity with the exhaustive
+  reference in `tests/test_transfer_pairing_index.py`. Quantities must match in
+  common split-adjusted units with only machine-precision tolerance. The old
+  broad tolerance only ranks unresolved candidates; it cannot infer rounding,
+  fees, or basis allocation. Rejected candidates cannot claim a departure needed
+  by a later verified receipt. The matcher exposes diagnostics separately from
+  verified pairs. Intra-group pairs in unchanged units (same
   `(account_group, symbol)` on both legs)
   are marked as `intra_group_noop` and skipped entirely — main.py adds
   then subtracts for a net-zero balance change, and we leave lots
@@ -1843,11 +1854,22 @@ process.
   basis) / `rebase_out` (−consumed basis) so
   `derive_basis_by_key_from_txns` and the history walker stay in
   parity.  Balances are untouched either way.
+- **Split-restated transfers require cached evidence.** Match
+  `out_qty * split_factor_since(out_date)` to the corresponding arrival value.
+  Both walkers call `_push_transfer_lots` for stashed and eager arrivals; it
+  converts each consumed lot by the evidenced departure/arrival factor ratio,
+  preserving total basis, acquisition date, and origin. Never rescale incomplete
+  source lots to fill the full receipt. Same-group changed-unit moves and a
+  destination `Split` row within the posting interval remain unverified because
+  their posted-balance effects need separate reconciliation. A source `Split`
+  may still apply to its remaining posted holdings. Finalize price/split evidence
+  before override matching and all financial walks in both pipeline paths.
 - **Same-day cross-group transfers** resolve via eager consumption: when
   a Transfer In walks before its paired Transfer Out (same date,
   alphabetically-later source account), the TIN eagerly consumes from
   the source queue and marks the TOUT `transfer_out_eager_consumed` so
-  it's a no-op when its turn comes.
+  it's a no-op when its turn comes. Its annotation still records the consumed
+  basis, and annotation reconstruction subtracts it exactly once.
 - **Unpaired Transfer In uses FMV-at-transfer basis** (`qty × price`)
   when the broker recorded a spot price, else `$0`.  These are external
   deposits with no visible origin leg (most commonly crypto received from

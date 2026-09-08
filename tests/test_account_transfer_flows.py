@@ -55,6 +55,23 @@ def _funded_case():
     return rows, history
 
 
+@pytest.mark.parametrize("cached", [None, 50.0])
+def test_split_receipt_fallback_uses_quote_date_units(market, monkeypatch, cached):
+    from src import prices, valuation
+    from src.return_flows import annotate_account_transfers
+
+    market["TEST"] = cached
+    for module in (prices, valuation):
+        monkeypatch.setattr(module, "split_factor_since",
+                            lambda symbol, day: 2.0 if day < "2024-06-03" else 1.0)
+    rows = [_txn("Example A", "Buy", day="2024-05-01", qty=10, price=100),
+            _txn("Example A", "Transfer Out", day="2024-06-01", qty=10, price=0),
+            _txn("Example B", "Transfer In", day="2024-06-05", qty=20, price=0)]
+    annotate_account_transfers(rows)
+    assert rows[1]["account_transfer"]["flow"] == -1000
+    assert rows[2]["account_transfer"]["flow"] == 1000
+
+
 @pytest.mark.parametrize("groups, expected", [
     (None, [0, 0]), (set(), [0, 0]),
     ({"Example A"}, [-200, 0]), ({"Example B"}, [0, 200]),

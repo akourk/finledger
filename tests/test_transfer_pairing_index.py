@@ -1,17 +1,19 @@
-"""Indexed transfer candidates must preserve exhaustive greedy matching."""
+"""Indexed transfer candidates must preserve verified exhaustive matching."""
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 import random
+import math
 
 import pytest
 
 
 def _reference_pair_transfers(txns):
-    """Frozen exhaustive matcher, before the symbol/date index optimization.
+    """Exhaustive oracle for equal quantities without split metadata.
 
     Keep this intentionally simple: it is an independent behavioral oracle,
     including stable ties and quantity validation only for eligible dates.
+    Split conversion and unverified candidates have dedicated contract tests.
     """
     from src.basis import _basis_effect
 
@@ -29,7 +31,7 @@ def _reference_pair_transfers(txns):
         symbol = tin.get("symbol", "")
         qty = float(tin.get("quantity", 0) or 0)
         when = parse(tin.get("date", ""))
-        if when is None or qty <= 0:
+        if when is None or not math.isfinite(qty) or qty <= 0:
             continue
         best, best_score = None, None
         for tout in outs:
@@ -42,10 +44,10 @@ def _reference_pair_transfers(txns):
             if delta < 0 or delta > 14:
                 continue
             out_qty = float(tout.get("quantity", 0) or 0)
-            if out_qty <= 0:
+            if not math.isfinite(out_qty) or out_qty <= 0:
                 continue
-            rel = abs(qty - out_qty) / max(out_qty, 1e-9)
-            if rel > 0.001 and abs(qty - out_qty) > 1e-6:
+            rel = abs(qty - out_qty) / max(out_qty, qty)
+            if not math.isclose(qty, out_qty, rel_tol=1e-12, abs_tol=0.0):
                 continue
             score = (rel, delta)
             if best_score is None or score < best_score:
@@ -114,11 +116,12 @@ def test_earliest_inbound_and_input_order_for_same_date_take_each_out_once():
 
 
 @pytest.mark.parametrize("out_qty,in_qty,matched", [
-    (1000.0, 1001.0, True), (1000.0, 1001.001, False),
-    (0.000001, 0.000002, True), (0.000001, 0.0000021, False),
+    (1000.0, 1001.0, False), (1000.0, 1001.001, False),
+    (0.000001, 0.000002, False), (0.000001, 0.0000021, False),
+    (1000.0, 1000.0 + 1e-10, True), (1e-12, 2e-12, False),
     (0.0, 1.0, False), (-1.0, 1.0, False), (1.0, 0.0, False),
 ])
-def test_relative_and_absolute_tolerances(out_qty, in_qty, matched):
+def test_only_machine_precision_quantity_differences_are_verified(out_qty, in_qty, matched):
     tout = _txn("Transfer Out", qty=out_qty)
     tin = _txn("Transfer In", qty=in_qty)
     result = _assert_reference([tout, tin])
@@ -161,8 +164,8 @@ def test_eligible_bad_quantities_keep_the_existing_error(bad):
 
 @pytest.mark.parametrize("special", [float("nan"), float("inf"), -float("inf")])
 def test_special_quantities_do_not_change_candidate_order(special):
-    # Imports reject non-finite values. Direct callers still retain the old
-    # matcher behavior instead of acquiring a traversal-order dependency.
+    # Imports reject non-finite values; direct callers cannot verify them
+    # or let them steal the ordinary valid candidate.
     txns = [_txn("Transfer Out", "2024-01-01", special),
             _txn("Transfer Out", "2024-01-10"), _txn("Transfer In")]
     _assert_reference(txns)
