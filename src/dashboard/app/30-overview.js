@@ -417,7 +417,7 @@ function renderRecentTransactions() {
 // compact legend below each donut.
 function _renderOneAllocationDonut(svgEl, legendEl, field, palette) {
   if (!svgEl) return;
-  let agg = {};
+  let agg = Object.create(null);
   if (isAsOfLatest()) {
     for (const h of holdingsByAccount) {
       if (typeof h.value !== 'number') continue;
@@ -453,11 +453,26 @@ function _renderOneAllocationDonut(svgEl, legendEl, field, palette) {
     const xi0 = CX + R_IN * Math.cos(theta);
     const yi0 = CY + R_IN * Math.sin(theta);
     const color = palette[k] || '#9ca3af';
+    // A full-circle SVG arc has coincident endpoints and draws nothing.
+    // Coordinate rounding can also collapse a nearly full circle (including
+    // just its smaller inner arc). Split those arcs at the opposite side;
+    // leave ordinary slices unchanged so their appearance remains identical.
+    const coincident = (ax, ay, bx, by) =>
+      ax.toFixed(2) === bx.toFixed(2) && ay.toFixed(2) === by.toFixed(2);
+    const splitArc = large && (coincident(x0, y0, x1, y1) ||
+      coincident(xi0, yi0, xi1, yi1));
+    const mid = (theta + end) / 2;
+    const outerMid = `${(CX + R_OUT * Math.cos(mid)).toFixed(2)},${(CY + R_OUT * Math.sin(mid)).toFixed(2)}`;
+    const innerMid = `${(CX + R_IN * Math.cos(mid)).toFixed(2)},${(CY + R_IN * Math.sin(mid)).toFixed(2)}`;
     const d = [
       `M${x0.toFixed(2)},${y0.toFixed(2)}`,
-      `A${R_OUT},${R_OUT} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`,
-      `L${xi1.toFixed(2)},${yi1.toFixed(2)}`,
-      `A${R_IN},${R_IN} 0 ${large} 0 ${xi0.toFixed(2)},${yi0.toFixed(2)}`,
+      ...(splitArc ? [`A${R_OUT},${R_OUT} 0 0 1 ${outerMid}`] : []),
+      `A${R_OUT},${R_OUT} 0 ${splitArc ? 0 : large} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`,
+      // Separate closed boundaries avoid a radial seam in a complete ring.
+      ...(frac === 1 ? ['Z', `M${xi1.toFixed(2)},${yi1.toFixed(2)}`]
+        : [`L${xi1.toFixed(2)},${yi1.toFixed(2)}`]),
+      ...(splitArc ? [`A${R_IN},${R_IN} 0 0 0 ${innerMid}`] : []),
+      `A${R_IN},${R_IN} 0 ${splitArc ? 0 : large} 0 ${xi0.toFixed(2)},${yi0.toFixed(2)}`,
       'Z',
     ].join(' ');
     const pct = ((v / total) * 100).toFixed(1);
@@ -1019,7 +1034,7 @@ function _buildDailyPnlSection() {
     <div class="section-header" style="margin-top:24px;">
       <h2><span style="color:var(--accent);">Recent Daily P&L</span></h2>
       <span class="as-of-hint" style="margin-left:auto;">
-        Market-only moves (today's positions repriced at recent dates) — same-day cash flows excluded.
+        Today's positions repriced; cash flows excluded. Bars require consecutive observations with full price coverage.
       </span>
     </div>
     <div class="daily-pnl-bars" role="group"

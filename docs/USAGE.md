@@ -225,6 +225,11 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   Risk: Balance Drawdown chart, year × month Monthly P&L heatmap (with YTD
   column + best/worst-month summary), Recent Daily P&L bars.
 
+Recent Daily P&L reprices the selected export's current holdings at earlier
+dates, using only transaction quotes known by each date when cached prices are
+unavailable. Bars require consecutive observations with complete price coverage;
+gaps are omitted so missing or newly available prices cannot appear as returns.
+
 Dark theme, tabular-numeric formatting, mobile responsive
 (including narrow mobile viewports), no JS framework.
 
@@ -259,6 +264,9 @@ USD transfers, unmatched movements, and existing broker-specific exceptions
 retain their current rules. Missing prices or a split during transfer appear in
 Data Health; resolve those gaps before relying on the affected returns. The
 separately detected custodian rollover bridges cover their established cash cases.
+A transfer arrival already matched to another tracked account cannot also
+confirm rollover cash from a Distribution. An independent arrival is required;
+otherwise the unresolved Distribution remains flagged in Data Health.
 
 
 ## Input validation and recovery

@@ -29,7 +29,8 @@ Key invariants
   on account_group, so basis sails through.  Cross-group transfers
   (USAA Roth → Schwab Roth) DO need pairing.  The USAA reconciler
   synthesizes same-date same-qty legs so those pair trivially.
-- Dollars-for-basis: `amount` when >0 (includes fees), else `qty × price`.
+- Dollars-for-basis: `amount` when >0 (includes fees), else `qty × price`
+  with the option contract multiplier.
   Matches conventional tax-lot basis.
 """
 
@@ -47,6 +48,7 @@ from datetime import datetime, timedelta
 from .actions import (
     BASIS_EFFECTS, CASH_ADD_ACTIONS, CASH_SUB_ACTIONS, INCOME_ACTIONS,
 )
+from .config import contract_multiplier
 
 # Income actions used by compute_cash_summary's "income" rollup.
 # Derived from the action catalog's `income` field (single source of
@@ -224,13 +226,17 @@ def _basis_effect(txn: dict) -> str:
 
 def _basis_dollars(txn: dict) -> float:
     """Dollars to attribute to a lot: prefer `amount` (broker-reported,
-    includes fees/spread), fall back to qty × price."""
+    includes fees/spread), fall back to qty × price × contract multiplier.
+
+    Only the price fallback needs scaling.  Explicit amounts already
+    represent the complete contract value and retain their fee semantics.
+    """
     amount = float(txn.get("amount", 0) or 0)
     if amount > 0:
         return amount
     qty = float(txn.get("quantity", 0) or 0)
     price = float(txn.get("price", 0) or 0)
-    return qty * price
+    return qty * price * contract_multiplier(txn.get("symbol", ""))
 
 
 def _safe_date(s: str):
@@ -597,11 +603,14 @@ def basis_override_or(t: dict, default: float) -> float:
 def fmv_basis(t: dict, qty: float) -> float:
     """Basis for a lot fin cannot price from a purchase.
 
-    An override wins.  Otherwise FMV at the event (``qty x price``) when
+    An override wins.  Otherwise FMV at the event when
     the broker recorded a spot price — the right basis for an asset
     acquired at market, and a far better estimate than $0, which would
     book the entire proceeds as gain on the eventual sale.  Falls back to
-    $0 only when no price is available.
+    $0 only when no price is available.  Quantity times price is scaled
+    by the contract multiplier: normalized option quantities are
+    contracts and their prices are per-share premiums.  An override is
+    already a dollar total, so it is never scaled.
 
     Used by the ``zero_basis`` branch (rewards, spinoffs, mergers), the
     unpaired transfer-in branch (crypto arriving from an off-platform
@@ -615,7 +624,8 @@ def fmv_basis(t: dict, qty: float) -> float:
 
 def _fmv_at(t: dict, qty: float) -> float:
     price = float(t.get("price", 0) or 0)
-    return qty * price if price > 0 else 0.0
+    return (qty * price * contract_multiplier(t.get("symbol", ""))
+            if price > 0 else 0.0)
 
 
 # Which "roc" actions are REVERSALS.  The catalog carries no sign field —
@@ -1002,7 +1012,13 @@ def _push_lot(state: dict, method: str, key: tuple, qty: float,
 def _push_txn_lots(state: dict, method: str, key: tuple, t: dict,
                    qty: float, total_basis: float, date: str,
                    origin: str = "reconstructed") -> None:
-    """Push the lot(s) created by txn ``t``.
+    """Push the lot(s) created by txn ``t`` in either lot walker.
+
+    ``state`` needs only its ``lots`` mapping.  History binds this helper
+    to its incremental lot queues, sharing piece construction and origin
+    metadata with the annotated walk.  For FIFO/LIFO/HIFO, ``method``
+    selects the same lot-list representation; relief order is applied
+    later when consuming.  Average basis keeps its separate pool format.
 
     When the txn carries a ``basis_override_lots`` breakdown (several
     broker-report acquisition rows grouped onto one fin txn — see
@@ -1478,8 +1494,7 @@ def _walk(txns: list[dict], method: str, *, annotate: bool,
                             "wrap_out_unpaired", b_rm, proceeds - b_rm)
                     for il in g["in"]:
                         iq = float(il.get("quantity", 0) or 0)
-                        px = float(il.get("price", 0) or 0)
-                        b = _ov(il, iq * px if px > 0 else 0.0)
+                        b = fmv_basis(il, iq)
                         _push_txn_lots(state, method,
                                        (acct, il.get("symbol", "")),
                                        il, iq, b, il.get("date", ""),

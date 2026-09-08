@@ -83,6 +83,9 @@ transactions, group filter, rollover bridges, and cash series. It walks to D
 and shares the valuation kernel with history: USD handling, split restatement,
 option intrinsic floor, and reconstructed broker cash. `restate_qty=False`
 applies only to quantities already expressed on today's share basis.
+For the header and recent P&L, use `analytics.price_fallbacks` to align snapshot
+quantities and dated transaction quotes with that basis; do not reuse the final
+ledger price for earlier dates or compare partially priced daily totals.
 
 Never use the nearest snapshot by absolute date distance for an as-of answer:
 it can include future transactions. If a historical-snapshot approximation is

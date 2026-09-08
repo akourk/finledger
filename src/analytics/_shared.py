@@ -224,6 +224,10 @@ def detect_rollover_bridges(txns: list[dict]) -> list[dict]:
     - **Transfer In rows without an ``amount``**: some exports carry
       the dollar value in ``quantity`` (USD rows) or as qty × price —
       both are used as fallbacks.
+
+    A verified cross-account in-kind arrival already has an identified
+    source. It cannot also confirm rollover cash from a Distribution;
+    leave that Distribution unresolved unless another arrival supports it.
     """
     def _tin_amount(t: dict) -> float:
         amt = float(t.get("amount", 0) or 0)
@@ -275,16 +279,18 @@ def detect_rollover_bridges(txns: list[dict]) -> list[dict]:
     events.sort(key=lambda e: e["components"][0]["date"])
 
     bridges: list[dict] = []
+    claimed_account_arrivals = ({id(tin) for _, tin in eligible_account_transfer_pairs(txns)}
+                                if events else set())
     used_tin: set[int] = set()
     for ev in events:
         start_date = ev["components"][0]["date"]
         d_date = _parse_iso(start_date)
         total = ev["total"]
 
-        # Candidate Transfer Ins: same group, unused, 0<delta≤90 days.
+        # Candidate Transfer Ins: same group, unclaimed, 0<delta≤90 days.
         cands: list[tuple[int, float, int, dict]] = []   # (idx, amt, days, txn)
         for i, t in enumerate(txns):
-            if i in used_tin:
+            if i in used_tin or id(t) in claimed_account_arrivals:
                 continue
             if t.get("action") != "Transfer In":
                 continue

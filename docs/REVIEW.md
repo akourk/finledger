@@ -24,6 +24,11 @@ code testing or measurements.
 | Mobile Risk view | The monthly returns table widened the page beyond the viewport; the smoke check visited only Returns. | Contain the table in a named, keyboard-scrollable region. Browser checks now open Risk on mobile, assert viewport containment, and exercise horizontal keyboard scrolling. |
 | Account transfer attribution | Portfolio-neutral in-kind transfers could appear as account losses or gains. | Price verified cross-group pairs once and export scope-aware flow supplements for Python/JS returns, XIRR, annual tables, account contribution/P&L cards, and filtered benchmarks. Preserve whole-portfolio external contributions and report missing transfer valuations. |
 | Delayed transfer valuation | Assets disappeared from portfolio measurements between outbound and inbound posting dates. | Retain a separately marked in-transit position with carried basis, included only in scopes containing both custodians. Reconcile history, daily totals, returns, holdings, allocation, and composition without changing posted account balances. Tests cover whole portfolios in transit, missing daily marks, splits/options, scope boundaries, and precision before rounding. |
+| Duplicate rollover evidence | One arrival could confirm both an in-kind account transfer and rollover cash, overstating assets until arrival. | Reserve verified in-kind arrivals before rollover matching. Preserve independent USD arrivals and existing same-group behavior; test effective values and returns through the overlap. |
+| Current-position repricing | The final transaction price could overwrite earlier dates; inconsistent split units and changing price coverage could create false P&L. | Share a chronological quote walk and quantity conversion for header/daily P&L. Require complete consecutive daily observations and expose missing header marks as coverage. |
+| Option basis units | FMV receipts and missing-amount trades treated per-share option premiums as whole-contract amounts. | Apply the canonical contract multiplier to price-derived basis/proceeds, preserving explicit dollar amounts and overrides. Cover later sales and all lot methods. |
+| Transaction-created lots | History duplicated broker acquisition pieces and provenance construction from the annotated walker. | Reuse `basis._push_txn_lots`; retain separate state and relief methods. Multi-piece HIFO regressions detect blended-lot errors that matching receipt totals would hide. |
+| Single-category allocation | Full and nearly full SVG arcs could collapse to coincident endpoints and render empty rings. | Split degenerate arcs while preserving ordinary slices. Chrome checks actual filled geometry, empty centers, proportions, and escaped labels. |
 | Test cleanup | The session isolation directory was never released. | Retain a `TemporaryDirectory` owner for process lifetime so normal interpreter shutdown cleans up the session's own files. |
 
 The rename workflow assumes a single writer, as does the rest of the pipeline.
@@ -94,11 +99,11 @@ require candidate comparisons; this is not a claim of universal linear scaling.
    do not reinterpret every unmatched transfer as external or asset units as
    dollar amounts. Preserve the selected scope and valuation dates across
    snapshots, charts, TWR, and XIRR when extending coverage.
-2. **Single-category allocation charts.** The fictional transit visual check
-   exposed an existing donut-rendering edge case: a single category fills the
-   full circle, so the SVG arc's start and end coincide and the ring disappears.
-   Use a complete-circle path and cover the one-category view in browser checks.
-3. **Reduce duplicated financial state transitions gradually.** The lot walkers
+   Two reproduced boundaries remain: approximate raw-quantity matches can carry
+   more lot shares than the recipient posts, and split-restated counterpart
+   quantities can evade both raw matching and its share-unit warning. Diagnose
+   these discrepancies before assuming rounding, fees, or tax-basis adjustments.
+2. **Reduce duplicated financial state transitions gradually.** The lot walkers
    already share substantial helpers and strong parity coverage. Extract one
    verified transition at a time. A framework rewrite or database migration has
    no demonstrated benefit for the current workload.
@@ -157,6 +162,17 @@ times for five basis walks plus 144 snapshots were **0.331 s** for one symbol an
 **0.252 s** for eight symbols, each with 4,000 fictional rows and three repeats.
 These local measurements include the new transit handling and show no material
 slowdown against the earlier workload; they are not full-pipeline timings.
+
+The rollover, repricing, option-basis, and allocation follow-up passed
+**1,835 tests**, with the same Windows symlink skip. Chrome checks passed across
+**10 tabs** and added actual SVG fill tests for single and nearly full rings;
+axe passed across **12 states**. The four public screenshots remain identical
+to approved bytes. **101 local documentation links and anchors** resolve and
+all project skills pass metadata checks. The shared lot creator preserves both
+existing transfer benchmark digests. Regressions were demonstrated against the
+prior rollover, option-fallback, P&L-date, and ring-geometry behavior; a runtime
+mutation also verified that blending broker acquisition pieces changes the
+expected remaining HIFO basis.
 
 An initial demo failure was traced to a working-copy sample using CRLF despite
 the repository's LF attributes. Its parsed contents matched the generator;

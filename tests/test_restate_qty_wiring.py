@@ -69,7 +69,10 @@ def split_world(isolated_workdir):
     (cache / "prices" / f"{SYM}.json").write_text(
         json.dumps({"symbol": SYM,
                     "prices": {BEFORE: RESTATED_CLOSE,
-                               "2024-06-14": RESTATED_CLOSE}}),
+                               "2024-06-14": RESTATED_CLOSE,
+                               "2024-06-29": RESTATED_CLOSE,
+                               "2024-06-30": RESTATED_CLOSE,
+                               SPLIT_DATE: RESTATED_CLOSE}}),
         encoding="utf-8")
     (cache / "splits_cache.json").write_text(
         json.dumps({SYM: [[SPLIT_DATE, RATIO]]}), encoding="utf-8")
@@ -156,7 +159,9 @@ class TestTodayBasisSitesDoNotRestate:
         Quantity is the POST-split count, which is what a real snapshot
         for today would hold.
         """
-        return [{"date": BEFORE, "total": 0.0, "positions": [
+        # Post-split shares belong on/after the split date. An earlier snapshot
+        # must retain its raw pre-split quantity until a repricer converts it.
+        return [{"date": SPLIT_DATE, "total": CORRECT_VALUE, "positions": [
             {"account_group": "Broker", "symbol": SYM,
              "quantity": HELD * RATIO, "price": RESTATED_CLOSE,
              "value": HELD * RATIO * RESTATED_CLOSE, "cost_basis": 0.0},

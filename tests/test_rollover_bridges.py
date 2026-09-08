@@ -154,3 +154,94 @@ class TestDataHealth:
             txns, [], [], {"rollover_bridges": bridges}, tmp_path)
         assert not any(i["kind"] == "unbridged_retirement_distribution"
                        for i in issues)
+
+
+@pytest.fixture
+def overlapping_transfer(isolated_workdir, monkeypatch):
+    """Two independently fictional movements happen to have the same value."""
+    from src import history, prices, valuation
+    from src.config import ACCOUNT_TYPES
+
+    ACCOUNT_TYPES.update({"Example Source": "Taxable", "Roth IRA": "Retirement"})
+    monkeypatch.setenv("FIN_AS_OF_DATE", "2024-01-06")
+    for module in (history, prices, valuation):
+        monkeypatch.setattr(module, "get_price", lambda symbol, day: 100.0)
+    monkeypatch.setattr(valuation, "split_factor_since", lambda symbol, day: 1.0)
+    monkeypatch.setattr(valuation, "option_intrinsic", lambda symbol, day: None)
+
+    def row(group, action, day, symbol="PRISM"):
+        return {"date": day, "account_group": group, "account": group,
+                "account_type": ACCOUNT_TYPES[group], "action": action,
+                "raw_action": action, "symbol": symbol, "quantity": 10.0,
+                "price": 100.0, "amount": 1000.0, "fees": 0.0,
+                "description": "", "source": "fictional-rollover-fixture"}
+
+    return [row("Example Source", "Contribution", "2024-01-01"),
+            row("Roth IRA", "Contribution", "2024-01-01", "ORBIT"),
+            row("Roth IRA", "Distribution", "2024-01-02", "ORBIT"),
+            row("Example Source", "Transfer Out", "2024-01-03"),
+            row("Roth IRA", "Transfer In", "2024-01-05")]
+
+
+def test_verified_account_arrival_cannot_also_confirm_rollover_cash(overlapping_transfer):
+    from src.analytics._shared import detect_rollover_bridges
+    from src.analytics.data_health import _check_unbridged_retirement_distribution
+    from src.return_flows import eligible_account_transfer_pairs
+
+    txns = overlapping_transfer
+    assert eligible_account_transfer_pairs(txns) == [(txns[-2], txns[-1])]
+    bridges = detect_rollover_bridges(txns)
+    assert bridges == []
+    # The original Distribution now remains explicitly unresolved; its amount
+    # must not invent a second asset supported by the already-claimed arrival.
+    issues = _check_unbridged_retirement_distribution(txns, {"rollover_bridges": bridges})
+    assert [issue["kind"] for issue in issues] == ["unbridged_retirement_distribution"]
+
+
+def test_claimed_arrival_does_not_create_a_loss_when_transit_ends(overlapping_transfer):
+    from src.analytics._shared import (
+        _balance_sort_key, _value_at_date, compute_twr_daily_summary,
+        compute_twr_summary, detect_rollover_bridges,
+    )
+    from src.history import compute_history
+    from src.return_flows import annotate_account_transfers, scope_snapshot_value
+
+    txns = overlapping_transfer
+    annotate_account_transfers(txns)
+    history = compute_history(txns, {"PRISM": "Other", "ORBIT": "Other"}, cadence="day")
+    window = [h for h in history if "2024-01-03" <= h["date"] <= "2024-01-05"]
+    bridges = detect_rollover_bridges(txns)
+    # The unsupported Distribution predates this window. PRISM is the only
+    # evidenced asset throughout it, first in transit and then at its custodian.
+    assert [scope_snapshot_value(h) for h in window] == [1000.0] * 3
+    ordered = sorted(txns, key=_balance_sort_key)
+    assert [_value_at_date(ordered, h["date"], None, bridges) for h in window] == [1000.0] * 3
+    assert compute_twr_summary(txns, window, bridges, None)["cumulative"] == 0.0
+    assert compute_twr_daily_summary(txns, window, bridges, None)["cumulative"] == 0.0
+
+
+def test_independent_usd_arrival_still_confirms_rollover(overlapping_transfer):
+    from src.analytics._shared import _balance_sort_key, _value_at_date, detect_rollover_bridges
+
+    txns = overlapping_transfer
+    txns.append(_tin("2024-01-06", group="Roth IRA", amount=1000.0))
+    bridges = detect_rollover_bridges(txns)
+    assert bridges == [{"group": "Roth IRA", "start_date": "2024-01-02",
+                        "end_date": "2024-01-06", "amount": 1000.0}]
+    ordered = sorted(txns, key=_balance_sort_key)
+    # Each of the two positions now has its own arrival evidence. The cash
+    # remains in flight even after the separately transferred PRISM arrives.
+    assert _value_at_date(ordered, "2024-01-03", None, bridges) == 2000.0
+    assert _value_at_date(ordered, "2024-01-05", None, bridges) == 2000.0
+
+
+def test_same_group_lot_pair_keeps_existing_rollover_eligibility(overlapping_transfer):
+    from src.analytics._shared import detect_rollover_bridges
+    from src.return_flows import eligible_account_transfer_pairs
+
+    txns = overlapping_transfer
+    txns[-2]["account_group"] = "Roth IRA"
+    assert eligible_account_transfer_pairs(txns) == []
+    assert detect_rollover_bridges(txns) == [
+        {"group": "Roth IRA", "start_date": "2024-01-02",
+         "end_date": "2024-01-05", "amount": 1000.0}]

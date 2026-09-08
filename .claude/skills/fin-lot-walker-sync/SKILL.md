@@ -115,7 +115,8 @@ precisely how the two documented misses happened.
 **Prefer extraction over lockstep.** The strongest version of this
 checklist is not following it: if the rule can live at module level in
 `basis.py` and be called from both walkers, put it there. Already
-shared: `_consume_lots`, `_consume_lots_directed`,
+shared: `_push_txn_lots` (broker acquisition pieces and origin metadata),
+`_consume_lots`, `_consume_lots_directed`,
 `_consume_lots_reserving`, `_consume_for_rebase`, `_pair_transfers`,
 `_pair_wraps`, `_rescale_lots`, `_rebase_is_move`,
 `_apply_split_to_lots`, `basis_override_or`, `fmv_basis`, and — since

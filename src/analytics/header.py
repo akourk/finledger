@@ -22,6 +22,7 @@ from ..basis import _basis_dollars  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
 from ..prices import any_provisional, oldest_last_fetch
 from ..valuation import mark
+from .price_fallbacks import current_position_price_series, current_position_quantities
 
 
 def compute_header_summary(txns: list[dict], history: list[dict],
@@ -60,19 +61,15 @@ def compute_header_summary(txns: list[dict], history: list[dict],
     # balance walk as _value_at_date, but constrained to today's
     # snapshot positions (no ledger re-walk needed).  Falls back to
     # the most recent txn price when the cache can't resolve a symbol.
-    today_positions = [*(history[-1].get("positions") or []),
-                       *(history[-1].get("in_transit") or [])]
-    last_txn_price: dict[str, float] = {}
-    for t in txns:
-        p = float(t.get("price", 0) or 0)
-        sym = t.get("symbol", "")
-        if sym and p > 0:
-            last_txn_price[sym] = p
+    today_positions = current_position_quantities(history[-1])
+    _, last_txn_price = next(current_position_price_series(txns, [yest]))
 
     yest_total = 0.0
     unpriced = 0.0
     px_yest: dict[str, float | None] = {}
     for pos in today_positions:
+        if pos.get("valuation_issue"):
+            continue  # Unsupported transit units are already a coverage warning.
         sym = pos.get("symbol", "")
         qty = float(pos.get("quantity", 0) or 0)
         # restate_qty=False: `qty` comes from TODAY's snapshot positions
@@ -82,6 +79,11 @@ def compute_header_summary(txns: list[dict], history: list[dict],
         # split.
         m = mark(sym, qty, yest, last_txn_price, restate_qty=False,
                  price_cache=px_yest)
+        if "value" in pos and pos["value"] is None:
+            # Today's missing mark is not a total loss. Exclude this position
+            # from the comparison and expose its known prior value as coverage.
+            unpriced += float(m.value or 0)
+            continue
         if m.value is not None:
             yest_total += m.value
         else:

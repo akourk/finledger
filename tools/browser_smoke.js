@@ -7,6 +7,80 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const puppeteer = require('puppeteer');
 
+async function checkAllocationGeometry(page) {
+  // DOM/string probes cannot tell whether SVG arcs actually fill an annulus.
+  // Exercise the shipped renderer with independent fictional positions, then
+  // restore the demo's inputs; no fixture is written into the public artifact.
+  const results = await page.evaluate(() => {
+    const savedPositions = holdingsByAccount.slice();
+    const savedDate = asOfDate;
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-1000px;width:200px';
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const legend = document.createElement('div');
+    host.append(svg, legend);
+    document.body.append(host);
+    const results = [];
+    try {
+      asOfDate = LATEST_DATE;
+      const unsafeLabel = 'Example <img src=x onerror="alert(1)"> & "quoted"';
+      const cases = [
+        ['single', [[unsafeLabel, 125]]],
+        ['almost full, both arcs collapse', [['Main', 999999], ['Minor', 1]]],
+        ['almost full, inner arc collapses', [['Main', 999986], ['Minor', 14]]],
+        ['ordinary slices', [['Main', 75], ['Minor', 25]]],
+        ['empty', []],
+        ['zero', [['Main', 0]]],
+      ];
+      for (const field of ['account_group', 'account_type', 'sector']) {
+        for (const [name, entries] of cases) {
+          holdingsByAccount.splice(0, holdingsByAccount.length,
+            ...entries.map(([label, value]) => ({[field]: label, value})));
+          _renderOneAllocationDonut(svg, legend, field, Object.create(null));
+          const paths = [...svg.querySelectorAll('path.alloc-slice')];
+          const filled = (x, y) => paths.some(path => path.isPointInFill(new DOMPoint(x, y)));
+          const positive = entries.some(([, value]) => value > 0);
+          const ringVisible = [45, 135, 225, 315].every(degrees => {
+            const radians = degrees * Math.PI / 180;
+            return filled(100 + 65 * Math.cos(radians), 100 + 65 * Math.sin(radians));
+          });
+          results.push({name: `${field}: ${name}`, positive,
+            pathCount: paths.length,
+            ringVisible,
+            holeEmpty: !filled(100, 100) && !filled(145, 100),
+            outsideEmpty: !filled(185, 100),
+            emptyTotal: svg.textContent === 'Total$0' && legend.textContent === '',
+            escaped: name !== 'single' || (
+              svg.querySelector('title')?.textContent === unsafeLabel + ': $125.00 (100.0%)' &&
+              legend.querySelector('.alloc-name')?.textContent === unsafeLabel &&
+              !host.querySelector('img, script, [onerror]')),
+            ordinarySplit: name !== 'ordinary slices' || (
+              paths[0].isPointInFill(new DOMPoint(145, 145)) &&
+              !paths[0].isPointInFill(new DOMPoint(55, 55)) &&
+              paths[1].isPointInFill(new DOMPoint(55, 55))),
+          });
+        }
+      }
+      return results;
+    } finally {
+      holdingsByAccount.splice(0, holdingsByAccount.length, ...savedPositions);
+      asOfDate = savedDate;
+      host.remove();
+    }
+  });
+  for (const result of results) {
+    assert.equal(result.ringVisible, result.positive, result.name + ': visible ring');
+    assert.equal(result.holeEmpty, true, result.name + ': empty center');
+    assert.equal(result.outsideEmpty, true, result.name + ': bounded ring');
+    assert.equal(result.escaped, true, result.name + ': imported label remains text');
+    assert.equal(result.ordinarySplit, true, result.name + ': proportional slices');
+    if (!result.positive) {
+      assert.equal(result.pathCount, 0, result.name + ': no empty slices');
+      assert.equal(result.emptyTotal, true, result.name + ': zero total without legend');
+    }
+  }
+}
+
 async function main() {
   const file = path.resolve(process.argv[2] || '_site/index.html');
   const browser = await puppeteer.launch({headless: true,
@@ -28,6 +102,7 @@ async function main() {
     assert.equal(await page.$eval('#demo-intro', el => el.textContent.includes('Fictional portfolio')), true);
     assert.equal(await page.evaluate(() => DATA.demo.synthetic), true);
     assert.equal(await page.evaluate(() => SNAPSHOT_DATE), '2026-06-30');
+    await checkAllocationGeometry(page);
     await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement.className), 'skip-link');
     await page.click('a[href="#about-project"]');
@@ -132,7 +207,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('[aria-label="Monthly returns table"]').scrollLeft > 0);
     await page.click('#perfViewBtnReturns');
     assert.deepEqual(errors, []);
-    console.log('PASS: 10 tabs, per-key input, historical gains, Python/JS monthly risk parity, keyboard disclosures, CSV export, deep link, mobile Returns/Risk layout and table scrolling, no console/network errors.');
+    console.log('PASS: 10 tabs, allocation ring geometry, per-key input, historical gains, Python/JS monthly risk parity, keyboard disclosures, CSV export, deep link, mobile Returns/Risk layout and table scrolling, no console/network errors.');
   } finally {
     await browser.close();
     await fs.rm(downloads, {recursive: true, force: true});

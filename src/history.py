@@ -23,6 +23,7 @@ from .basis import (
     zero_basis_origin,
     _consume_for_rebase, _consume_lots, _consume_lots_directed,
     _consume_lots_reserving, _pair_transfers, _pair_wraps, _rebase_is_move,
+    _push_txn_lots,
     _sort_key as _basis_sort_key,
     apply_roc_to_lots, basis_override_or, fmv_basis, pair_roc_events,
 )
@@ -332,6 +333,10 @@ def compute_history(txns: list[dict],
 
     balances: dict[tuple[str, str], float] = defaultdict(float)
     lots: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    # The shared lot-creation helper needs only this view of the state.
+    # Every history account uses the same lot-list representation; its
+    # relief method is applied separately by _consume.
+    lot_state = {"lots": lots}
     # Running principal for Savings cash positions — cash has no lots, so
     # its basis is walked here instead.  Same per-txn rule the holdings
     # table uses (pipeline_stages.cash_principal_effect); see the cash
@@ -369,33 +374,11 @@ def compute_history(txns: list[dict],
         return _consume_lots_reserving(lots[key], qty_to_remove,
                                        _method_for(key[0]), reserved)
 
-    def _push(key, qty_add, basis_dollars, date, origin="reconstructed"):
-        if qty_add > 0:
-            lots[key].append({
-                "date": date,
-                "qty": qty_add,
-                "basis_per_share": basis_dollars / qty_add,
-                "origin": origin,
-            })
-
     def _push_txn(key, t, qty_add, basis_dollars, date,
                   origin="reconstructed"):
-        """Multi-lot mirror of basis._push_txn_lots: when the txn
-        carries a per-lot ``basis_override_lots`` breakdown (several
-        broker-report rows grouped onto one fin txn), push one lot per
-        piece so per-unit flavors match the annotated walk exactly.
-        Provenance mirrors basis.py too: any basis_override → "broker"."""
-        pieces = t.get("basis_override_lots")
-        if pieces and t.get("basis_override") is not None:
-            for piece in pieces:
-                pq = float(piece.get("qty", 0) or 0)
-                if pq > 0:
-                    _push(key, pq, float(piece.get("basis", 0) or 0), date,
-                          origin="broker")
-            return
-        if t.get("basis_override") is not None:
-            origin = "broker"
-        _push(key, qty_add, basis_dollars, date, origin=origin)
+        """Bind the annotated walker's lot creation to history's state."""
+        _push_txn_lots(lot_state, "fifo", key, t, qty_add, basis_dollars,
+                       date, origin=origin)
 
     history: list[dict] = []
     for sample_date in samples:

@@ -218,6 +218,9 @@ Normal local output lives in `exports/transactions.json` and
     - `rollover_bridges` — Distribution→Transfer-In pairs (custodian
       moves) with 90-day / 5% tolerance matching. Consumers apply a
       bridge adjustment to effective balance during the window.
+      An arrival already claimed by a verified cross-account in-kind pair
+      cannot also confirm a Distribution. An independent arrival is required;
+      otherwise the existing unresolved-distribution warning remains visible.
       Robust to real-world shapes: same-group Distribution legs within
       7 days merge into one event (one bridge row per leg, starting
       when its cash left); when no single Transfer In matches, the SUM
@@ -927,7 +930,12 @@ Normal local output lives in `exports/transactions.json` and
   (`config.contract_multiplier`): quantity is CONTRACTS and price is
   the per-share premium, so every qty×price valuation site (holdings,
   snapshots, 1-day change, daily P&L, basis-methods rows) scales
-  options by 100 — basis is amount-based and needs no scaling.  Open
+  options by 100. Explicit basis amounts and overrides are already dollar
+  totals and stay unscaled. FMV receipts and missing-amount trade fallbacks
+  use `basis.fmv_basis` / `_basis_dollars`, applying the same multiplier to
+  quantity times premium; otherwise option basis and sale proceeds are off
+  by the contract size. `test_fmv_basis_units.py` covers receipts, subsequent
+  sales, ordinary stocks, and explicit amounts/overrides. Open
   options are valued at their last-traded premium (yfinance can't
   price the contracts), FLOORED at intrinsic value from the
   underlying's cached price (`prices.option_intrinsic`) — so a deep-ITM
@@ -1477,6 +1485,18 @@ includes those exceptions, rather than reconstructing it from catalog sets.
   - `price_cache` is an optional memo **scoped to one date** — a symbol
     held in several account groups is otherwise looked up once per
     group.  Never let it outlive the date.
+  - Current-position P&L uses `analytics.price_fallbacks`: sort transaction
+    quotes once in canonical order and advance only through each requested
+    date. Convert each quote from its trade units to the cache's share units;
+    convert posted snapshot quantities from the snapshot date and transit
+    quantities from departure. This keeps historical snapshots consistent
+    when later split metadata becomes available. The kernel still owns price
+    selection, option intrinsic floors, and contract multipliers.
+    Daily bars require consecutive complete price observations; a coverage
+    gap resets their baseline. A missing current mark is excluded from the
+    header comparison and its known prior value contributes to `unpriced_1d`.
+    Do not interpret missing data as a zero-dollar holding or a market loss.
+    `test_current_position_pricing.py` covers dates, ordering, splits, and gaps.
   - `value is None` means *unpriceable*, not *worthless*.  Callers
     report it through `priced_pct` rather than substituting a number.
 

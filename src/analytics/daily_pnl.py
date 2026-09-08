@@ -16,6 +16,7 @@ meaningful series (e.g. brand-new install where everything's stub).
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from .price_fallbacks import current_position_price_series, current_position_quantities
 
 
 def compute_daily_pnl(history: list[dict],
@@ -31,19 +32,14 @@ def compute_daily_pnl(history: list[dict],
     # Use today's positions as the constant share count, reprice at
     # recent dates.  Same trick as compute_header_summary; means we
     # only show "market movement" component, not same-day cash flows.
-    today_positions = [*(history[-1].get("positions") or []),
-                       *(history[-1].get("in_transit") or [])]
     today_str = history[-1].get("date") or ""
-    if not today_positions or not today_str:
+    if not today_str:
         return []
-
-    # Build last-txn-price fallback for symbols the cache can't price
-    last_txn_price: dict[str, float] = {}
-    for t in txns:
-        p = float(t.get("price", 0) or 0)
-        sym = t.get("symbol", "")
-        if sym and p > 0:
-            last_txn_price[sym] = p
+    today_positions = current_position_quantities(history[-1])
+    if not today_positions or any(p.get("valuation_issue") or
+                                 ("value" in p and p["value"] is None)
+                                 for p in today_positions):
+        return []
 
     today = datetime.strptime(today_str, "%Y-%m-%d").date()
     series = []
@@ -70,13 +66,14 @@ def compute_daily_pnl(history: list[dict],
     # Walk back window_days calendar days (we'll skip dates with no
     # price coverage — handles weekends/holidays without us doing a
     # full trading-calendar lookup).
-    for offset in range(window_days, -1, -1):
-        d = today - timedelta(days=offset)
-        d_iso = d.isoformat()
+    dates = [(today - timedelta(days=offset)).isoformat()
+             for offset in range(window_days, -1, -1)]
+    for d_iso, last_txn_price in current_position_price_series(txns, dates):
         if have_cache and not any(d_iso in s for s in series_by_sym.values()):
             continue   # no symbol actually closed on this date
         total = 0.0
         had_any_price = False
+        missing_price = False
         # Scoped to this date -- `today_positions` carries one row per
         # (account_group, symbol), so a symbol held in several accounts
         # would otherwise be looked up once per account, every day.
@@ -94,12 +91,19 @@ def compute_daily_pnl(history: list[dict],
             m = mark(sym, qty, d_iso, last_txn_price, restate_qty=False,
                      price_cache=px_on_date)
             if m.value is None:
+                missing_price = True
                 continue
             total += m.value
             had_any_price = True
-        if not had_any_price:
+        if not had_any_price or missing_price:
+            # A newly priceable holding is coverage, not investment profit.
+            # Require complete consecutive observations before emitting a bar.
+            prev_total = None
             continue
-        change = (total - prev_total) if prev_total is not None else 0.0
+        if prev_total is None:
+            prev_total = total
+            continue
+        change = total - prev_total
         change_pct = (change / prev_total * 100) if (prev_total and prev_total > 0) else 0.0
         series.append({
             "date":       d_iso,
@@ -109,5 +113,4 @@ def compute_daily_pnl(history: list[dict],
         })
         prev_total = total
 
-    # Drop the first entry's change=0 placeholder; user wants moves
-    return series[1:] if series else []
+    return series

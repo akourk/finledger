@@ -608,3 +608,55 @@ def test_history_nets_a_reversed_roc_like_the_basis_walker(stub_prices):
     assert acme["cost_basis"] == pytest.approx(150.0)
     assert acme["cost_basis"] == pytest.approx(
         _walker_basis(txns)[("Robinhood", "ACME")], abs=0.02)
+
+
+@pytest.mark.parametrize("arrival_action", [
+    "Buy", "Reward", "Transfer In", "Wrap Asset In",
+])
+def test_history_preserves_broker_acquisition_pieces_for_hifo(
+        stub_prices, monkeypatch, arrival_action):
+    """Equal receipt totals cannot detect a blended acquisition lot.
+
+    One receipt contains $10 and $20 lots.  HIFO must consume the $20
+    lot, leaving $10 in both walkers; blending would leave $15 instead.
+    Exercise each lot-creating receipt branch and retain broker origin.
+    """
+    from src import basis, config, history
+
+    monkeypatch.setenv("FIN_AS_OF_DATE", "2024-01-31")
+    monkeypatch.setitem(config.ACCOUNT_TYPES, "Fictional Taxable", "Taxable")
+    txns = [
+        _txn("2024-01-01", "Fictional Taxable", "Taxable", "FICTION",
+             arrival_action, 2.0, amount=30.0, price=25.0),
+        _txn("2024-01-20", "Fictional Taxable", "Taxable", "FICTION",
+             "Sell", 1.0, amount=25.0, price=25.0),
+    ]
+    txns[0].update(basis_override=30.0, basis_override_lots=[
+        {"qty": 1.0, "basis": 10.0},
+        {"qty": 1.0, "basis": 20.0},
+    ])
+    methods = {"Fictional Taxable": "hifo"}
+    state = basis.compute_basis_default(txns, account_methods=methods)
+    created_lots = []
+    shared_push = history._push_txn_lots
+
+    def record_push(state, method, key, txn, qty, total_basis, date,
+                    origin="reconstructed"):
+        shared_push(state, method, key, txn, qty, total_basis, date,
+                    origin=origin)
+        created_lots.extend(dict(lot) for lot in state["lots"][key])
+
+    monkeypatch.setattr(history, "_push_txn_lots", record_push)
+    snapshots = history.compute_history(
+        txns, {"FICTION": "Other"}, account_methods=methods)
+
+    assert snapshots[0]["date"] == "2024-01-15"
+    assert snapshots[0]["positions"][0]["cost_basis"] == 30.0
+    assert [lot["origin"] for lot in created_lots] == ["broker", "broker"]
+    assert [lot["basis_per_share"] for lot in created_lots] == [10.0, 20.0]
+    assert state["realized_total"] == 5.0
+    assert txns[-1]["cost_basis"] == 20.0
+    final = basis.state_to_holdings(state, "fifo")[0]
+    assert final["cost_basis"] == 10.0
+    assert snapshots[-1]["positions"][0]["cost_basis"] == final["cost_basis"]
+    assert snapshots[-1]["positions"][0]["quantity"] == 1.0

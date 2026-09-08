@@ -238,6 +238,21 @@ class TestTheSharedRulesAreStillShared:
                 "shared helper"
             )
 
+    def test_both_walkers_use_shared_transaction_lot_creation(self):
+        """Broker acquisition pieces must survive in both lot queues.
+
+        Replacing a multi-piece acquisition with one blended lot can
+        preserve total basis at receipt while changing later HIFO or
+        report-directed disposals.  Origin metadata is shared too.
+        """
+        for fn, name in ((B._walk, "basis._walk"),
+                         (H.compute_history, "history's walker")):
+            src = inspect.getsource(fn)
+            assert "_push_txn_lots(" in src, (
+                f"{name} no longer uses the shared transaction lot creator")
+            assert 'get("basis_override_lots")' not in src, (
+                f"{name} has re-inlined broker acquisition pieces")
+
     def test_history_uses_the_shared_cash_principal_rule(self):
         """Cash has no lots, so its basis is the one figure neither
         walker can read off a lot queue — each had to answer separately,
