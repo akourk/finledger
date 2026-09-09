@@ -301,40 +301,135 @@ async function checkDrawdownGeometry(page, state) {
   }
 }
 
-async function checkDrawdownPresentation(page, mobile = false) {
+async function checkBenchmarkGeometry(page, state, hover = false) {
+  try {
+    await page.waitForFunction(() => {
+      const svg = document.getElementById('benchmarkCompareSvg');
+      return svg?.checkVisibility() && svg.querySelector('path')
+        && Math.abs(svg.viewBox.baseVal.width - svg.getBoundingClientRect().width) < 1;
+    }, {timeout: 3000});
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+  }
+  const geometry = await page.$eval('#benchmarkCompareSvg', svg => {
+    const bounds = svg.getBoundingClientRect();
+    const cap = svg.querySelector('rect').getBoundingClientRect();
+    return {visible: svg.checkVisibility(), width: bounds.width, viewWidth: svg.viewBox.baseVal.width,
+      left: cap.left - bounds.left, right: bounds.right - cap.right,
+      labels: [...svg.querySelectorAll('text')].map(label => {
+        const matrix = label.getScreenCTM();
+        return [Math.hypot(matrix.a, matrix.b), Math.hypot(matrix.c, matrix.d)];
+      })};
+  });
+  assert.equal(geometry.visible, true, state + ': benchmark chart must be visible');
+  assert.ok(Math.abs(geometry.width - geometry.viewWidth) < 1,
+    `${state}: benchmark must use its visible width, got ${geometry.width}/${geometry.viewWidth}`);
+  assert.ok(geometry.left >= 40 && geometry.left <= 80 && geometry.right >= 8 && geometry.right <= 32,
+    `${state}: benchmark plot must fill the chart apart from axis padding, got ${geometry.left}/${geometry.right}`);
+  assert.ok(geometry.labels.length >= 4 && geometry.labels.every(([x, y]) => Math.abs(x - 1) < 0.01 && Math.abs(y - 1) < 0.01),
+    state + ': benchmark labels must retain their normal proportions');
+  if (!hover) return;
+
+  // Check real pointer mapping at both ends after every sizing transition.
+  // The first tooltip row is the exported portfolio balance for that date.
+  const expected = await page.evaluate(() => {
+    const cutoff = performanceWindow === 'lifetime' ? '' : _windowCutoffIso(performanceWindow, history.at(-1).date);
+    const first = Math.max(0, history.findIndex(h => h.date >= cutoff) - (cutoff ? 1 : 0));
+    const groups = _resolveAccountFilter(performanceAccountFilter);
+    return history.slice(first).map(h => ({date: h.date,
+      value: fmtMoney(_snapshotValueForGroups(h, groups))}));
+  });
+  const scrollPosition = await page.evaluate(() => ({left: scrollX, top: scrollY}));
+  await page.$eval('#benchmarkCompareSvg', svg => svg.scrollIntoView({block: 'center'}));
+  const cap = await page.$eval('#benchmarkCompareSvg_cap', el => {
+    const rect = el.getBoundingClientRect();
+    return {left: rect.left, right: rect.right, width: rect.width, y: rect.top + rect.height / 2};
+  });
+  for (const x of [cap.left + 1, cap.right - 1]) {
+    await page.$eval('#benchmarkCompareSvg_cap', el => el.addEventListener('mousemove', event => {
+      el.dataset.smokeClientX = String(event.clientX);
+    }, {once: true}));
+    await page.mouse.move(x, cap.y);
+    const pointerX = await page.$eval('#benchmarkCompareSvg_cap', el => {
+      const x = Number(el.dataset.smokeClientX);
+      delete el.dataset.smokeClientX;
+      return x;
+    });
+    // Dense mobile plots have multiple observations per pixel; use the actual
+    // mouse coordinate delivered by Chrome, which can round fractional input.
+    const index = Math.max(0, Math.min(expected.length - 1,
+      Math.round((pointerX - cap.left) / cap.width * (expected.length - 1))));
+    const tooltip = await page.$eval('#benchmarkCompareSvg_tip', el => ({
+      visible: el.checkVisibility(), date: el.querySelector('.tt-date')?.textContent,
+      value: el.querySelector('.tt-row > span:last-child')?.textContent,
+    }));
+    assert.equal(tooltip.visible, true, state + ': hovering the plot must show its tooltip');
+    assert.equal(tooltip.date, expected[index].date, state + ': pointer must select the correct endpoint date');
+    assert.equal(tooltip.value, expected[index].value, state + ': pointer must select the balance at that date');
+  }
+  await page.mouse.move(0, 0);
+  assert.equal(await page.$eval('#benchmarkCompareSvg_tip', el => el.checkVisibility()), false,
+    state + ': leaving the chart must dismiss its tooltip');
+  await page.evaluate(position => window.scrollTo(position), scrollPosition);
+}
+
+async function checkPerformanceChartPresentation(page, mobile = false) {
   const initialViewport = page.viewport();
   const kind = mobile ? 'mobile' : 'desktop';
   const resize = width => page.setViewport({...initialViewport, width});
+  const clickControl = async selector => {
+    // Keep controls clear of the sticky tab bar after chart hover scrolling.
+    await page.$eval(selector, el => el.scrollIntoView({block: 'center'}));
+    await page.click(selector);
+  };
+  const selectView = view => clickControl('#perfViewBtn' + (view === 'risk' ? 'Risk' : 'Returns'));
   const selectAccount = async value => {
     if (mobile) await page.select('#perfAccountSelect', value);
-    else await page.click('#perfAccountButton-' + (value || 'total'));
+    else await clickControl('#perfAccountButton-' + (value || 'total'));
   };
-  const selectWindow = value => page.click(
+  const selectWindow = value => clickControl(
     `${mobile ? '.perf-mobile-ranges' : '#perfControls .desktop-only'} [data-perf-window="${value}"]`);
   await page.click('#tabbtn-performance');
-  await page.click('#perfViewBtnReturns');
-  await page.click('#perfViewBtnRisk');
+  await selectView('returns');
+  await checkBenchmarkGeometry(page, kind + ' initial Returns', true);
+  await selectView('risk');
   await checkDrawdownGeometry(page, kind + ' initial Risk reveal');
+  await selectAccount('__investments__');
+  await selectView('returns');
+  await checkBenchmarkGeometry(page, kind + ' Risk to Investments to Returns', true);
+  await selectView('risk');
   await resize(mobile ? 320 : 1024);
   await checkDrawdownGeometry(page, kind + ' visible resize');
-  await page.click('#perfViewBtnReturns');
+  await selectView('returns');
+  await checkBenchmarkGeometry(page, kind + ' hidden Returns resize', true);
   await resize(mobile ? 430 : 1280);
-  await page.click('#perfViewBtnRisk');
+  await checkBenchmarkGeometry(page, kind + ' visible Returns resize', true);
+  await selectView('risk');
   await checkDrawdownGeometry(page, kind + ' hidden Risk resize');
   await page.click('#tabbtn-overview');
   await resize(initialViewport.width);
   await page.click('#tabbtn-performance');
   await checkDrawdownGeometry(page, kind + ' hidden Performance resize and return');
+  await selectView('returns');
+  await checkBenchmarkGeometry(page, kind + ' hidden Performance resize and return', true);
+  await page.click('#tabbtn-overview');
+  await resize(mobile ? 320 : 1024);
+  await page.click('#tabbtn-performance');
+  await checkBenchmarkGeometry(page, kind + ' active Returns tab resize and return', true);
+  await resize(initialViewport.width);
+  await selectView('risk');
   await selectAccount('__retirement__');
   await checkDrawdownGeometry(page, kind + ' visible account rerender');
   await selectWindow('ytd');
   await checkDrawdownGeometry(page, kind + ' visible window rerender');
-  await page.click('#perfViewBtnReturns');
+  await selectView('returns');
+  await checkBenchmarkGeometry(page, kind + ' hidden account/window rerender', true);
   await selectAccount('');
   await selectWindow('lifetime');
-  await page.click('#perfViewBtnRisk');
+  await checkBenchmarkGeometry(page, kind + ' visible account/window rerender', true);
+  await selectView('risk');
   await checkDrawdownGeometry(page, kind + ' hidden account/window rerender');
-  await page.click('#perfViewBtnReturns');
+  await selectView('returns');
 }
 
 async function main() {
@@ -383,7 +478,7 @@ async function main() {
     }
     await checkHistoryControls(page);
     await checkHoldingsLayouts(page);
-    await checkDrawdownPresentation(page);
+    await checkPerformanceChartPresentation(page);
 
     async function typeEach(selector, value) {
       await page.click(selector);
@@ -478,7 +573,7 @@ async function main() {
     await checkStickyIdentity(page, '#boardPanes [data-pane="0"] .board-scroll');
     await page.click('#btnBoardTable');
     await checkMobilePerformance(page);
-    await checkDrawdownPresentation(page, true);
+    await checkPerformanceChartPresentation(page, true);
     await page.click('#perfViewBtnRisk');
     const riskOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert.ok(riskOverflow <= 1, `performance risk view overflows mobile viewport by ${riskOverflow}px`);
@@ -489,7 +584,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('[aria-label="Monthly returns table"]').scrollLeft > 0);
     await page.click('#perfViewBtnReturns');
     assert.deepEqual(errors, []);
-    console.log('PASS: 10 tabs and keyboard navigation, allocation ring geometry, History scope controls, independent Table/Board filters and totals, per-key input, historical gains, Python/JS monthly risk parity, keyboard disclosures, CSV export, deep link, touch layout and sticky identities, mobile Performance scopes/Returns/Risk, readable drawdown labels across reveal/resize/rerender, no console/network errors.');
+    console.log('PASS: 10 tabs and keyboard navigation, allocation ring geometry, History scope controls, independent Table/Board filters and totals, per-key input, historical gains, Python/JS monthly risk parity, keyboard disclosures, CSV export, deep link, touch layout and sticky identities, mobile Performance scopes/Returns/Risk, drawdown and benchmark sizing across reveal/resize/rerender, benchmark endpoint tooltips, no console/network errors.');
   } finally {
     await browser.close();
     await fs.rm(downloads, {recursive: true, force: true});

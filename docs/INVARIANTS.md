@@ -810,10 +810,13 @@ Normal local output lives in `exports/transactions.json` and
       `test_performance_presentation.py` covers hierarchy, retained figures,
       disclosure state, date binding, and shared control behavior; existing
       return parity tests remain the calculation contract.
-      The drawdown SVG measures its visible size and redraws on visibility or
-      size changes. Keep its text at CSS scale; an assumed width while Risk is
-      hidden stretches labels on reveal. `tools/browser_smoke.js` checks label
-      geometry across view changes, filter rerenders, and desktop/mobile resize.
+      Benchmark and drawdown SVGs share `_queuePerformanceChart`: measure visible
+      size, redraw on reveal/resize, and retire observers and pending callbacks
+      when Performance rerenders. An assumed width while a sub-view is hidden
+      leaves benchmark plots inset or stretches drawdown labels on reveal.
+      Rebind hover coordinates to the new geometry and hide stale tooltips.
+      `tools/browser_smoke.js` checks both charts across view changes, filter
+      rerenders, desktop/mobile resize, and benchmark hover after these changes.
 
     Each tab's renderer is registered with `registerTabRenderer(name,
     fn)` and runs lazily on first activation. The Overview tab renders

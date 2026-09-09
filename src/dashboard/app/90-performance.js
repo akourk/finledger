@@ -565,6 +565,30 @@ function computePositionReturns() {
   return rows;
 }
 
+// Both Performance sub-views are rebuilt on filter changes, even while hidden.
+// Keep chart geometry in CSS pixels and retire observers for replaced SVGs.
+const _performanceCharts = new Map();
+function _queuePerformanceChart(id, render) {
+  _performanceCharts.get(id)?.observer?.disconnect();
+  const entry = {observer: null};
+  _performanceCharts.set(id, entry);
+  queueMicrotask(() => {
+    // A newer filter render may have superseded this queued chart.
+    if (_performanceCharts.get(id) !== entry) return;
+    const svg = document.getElementById(id);
+    if (!svg) return;
+    const draw = () => {
+      const {width, height} = svg.getBoundingClientRect();
+      if (width > 0 && height > 0) render(svg, width, height);
+    };
+    draw();
+    if (typeof ResizeObserver === 'function') {
+      entry.observer = new ResizeObserver(draw);
+      entry.observer.observe(svg);
+    }
+  });
+}
+
 // Multi-line chart used by the Performance "You vs SPY" section.
 // Accepts an array of series and renders a shared-axis chart with a
 // unified hover tooltip that shows all series at the hovered date.
@@ -579,8 +603,8 @@ function renderMultiLineChart(seriesArr, opts) {
   }
   const n = seriesArr[0].points.length;
 
-  const buildContent = (W) => {
-    const H = height, PAD = { l: 64, r: 16, t: 12, b: 28 };
+  const buildContent = (W, H) => {
+    const PAD = { l: 64, r: 16, t: 12, b: 28 };
     const plotW = W - PAD.l - PAD.r;
     const plotH = H - PAD.t - PAD.b;
     const xOf = i => PAD.l + (n === 1 ? plotW / 2 : (i * plotW) / (n - 1));
@@ -624,7 +648,7 @@ function renderMultiLineChart(seriesArr, opts) {
       const y0 = yOf(0);
       parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${y0}" x2="${W - PAD.r}" y2="${y0}" stroke-opacity="0.6"/>`);
     }
-    const xTicks = Math.min(6, n);
+    const xTicks = Math.min(6, n, Math.max(2, Math.floor(plotW / 72) + 1));
     const firstSeries = seriesArr[0].points;
     for (let i = 0; i < xTicks; i++) {
       const idx = Math.round((i * (n - 1)) / (xTicks - 1 || 1));
@@ -650,17 +674,15 @@ function renderMultiLineChart(seriesArr, opts) {
     return { content: parts.join(''), xOf, yOf, W, H, PAD, plotW };
   };
 
-  queueMicrotask(() => {
-    const svg = document.getElementById(id);
-    if (!svg) return;
-    const actualW = Math.round(svg.getBoundingClientRect().width) || 800;
-    const { content, xOf, yOf, W, plotW, PAD } = buildContent(actualW);
-    svg.setAttribute('viewBox', `0 0 ${actualW} ${height}`);
+  _queuePerformanceChart(id, (svg, actualW, actualH) => {
+    const { content, xOf, yOf, W, plotW, PAD } = buildContent(actualW, actualH);
+    svg.setAttribute('viewBox', `0 0 ${actualW} ${actualH}`);
     svg.innerHTML = content;
     const hv = document.getElementById(id + '_hv');
     const dots = document.getElementById(id + '_dots');
     const cap = document.getElementById(id + '_cap');
     const tip = document.getElementById(id + '_tip');
+    if (tip) tip.style.display = 'none';
     if (!cap) return;
     cap.addEventListener('mousemove', ev => {
       const r = svg.getBoundingClientRect();
@@ -702,7 +724,7 @@ function renderMultiLineChart(seriesArr, opts) {
     `<span class="legend-item"><span class="legend-swatch" style="background:${s.color}"></span>${_htmlEsc(s.label)}</span>`
   ).join('');
   return `<div class="chart-wrap" style="padding:10px;position:relative;">
-    <svg id="${id}" class="chart-svg" viewBox="0 0 800 ${height}"
+    <svg id="${id}" class="chart-svg"
          role="img" aria-label="${_htmlEsc(label)}"
          style="width:100%;height:${height}px;display:block;"></svg>
     <div class="chart-tooltip" id="${id}_tip"></div>
@@ -711,10 +733,7 @@ function renderMultiLineChart(seriesArr, opts) {
 }
 
 // --- Drawdown section (Performance tab) ------------------------------------
-let _drawdownResizeObserver = null;
 function _buildDrawdownSection() {
-  _drawdownResizeObserver?.disconnect();
-  _drawdownResizeObserver = null;
   const dd = ANALYTICS.drawdown || {};
   const series = dd.series || [];
   if (!series.length) return '';
@@ -763,50 +782,34 @@ function _buildDrawdownSection() {
            aria-label="Portfolio balance decline from the running peak over time, including cash movements. The cards above give the maximum and current drawdown as text."></svg>
   </div>`;
 
-  // Risk starts hidden. Measure when shown and after resizes so SVG text
-  // stays at its CSS font size instead of stretching a fallback viewBox.
-  queueMicrotask(() => {
-    const svg = document.getElementById(chartId);
-    if (!svg || !series.length) return;
-    const draw = () => {
-      const {width: W, height: H} = svg.getBoundingClientRect();
-      if (!W || !H) return;
-      const PAD = { l: 48, r: 24, t: 10, b: 22 };
-      const plotW = W - PAD.l - PAD.r;
-      const plotH = H - PAD.t - PAD.b;
-      const minDd = Math.min(...series.map(s => s.drawdown_pct));
-      const lo = Math.min(-0.01, minDd * 1.05);
-      const xOf = i => PAD.l + (series.length === 1 ? plotW / 2 : (i * plotW) / (series.length - 1));
-      const yOf = v => PAD.t + ((v - 0) / (lo - 0 || 1)) * plotH;
-      const parts = [];
-      for (let k = 0; k <= 4; k++) {
-        const v = (lo * k) / 4;
-        const y = yOf(v);
-        parts.push(`<line class="grid-line" x1="${PAD.l}" y1="${y}" x2="${W - PAD.r}" y2="${y}"/>`);
-        parts.push(`<text class="axis-label" x="${PAD.l - 6}" y="${y + 3}" text-anchor="end">${(v * 100).toFixed(0)}%</text>`);
-      }
-      const d = series.map((s, i) => `${i === 0 ? 'M' : 'L'}${xOf(i)},${yOf(s.drawdown_pct)}`).join(' ');
-      const area = `M${xOf(0)},${yOf(0)} ` + series.map((s, i) => `L${xOf(i)},${yOf(s.drawdown_pct)}`).join(' ') +
-        ` L${xOf(series.length - 1)},${yOf(0)} Z`;
-      parts.push(`<path d="${area}" fill="rgba(248,113,113,0.2)"/>`);
-      parts.push(`<path d="${d}" fill="none" stroke="#f87171" stroke-width="1.6"/>`);
-      const xTicks = Math.min(6, series.length, Math.max(2, Math.floor(plotW / 72) + 1));
-      for (let i = 0; i < xTicks; i++) {
-        const idx = Math.round((i * (series.length - 1)) / (xTicks - 1 || 1));
-        const x = xOf(idx);
-        parts.push(`<text class="axis-label" x="${x}" y="${H - 6}" text-anchor="middle">${_htmlEsc((series[idx].date || '').slice(0, 7))}</text>`);
-      }
-      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-      svg.innerHTML = parts.join('');
-    };
-    draw();
-    if (typeof ResizeObserver === 'function') {
-      // Replacing Performance's HTML also replaces this SVG. Keep only the
-      // current observer, including when multiple renders share a microtask.
-      _drawdownResizeObserver?.disconnect();
-      _drawdownResizeObserver = new ResizeObserver(draw);
-      _drawdownResizeObserver.observe(svg);
+  _queuePerformanceChart(chartId, (svg, W, H) => {
+    const PAD = { l: 48, r: 24, t: 10, b: 22 };
+    const plotW = W - PAD.l - PAD.r;
+    const plotH = H - PAD.t - PAD.b;
+    const minDd = Math.min(...series.map(s => s.drawdown_pct));
+    const lo = Math.min(-0.01, minDd * 1.05);
+    const xOf = i => PAD.l + (series.length === 1 ? plotW / 2 : (i * plotW) / (series.length - 1));
+    const yOf = v => PAD.t + ((v - 0) / (lo - 0 || 1)) * plotH;
+    const parts = [];
+    for (let k = 0; k <= 4; k++) {
+      const v = (lo * k) / 4;
+      const y = yOf(v);
+      parts.push(`<line class="grid-line" x1="${PAD.l}" y1="${y}" x2="${W - PAD.r}" y2="${y}"/>`);
+      parts.push(`<text class="axis-label" x="${PAD.l - 6}" y="${y + 3}" text-anchor="end">${(v * 100).toFixed(0)}%</text>`);
     }
+    const d = series.map((s, i) => `${i === 0 ? 'M' : 'L'}${xOf(i)},${yOf(s.drawdown_pct)}`).join(' ');
+    const area = `M${xOf(0)},${yOf(0)} ` + series.map((s, i) => `L${xOf(i)},${yOf(s.drawdown_pct)}`).join(' ') +
+      ` L${xOf(series.length - 1)},${yOf(0)} Z`;
+    parts.push(`<path d="${area}" fill="rgba(248,113,113,0.2)"/>`);
+    parts.push(`<path d="${d}" fill="none" stroke="#f87171" stroke-width="1.6"/>`);
+    const xTicks = Math.min(6, series.length, Math.max(2, Math.floor(plotW / 72) + 1));
+    for (let i = 0; i < xTicks; i++) {
+      const idx = Math.round((i * (series.length - 1)) / (xTicks - 1 || 1));
+      const x = xOf(idx);
+      parts.push(`<text class="axis-label" x="${x}" y="${H - 6}" text-anchor="middle">${_htmlEsc((series[idx].date || '').slice(0, 7))}</text>`);
+    }
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = parts.join('');
   });
 
   return `
@@ -1021,6 +1024,8 @@ function computeWindowedMetrics(filterKey, windowKey) {
 function renderPerformance() {
   const root = document.getElementById('performanceContent');
   if (!root) return;
+  for (const entry of _performanceCharts.values()) entry.observer?.disconnect();
+  _performanceCharts.clear();
   const focusedControl = document.activeElement?.id;
   const openDetails = new Set(['perfLifetimeReference', 'perfDollarDetails', 'perfBenchmarkDetails', 'perfReturnMethods']
     .filter(id => document.getElementById(id)?.open));
@@ -2147,8 +2152,8 @@ ${spanNote}`
 }
 
 // Returns ↔ Risk sub-view for the Performance tab.  Both views render
-// into the DOM, so switching only changes visibility. Drawdown's size
-// observer redraws its labels when the hidden chart becomes measurable.
+// into the DOM, so switching only changes visibility. Their size observers
+// redraw charts when a hidden sub-view becomes measurable.
 let _perfView = 'returns';
 function setPerfView(v) {
   _perfView = v === 'risk' ? 'risk' : 'returns';
