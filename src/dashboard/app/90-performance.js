@@ -1006,6 +1006,9 @@ function computeWindowedMetrics(filterKey, windowKey) {
 function renderPerformance() {
   const root = document.getElementById('performanceContent');
   if (!root) return;
+  const focusedControl = document.activeElement?.id;
+  const openDetails = new Set(['perfLifetimeReference', 'perfDollarDetails', 'perfBenchmarkDetails', 'perfReturnMethods']
+    .filter(id => document.getElementById(id)?.open));
 
   // Annual returns table (filtered to the selected account).  The
   // earlier "Total" version of this table was removed — it duplicated
@@ -1052,10 +1055,10 @@ function renderPerformance() {
   const _aggChip = (key, label, active, color, title) => {
     const titleAttr = title ? ` title="${_htmlEsc(title)}"` : '';
     const styleAttr = (!active && color) ? ` style="color:${color};"` : '';
-    return `<button class="tbtn${active ? ' active' : ''}"${styleAttr}${titleAttr} onclick="setPerformanceAccountFilter('${key}')">${label}</button>`;
+    return `<button id="perfAccountButton-${key}" class="tbtn${active ? ' active' : ''}" aria-pressed="${active}"${styleAttr}${titleAttr} onclick="setPerformanceAccountFilter('${key}')">${label}</button>`;
   };
   const acctPills = [
-    `<button class="tbtn${performanceAccountFilter === null ? ' active' : ''}" onclick="setPerformanceAccountFilter(null)">Total</button>`,
+    `<button id="perfAccountButton-total" class="tbtn${performanceAccountFilter === null ? ' active' : ''}" aria-pressed="${performanceAccountFilter === null}" onclick="setPerformanceAccountFilter(null)">Total</button>`,
     ...(_hasSavingsAccount ? [
       _aggChip('__investments__', 'Investments', _investmentsActive, '#4ade80'),
     ] : []),
@@ -1078,6 +1081,20 @@ function renderPerformance() {
         `setPerformanceAccountFilter(${_jsString(a)})`);
     }),
   ].join('');
+  const accountOptions = [
+    ['', 'Total Portfolio'],
+    ...(_hasSavingsAccount ? [['__investments__', 'Investments (excl. Savings)']] : []),
+    ...(_taxableCount > 1 ? [['__taxable__', 'Taxable (combined)']] : []),
+    ['__retirement__', 'Retirement (combined)'],
+    ...(_savingsCount > 1 ? [['__savings__', 'Savings (combined)']] : []),
+    ...availableAccounts.map(account => [account, account]),
+  ];
+  const selectedAccountLabel = accountOptions.find(([key]) => key === (performanceAccountFilter || ''))?.[1]
+    || performanceAccountFilter || 'Total Portfolio';
+  const accountSelect = `<label for="perfAccountSelect">Account</label>
+    <select id="perfAccountSelect" onchange="setPerformanceAccountFilter(this.value)">
+      ${accountOptions.map(([key, label]) => `<option value="${_htmlEsc(key)}"${key === (performanceAccountFilter || '') ? ' selected' : ''}>${_htmlEsc(label)}</option>`).join('')}
+    </select>`;
 
   // Top-row anchor cards: WHOLE PORTFOLIO, LIFETIME — never filtered
   // by anything.  Always shows the same numbers as the Top bar and
@@ -1320,9 +1337,16 @@ function renderPerformance() {
   const sortinoCls = win.sortino != null ? (win.sortino >= 1 ? 'positive' : (win.sortino < 0 ? 'negative' : '')) : '';
   const mddCls = win.mdd != null && win.mdd < 0 ? 'negative' : '';
 
-  const windowChips = PERF_TWR_PRESETS.map(w =>
-    `<button class="tbtn ${w === performanceWindow ? 'active' : ''}" data-perf-window="${w}">${PERF_TWR_PRESET_LABEL[w]}</button>`
-  ).join('');
+  const windowChip = (w, surface) => `<button id="perfWindowButton-${surface}-${w}" class="tbtn ${w === performanceWindow ? 'active' : ''}" data-perf-window="${w}" aria-pressed="${w === performanceWindow}">${PERF_TWR_PRESET_LABEL[w]}</button>`;
+  const windowChips = PERF_TWR_PRESETS.map(w => windowChip(w, 'desktop')).join('');
+  const commonWindows = ['lifetime', '1y', 'ytd', '3mo'];
+  const moreWindows = PERF_TWR_PRESETS.filter(w => !commonWindows.includes(w));
+  const mobileWindows = commonWindows.map(w => windowChip(w, 'mobile')).join('') + `
+    <label class="sr-only" for="perfWindowSelect">Additional performance ranges</label>
+    <select id="perfWindowSelect" onchange="setPerformanceWindow(this.value)">
+      <option value="" disabled${commonWindows.includes(performanceWindow) ? ' selected' : ''}>More ranges</option>
+      ${moreWindows.map(w => `<option value="${w}"${w === performanceWindow ? ' selected' : ''}>${PERF_TWR_PRESET_LABEL[w]}</option>`).join('')}
+    </select>`;
   // Custom date inputs — only render when 'custom' window is active.
   // Editing either input is wired to setPerfTwrStart / setPerfTwrEnd
   // which re-flips the window to 'custom' (keeps the chip in sync).
@@ -1331,11 +1355,11 @@ function renderPerformance() {
   const _perfWindowMax = history.length ? history[history.length - 1].date : '';
   const _customInputsHtml = _customActive ? `
     <span class="hist-label" style="margin-left:10px;">From</span>
-    <input type="date" class="hist-date" min="${_perfWindowMin}" max="${_perfWindowMax}"
+    <input type="date" id="perfCustomStart" class="hist-date" min="${_perfWindowMin}" max="${_perfWindowMax}"
            aria-label="Performance window: from date"
            value="${perfTwrStart || ''}" onchange="setPerfTwrStart(this.value)">
     <span class="hist-label">To</span>
-    <input type="date" class="hist-date" min="${_perfWindowMin}" max="${_perfWindowMax}"
+    <input type="date" id="perfCustomEnd" class="hist-date" min="${_perfWindowMin}" max="${_perfWindowMax}"
            aria-label="Performance window: to date"
            value="${perfTwrEnd || ''}" onchange="setPerfTwrEnd(this.value)">
     <span class="hist-label" style="margin-left:10px;opacity:.7;"
@@ -1344,10 +1368,8 @@ function renderPerformance() {
 
   const _totalReturnTitle = 'Current portfolio value minus net contributed (deposits − withdrawals).  Same formula as the Top bar and the Overview tab — the "did I make money?" answer.\n\nIt is NOT Realized + Unrealized, and no simple sum reaches it. Sale proceeds get redeployed into new positions, so a dollar of gain can end up inside the cost basis of something you still hold rather than in either figure. Income arrives as cash without being a realized gain on any lot, and cash outside Savings accounts is not in the holdings value.\n\nTreat Realized and Unrealized as two views of the portfolio, not two halves of this number.';
 
-  // Row 1 — fixed anchor: WHOLE PORTFOLIO, ALL-TIME.  Doesn't react
-  // to any toggles.  Gives the user a stable reference point above
-  // the toggles so they can compare the windowed view (row 4) to
-  // their full portfolio's lifetime numbers at a glance.
+  // Fixed whole-portfolio lifetime figures stay available in the
+  // collapsed reference. They do not react to the selected scope.
   // The headline answer, on its own row.  It used to sit in a flat line
   // of five peers, which invites the reader to add Realized + Unrealized
   // and wonder why the total is wrong (F-019).  No clean sum reaches it —
@@ -1384,24 +1406,24 @@ function renderPerformance() {
     })(),
   ];
 
-  // Row 4 — same metrics, but filtered + windowed.  Plus Cumulative
-  // and Annualized Return so the dollar and percentage views sit
-  // side by side.
+  // Selected scope: keep dollar return and TWR beside portfolio value,
+  // with realized, unrealized and contributions in a separate disclosure.
   const _winLabel = performanceWindow;
   const totalReturnCls = totalReturn >= 0 ? 'positive' : (totalReturn < 0 ? 'negative' : '');
   const _filterWord = performanceAccountFilter === null ? ''
     : (performanceAccountFilter === '__investments__' ? 'investments'
       : performanceAccountFilter === '__retirement__' ? 'retirement'
         : performanceAccountFilter === '__taxable__' ? 'taxable'
-          : performanceAccountFilter.toLowerCase());
-  // Every card in this row is measured over the SAME anchored span.
-  // Saying so on each of them is what lets a reader check that the
-  // dollar figures and the return figures describe one period.
+          : performanceAccountFilter === '__savings__' ? 'savings'
+            : performanceAccountFilter.toLowerCase());
+  // Dollar figures share these bounds. TWR uses its own measured span,
+  // displayed separately because a short history can move its start.
   const _rowSpan = `Measured ${_winAnchorIso || 'inception'} to ${_winUpperIso}.`;
   const filteredCards = [
     {
-      htmlLabel: true, label: `Total Return <span class="sub">${_winLabel}</span>`,
-      value: fmtSigned(totalReturn) + (totalReturnPct != null ? ` <span class="sub">${(totalReturnPct >= 0 ? '+' : '') + totalReturnPct.toFixed(1)}%</span>` : ''),
+      htmlLabel: true, label: `Total Return <span class="sub">dollars · ${_winLabel}</span>`,
+      value: fmtSigned(totalReturn),
+      note: totalReturnPct != null ? `${(totalReturnPct >= 0 ? '+' : '') + totalReturnPct.toFixed(1)}% of net contributed · not TWR` : 'End value − start value − net contributed',
       cls: totalReturnCls,
       title: `Dollar return over the window for the active filter — Modified Dietz numerator: end value − start value − net cash flow.  Window: ${performanceWindow}.
 
@@ -1449,20 +1471,20 @@ This is a LEVEL measured at one date, not a gain accrued over the window — so 
 ${_rowSpan}`
     },
     {
-      htmlLabel: true, label: `Cumulative Return <span class="sub">${performanceWindow}</span>`,
+      htmlLabel: true, label: `Cumulative Return <span class="sub">TWR · ${performanceWindow}</span>`,
       value: cumStr,
       cls: cumCls,
       title: `Cumulative return over the selected window (geometric chain-link of monthly returns).  Window: ${performanceWindow}.`
     },
     {
-      htmlLabel: true, label: `Annualized Return <span class="sub">${performanceWindow}</span>`,
+      htmlLabel: true, label: `Annualized Return <span class="sub">TWR per year · ${performanceWindow}</span>`,
       value: annStr,
       cls: annCls,
       title: `Annualized return: cumulative return scaled to per-year using the actual months covered.  Window: ${performanceWindow}.`
     },
   ];
 
-  // Row 5 — risk-adjusted ratios + max drawdown.  Same window/filter.
+  // Risk-adjusted ratios and balance drawdown use the selected scope.
   const ratioCards = [
     {
       htmlLabel: true, label: `Sharpe Ratio <span class="sub">${performanceWindow}</span>`,
@@ -1486,35 +1508,39 @@ ${_rowSpan}`
 
   const _renderCardRow = (cards) => _renderStatCards(cards);
 
-  // Layout:
-  //   Row 1. Whole-portfolio lifetime cards (anchor; toggle-independent)
-  //   Row 2. Account selector
-  //   Row 3. Window selector (+ custom-date inputs when applicable)
-  //   Row 4. Same 4 metrics + Cumulative/Annualized — filtered + windowed
-  //   Row 5. Risk-adjusted ratios + Max Drawdown — filtered + windowed
+  // The selected scope owns the primary summary. The unchanged lifetime
+  // figures remain available in a compact disclosure beside the controls.
+  const primaryCards = [
+    {htmlLabel: true, label: `Portfolio Value <span class="sub">as of ${_winUpperIso}</span>`, value: fmtMoney(totalValue)},
+    filteredCards[0], filteredCards[4], filteredCards[5],
+  ];
+  const dollarDetails = [filteredCards[1], filteredCards[2], filteredCards[3]];
+  const returnSpan = win.cum != null && win.startDate && win.endDate
+    ? `${win.startDate} → ${win.endDate}` : 'Not enough observations';
   const statsHtml =
-    `<div class="perf-anchor-label" style="color:var(--text-dim);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Whole portfolio · all-time</div>` +
+    `<div class="toggles-card perf-controls" id="perfControls">` +
+    `<div class="toggles-row desktop-only"><span class="toggles-label">Account:</span>` +
+    `<div class="toggle-group" role="group" aria-label="Performance account" style="flex-wrap:wrap;">${acctPills}</div></div>` +
+    `<div class="toggles-row mobile-only perf-mobile-account">${accountSelect}</div>` +
+    `<div class="toggles-row desktop-only"><span class="toggles-label">Window:</span>` +
+    `<div class="toggle-group" role="group" aria-label="Performance window">${windowChips}</div></div>` +
+    `<div class="toggles-row mobile-only perf-mobile-ranges" role="group" aria-label="Performance window">${mobileWindows}</div>` +
+    (_customInputsHtml ? `<div class="toggles-row perf-custom-dates">${_customInputsHtml}</div>` : '') +
+    `</div>` +
+    `<details class="perf-reference" id="perfLifetimeReference"${openDetails.has('perfLifetimeReference') ? ' open' : ''}>` +
+    `<summary>Whole portfolio · all-time reference <span class="scope-context">${fmtSigned(_whole_totalReturn)} total return</span></summary>` +
     _renderCardRow(anchorHeadline) +
     `<div class="stats-caption">The figures below are separate views of the portfolio — they do <strong>not</strong> add up to Total Return. Proceeds from a sale get redeployed, so a gain can end up inside the cost basis of a position you still hold rather than in either one.</div>` +
     _renderCardRow(anchorCards) +
-    // Both toggle rows live inside a single card so they read as one
-    // grouped control surface (Account on top, Window below).  Shared
-    // .toggles-card / .toggles-row / .toggles-label classes are used
-    // across the Performance, Options, and Tax tabs.
-    `<div class="toggles-card">` +
-    `<div class="toggles-row">` +
-    `<span class="toggles-label">Account:</span>` +
-    `<div class="toggle-group" style="flex-wrap:wrap;">${acctPills}</div>` +
-    `</div>` +
-    `<div class="toggles-row">` +
-    `<span class="toggles-label">Window:</span>` +
-    `<div class="toggle-group">${windowChips}</div>` +
-    _customInputsHtml +
-    `<span class="toggles-hint">${win.nMonths || 0} monthly periods · ${win.nInRatio || 0} in ratio calc</span>` +
-    `</div>` +
-    `</div>` +
-    _renderCardRow(filteredCards) +
-    _renderCardRow(ratioCards);
+    `</details>` +
+    `<section id="perfSelectedSummary" aria-labelledby="perfSelectedHeading">` +
+    `<div class="section-header"><h2 id="perfSelectedHeading">${_htmlEsc(selectedAccountLabel)}</h2><span class="scope-label">${PERF_TWR_PRESET_LABEL[performanceWindow]}</span></div>` +
+    `<div class="scope-context" id="perfScopeContext">Dollar figures: ${_winAnchorIso || 'inception'} → ${_winUpperIso}. Time-weighted returns: ${returnSpan}.</div>` +
+    `<div class="perf-primary-summary">${_renderCardRow(primaryCards)}</div>` +
+    `<details class="perf-selected-details" id="perfDollarDetails"${openDetails.has('perfDollarDetails') ? ' open' : ''}><summary>Realized, unrealized and contributions</summary>` +
+    _renderCardRow(dollarDetails) +
+    `<p class="scope-context">Realized and unrealized gains are separate views; they do not add up to Total Return. Unrealized is the open-position gain at the displayed end date.</p></details>` +
+    `</section>`;
 
   // Annual returns — row builder (reused for Total and per-account tables)
   const annualRow = (r, twrMap) => {
@@ -1564,11 +1590,7 @@ ${_rowSpan}`
   const acctSpy = acctTwr ? computeSPYReturnOverPeriod(acctTwr.start_date, acctTwr.end_date) : null;
   const fmtPctSigned = (v, digits = 2) => v == null ? '—'
     : (v >= 0 ? '+' : '') + (v * 100).toFixed(digits) + '%';
-  const acctLabel = performanceAccountFilter === null ? 'Total Portfolio'
-    : performanceAccountFilter === '__investments__' ? 'Investments (excl. Savings)'
-      : performanceAccountFilter === '__retirement__' ? 'Retirement (combined)'
-        : performanceAccountFilter === '__taxable__' ? 'Taxable (combined)'
-          : performanceAccountFilter;
+  const acctLabel = selectedAccountLabel;
 
   // Daily TWR (Schwab-style) — precomputed server-side for retirement
   // filters only (see analytics.py::compute_twr_daily_summary for why).
@@ -1990,8 +2012,8 @@ ${spanNote}`
       <div class="toggles-row">
         <span class="toggles-label">View:</span>
         <div class="toggle-group">
-          <button class="tbtn${_perfView === 'returns' ? ' active' : ''}" id="perfViewBtnReturns" onclick="setPerfView('returns')">Returns</button>
-          <button class="tbtn${_perfView === 'risk' ? ' active' : ''}" id="perfViewBtnRisk" onclick="setPerfView('risk')">Risk</button>
+          <button class="tbtn${_perfView === 'returns' ? ' active' : ''}" id="perfViewBtnReturns" aria-pressed="${_perfView === 'returns'}" onclick="setPerfView('returns')">Returns</button>
+          <button class="tbtn${_perfView === 'risk' ? ' active' : ''}" id="perfViewBtnRisk" aria-pressed="${_perfView === 'risk'}" onclick="setPerfView('risk')">Risk</button>
         </div>
         <span class="toggles-hint">Returns: benchmark comparison, per-account TWR, winners &amp; losers.  Risk: drawdown, monthly P&amp;L, daily moves.</span>
       </div>
@@ -2001,9 +2023,12 @@ ${spanNote}`
     <div class="section-header" style="margin-top:24px;">
       <h2><span style="color:var(--accent);">Your Portfolio vs SPY Benchmark</span></h2>
     </div>
-    ${benchStatsHtml}
+    <div class="scope-context">Chart: ${windowedHistory[0]?.date || '—'} → ${windowedHistory[windowedHistory.length - 1]?.date || '—'} · ${_htmlEsc(selectedAccountLabel)}. Return comparison: ${returnSpan}.</div>
     ${benchToggleHtml}
     ${benchChart}
+    <details class="perf-benchmark-details" id="perfBenchmarkDetails"${openDetails.has('perfBenchmarkDetails') ? ' open' : ''}>
+    <summary>Benchmark figures and comparison guide</summary>
+    ${benchStatsHtml}
     ${benchChartNote}
     <div style="color:var(--text-dim);font-size:0.8rem;margin-top:8px;padding:0 4px;line-height:1.5;">
       <b>Two different comparisons are at work here — don't confuse them.</b><br>
@@ -2026,11 +2051,17 @@ ${spanNote}`
       own portfolio TWR already includes reinvested dividends via your
       Reinvest / Buy transactions, so the comparison is apples-to-apples.
     </div>
+    </details>
 
+    <details class="perf-selected-details" id="perfReturnMethods"${openDetails.has('perfReturnMethods') ? ' open' : ''}>
+      <summary>Return methods and same-period SPY comparison</summary>
+      <p class="scope-context">${_htmlEsc(acctLabel)} · ${acctTwr ? acctTwr.start_date + ' → ' + acctTwr.end_date : 'No measured return period'}.</p>
+      ${acctSummaryHtml}
+    </details>
     <div class="section-header" style="margin-top:24px;">
-      <h2><span style="color:var(--accent);">By Account</span></h2>
+      <h2><span style="color:var(--accent);">Annual returns</span></h2>
+      <span class="scope-label">${_htmlEsc(acctLabel)} · all available years</span>
     </div>
-    ${acctSummaryHtml}
     <div class="panel">
       <table class="mini-table"><caption class="sr-only">Annual returns: start and end value, net contributed, time-weighted return and the SPY benchmark</caption>
         <thead><tr>
@@ -2045,18 +2076,19 @@ ${spanNote}`
         effect of contribution timing.  SPY % is SPY's total return
         (dividends reinvested) for the year.
         ${performanceAccountFilter === null
-      ? ' Total includes <b>Apple Savings</b>, which dilutes TWR vs. SPY — pick <b>Investments</b> for an apples-to-apples equity comparison.'
+      ? (_hasSavingsAccount ? ' Total includes Savings accounts. Select <b>Investments</b> to compare investment accounts with SPY.' : '')
       : performanceAccountFilter === '__investments__'
         ? ' Figures cover all investment accounts (everything except Savings) — the right comparison for an equity benchmark.'
         : performanceAccountFilter === '__retirement__'
           ? ' Figures cover <b>401K, Roth IRA, and Rollover IRA</b> combined.'
-          : ' Figures cover the <b>' + performanceAccountFilter + '</b> account only.'}
+          : ' Figures cover <b>' + _htmlEsc(selectedAccountLabel) + '</b> only.'}
       </div>
     </div>
 
     <div class="overview-split" style="margin-top:24px;">
       <div class="panel">
         <h3>Top 10 Winners</h3>
+        <p class="scope-context">Latest positions · lifetime gains · all accounts</p>
         <table class="mini-table"><caption class="sr-only">Top ten positions by total gain</caption>
           <thead><tr>
             <th scope="col">Symbol</th><th scope="col">Sector</th><th scope="col" class="num">Value</th>
@@ -2067,6 +2099,7 @@ ${spanNote}`
       </div>
       <div class="panel">
         <h3>Top 10 Losers</h3>
+        <p class="scope-context">Latest positions · lifetime gains · all accounts</p>
         <table class="mini-table"><caption class="sr-only">Bottom ten positions by total gain</caption>
           <thead><tr>
             <th scope="col">Symbol</th><th scope="col">Sector</th><th scope="col" class="num">Value</th>
@@ -2079,11 +2112,23 @@ ${spanNote}`
     </div>
 
     <div id="perfViewRisk" style="${_perfView === 'risk' ? '' : 'display:none;'}">
+    <section id="perfSelectedRisk">
+      <div class="section-header"><h2>Selected scope risk</h2><span class="scope-label">${_htmlEsc(selectedAccountLabel)} · ${PERF_TWR_PRESET_LABEL[performanceWindow]}</span></div>
+      <p class="scope-context">${win.nMonths || 0} monthly periods · ${win.nInRatio || 0} included in ratio calculations. Balance drawdown includes cash movements and uses history snapshots.</p>
+      ${_renderCardRow(ratioCards)}
+    </section>
+    <p class="scope-label">Whole-portfolio history and current-position daily moves</p>
     ${_buildDrawdownSection()}
     ${_buildMonthlyPnlSection()}
     ${_buildDailyPnlSection()}
     </div>
   `;
+  if (['perfAccountSelect', 'perfWindowSelect', 'perfCustomStart', 'perfCustomEnd'].includes(focusedControl)
+      || focusedControl?.startsWith('perfWindowButton-')
+      || focusedControl?.startsWith('perfAccountButton-')
+      || focusedControl?.startsWith('chip-setPerformanceAccountFilter')) {
+    document.getElementById(focusedControl)?.focus({preventScroll: true});
+  }
 }
 
 // Returns ↔ Risk sub-view for the Performance tab.  Both views render
@@ -2100,6 +2145,8 @@ function setPerfView(v) {
   const bK = document.getElementById('perfViewBtnRisk');
   if (bR) bR.classList.toggle('active', _perfView === 'returns');
   if (bK) bK.classList.toggle('active', _perfView === 'risk');
+  if (bR) bR.setAttribute('aria-pressed', String(_perfView === 'returns'));
+  if (bK) bK.setAttribute('aria-pressed', String(_perfView === 'risk'));
 }
 
 registerTabRenderer('performance', renderPerformance);

@@ -618,41 +618,52 @@ Normal local output lives in `exports/transactions.json` and
 16. **Dashboard** (`dashboard.generate_dashboard`) — string-interpolate the
     full transactions+holdings+history+basis+retirement-meta JSON into a
     single HTML file. One file, no external assets. The dashboard is
-    organized as a **tabbed single-page app** with hash routing:
+    organized as a **tabbed single-page app** with hash routing. Overview,
+    Holdings, and Performance lead navigation; tab IDs remain stable:
 
     - **Overview** — deliberately slim: "what am I worth, how is it
       changing, is anything wrong."  Alerts/changes/reconciliation
       feedback panels (collapse if empty; reconciliation shows fin vs
       broker-reported figures with ok/warn/off status — see
-      `analytics.reconciliation`), stat cards, history chart with a
+      `analytics.reconciliation`), stat cards, history chart with
+      **Balance & contributions** as its lifetime landing view. This is
+      Total in Lines mode with only `netcontrib` enabled; the quick view
+      restores that series selection while preserving the chosen range.
+      **Account mix** selects account composition. Lifetime/1y/YTD and
+      More ranges sit next to the chart; detailed options retain the
       **Lines ↔ Composition** mode toggle (`historyChartMode` in
       `app/20-history.js`; Lines = the multi-series chart with overlay
       toggles Cost Basis / Unrealized Gain / SPY-BND-VXUS benchmarks /
       Net Contributed / Year-over-Year; Composition = a stacked area of
       the portfolio by Account / Type / Sector over time, own render
-      path `_renderComposition`, top-8 + Other fold), top holdings,
-      recent 8 transactions (+ view-all link), allocation donut (by
-      account / type / sector).  Concentration moved to Holdings;
+      path `_renderComposition`, top-8 + Other fold), top 15 holdings,
+      recent 15 transactions (+ view-all link), allocation charts by
+      account / type / sector. The History range is independent of the
+      Overview/Holdings snapshot picker and labels its actual observations.
+      The top summary and History's latest-value label remain latest.
+      Concentration moved to Holdings;
       Year-by-Year moved to Planning.
-    - **Holdings** — holdings table (by asset/account/type/sector;
+    - **Holdings** — grouped summary (by account/type/sector;
       carries `unrealized %` always, plus `twr cum %` / `twr ann %` /
-      `xirr %` **read from `analytics.performance_by_filter`** — a
-      grouped row matches a precomputed filter by the SET of account
-      groups it covers (`PERF_BY_GROUPSET` in `app/10-holdings.js`),
-      never by deriving its own return.  A row no filter covers (every
-      sector row; a multi-account type with no combined filter) shows
-      nothing, and the three columns drop out entirely when no row
-      resolves.  Per-value tooltips carry the measured span, because
+      `xirr %` **read from `analytics.performance_by_filter` at latest** —
+      a grouped row matches a precomputed filter by the SET of account
+      groups it covers (`PERF_BY_GROUPSET` in `app/10-holdings.js`). At
+      latest, a row no filter covers (a multi-account type with no
+      combined filter) has no return. Historical rows instead use
+      `historicalGroupPerformance` with their account set and selected
+      snapshot cutoff, sharing the interactive return helpers. Sector
+      rows have no account set and therefore no TWR/XIRR. The three
+      columns drop out when no row resolves. Per-value tooltips carry the measured span, because
       each filter's window is its own — see the
       `performance_by_filter` note above and docs/AUDIT.md F-031),
       Target vs Actual, concentration grid (positions/sectors/
       accounts; one global HHI on the positions card only), and the
       lot-method comparison table (collapsed `<details>` — the
       summary line carries the FIFO-vs-alternative realized delta).
-      Each Holdings-by-Asset row expands (click, latest as-of only)
+      Each Positions & lots row expands (click, latest as-of only)
       into its per-lot detail — acquired date, per-unit basis, value,
       unrealized, days-held, ST/LT term — from `analytics.lots`.
-      The Holdings-by-Asset section also has a **Table ↔ Board**
+      The Positions & lots section also has a **Table ↔ P&L board**
       layout toggle (`app/15-board.js`).  Board mode is a broker-style
       monitoring view: symbol / qty / mkt val / mark / a $ and % pair
       per active window / all-time open P&L $ and %, in one to three
@@ -666,15 +677,28 @@ Normal local output lives in `exports/transactions.json` and
       legitimate levels-only view.  Switching off the window a pane is
       sorted by falls the sort back to `value` (`boardValidSort`) —
       otherwise the pane would sort by a column no row displays.
-      Every figure is READ
-      from `analytics.position_pnl` + the same `holdings_by_account`
-      rows the table renders — **the board derives nothing**, which is
-      why the two layouts cannot disagree.  Board mode is
-      **latest-as-of only** (trailing windows measured from today's
+      Position values and window P&L are read from
+      `analytics.position_pnl`, anchored to the same holdings that Table
+      renders. Table and Board keep independent filters. **By Symbol**
+      reads the Python rollup across all accounts; selecting an account
+      filters symbol membership while quantities, values, and P&L remain
+      combined. **By Account** filters the individual account-position
+      rows. Visible context and the selector description explain the
+      distinction; do not turn this into account-scoped aggregation as a
+      cosmetic change. The shared section total sums the active layout's
+      visible values, displays zero for an empty selection, and clears
+      during a Board notice. Returning to Table restores its own subtotal.
+      `test_holdings_presentation.py` covers these view transitions with
+      a fictional symbol held in two accounts. Board mode is
+      **latest-as-of only** (trailing windows measured from the latest
       prices beside a past date's holdings would put two dates in one
       row); off latest it renders a notice instead.  Pane config
       persists in `localStorage` behind try/catch (a `file://`
       dashboard can be origin-null, where the accessor throws).
+      Selected-snapshot headings show the actual available snapshot date;
+      Target vs Actual and concentration remain **Latest**, and lot-method
+      comparison remains **Lifetime · what-if**. Quantity/price/value/basis
+      use neutral text, with sign colors reserved for gain/return columns.
     - **Transactions** — full ledger with filters, search, column toggle.
     - **Options** — lifetime P&L, win rate, cumulative P&L chart, open
       contracts, closed trades, per-underlying breakdown (with cross-
@@ -709,40 +733,56 @@ Normal local output lives in `exports/transactions.json` and
       Expenses`; hides without `Budget` metadata rows), 12-month
       dividend / interest forecast per held position, annual summary,
       monthly chart, by-source table.
-    - **Tax** — grouped into "Forward planning — actionable today"
-      (Tax Rates & Income panel with override inputs, Tax Bracket
-      Fill bar with ordinary Room-in-Bracket + LTCG Headroom + NIIT
-      Headroom, Tax-Loss Harvest Candidates, Long-Term Eligibility —
-      adjacent because they're one decision: harvest now vs wait for
-      LT — then Potential Wash Sales) and "Historical realizations"
-      (Realized Gains by Year, By Asset).  §1256 columns are conditional — only rendered when
+    - **Tax** — realization-year controls and gain cards, Tax Rates &
+      Income with override inputs, bracket fill, tax/withholding estimates,
+      **Open-lot planning**, Potential Wash Sales, and **Historical
+      realizations** (Realized Gains by Year, By Asset). Rates and income
+      follow the selected year; **All Years** uses `snapshotYear()` for
+      those assumptions. Projection labels come from `est.isProjection`,
+      not from a blanket claim that every selected year is projected.
+      Harvest candidates and long-term eligibility use latest taxable
+      lots; estimated savings apply the selected rates. Potential Wash
+      Sales and Form 8949 CSV use all recorded years independently of the
+      realization-year filter. Visible scope labels and native definitions
+      describe these boundaries (`test_tax_presentation.py`).
+      §1256 columns are conditional — only rendered when
       any year/symbol has §1256 activity. Section 1256 underlyings come from
       `analytics/tax.py` through the exported tables; the dashboard applies
       60% LT / 40% ST regardless of holding period for those products.
     - **Crypto** — per-coin holdings + realized + income, recent
       activity, conversion/wrap log.
-    - **Performance** — anchor stat cards (Total Return, Realized,
-      Unrealized, Net Contributed, **Fees Paid**), account + window
-      selectors, filtered/windowed cards (incl. Sharpe, Sortino, and
-      Max Balance Drawdown), then a **Returns ↔ Risk sub-toggle**.
-      The windowed balance-decline card uses the selected accounts and
-      snapshot observations. The Risk section's balance-decline headlines
+    - **Performance** — account/window controls lead one primary selected
+      summary: end-date Portfolio Value, dollar Total Return, cumulative
+      TWR, and annualized TWR. A compact **Whole portfolio · all-time
+      reference** retains fixed lifetime value/return, realized/unrealized,
+      Net Contributed, and **Fees Paid** figures. Disclosures retain
+      selected realized/unrealized/contribution details, benchmark figures,
+      and return-method comparisons; open state survives filter rerenders.
+      Desktop controls and mobile account/range selectors share the same
+      state, custom-date handlers, and return calculations. Restore control
+      focus after rerendering; do not add parallel mobile financial logic.
+      The **Returns ↔ Risk** sub-toggle places Sharpe, Sortino, and Max
+      Balance Drawdown under **Selected scope risk**. That balance-decline
+      card uses the selected accounts and snapshot observations. The
+      subsequent whole-portfolio section's balance-decline headlines
       describe the whole portfolio at daily resolution when available;
       its chart stays at snapshot cadence. Keep these scopes visible.
-      **Two rows, one quantity each.**  The anchor row is whole-
-      portfolio / all-time / never filtered; the windowed row is
-      filtered + windowed.  At filter=Total + window=lifetime every
-      windowed card describes exactly its anchor twin's quantity, so it
-      READS the anchor's field (`_isWholeLifetime`) rather than deriving
+      **Reference and selected scope share matching quantities.** The
+      reference is whole-portfolio / all-time / never filtered. At
+      filter=Total + window=lifetime, a selected figure with a matching
+      reference quantity READS that field (`_isWholeLifetime`) rather than deriving
       it again — re-summing the cent-rounded per-txn annotations put
       adjacent cards a cent or two apart (docs/AUDIT.md F-036; the same rule
       as `basis_totals` below).  Real windows still sum the annotations;
-      only the all-time case is short-circuited.  **Unrealized is the
-      one LEVEL in that row** and is labelled with the as-of DATE, never
-      the window: every trailing window ends today, so it cannot react
-      to one, and labelling it `3mo` is what made a correct figure read
-      as a bug (F-035).  Adding a card to the windowed row means asking
-      whether it is a flow or a level (`setPerfView`;
+      only the all-time case is short-circuited. **Portfolio Value and
+      Unrealized are LEVELS**, labeled with the end date. Trailing presets
+      share the latest export date; changing the account or a custom end
+      date can change these levels. Unrealized is not a gain accumulated
+      over the selected period (F-035). Dollar figures, TWR observations,
+      and benchmark chart data carry their own actual date spans; presentation
+      must not pretend distinct measurement boundaries are identical.
+      Adding a selected-scope figure means deciding whether it is a flow
+      or a level (`setPerfView`;
       both views render into the DOM, switching is a pure display
       toggle).
       **TWO RETURN ENGINES, one chip-click apart**: `lifetime` renders
@@ -757,13 +797,19 @@ Normal local output lives in `exports/transactions.json` and
       fixture can EXERCISE the divergence depends on it holding the
       exact txn shapes involved.
       Returns view: Your Portfolio vs SPY/BND/VXUS/60-40
-      multi-benchmark chart, By-Account TWR section (Mod-Dietz +
-      daily TWR for retirement filters + **Money-Weighted XIRR** with
-      behavior-gap tooltip), Annual Returns table, Top 10 Winners /
-      Losers. Risk view: Balance Drawdown chart, Monthly P&L year×month
+      multi-benchmark chart near the primary summary, return-method
+      disclosure (Mod-Dietz + daily TWR for retirement filters +
+      **Money-Weighted XIRR** with behavior-gap tooltip), Annual Returns
+      table for the selected account across all available years, and
+      Top 10 Winners / Losers for latest positions with lifetime gains
+      across all accounts. Risk view: selected ratios above the fixed
+      whole-portfolio Balance Drawdown chart, Monthly P&L year×month
       heatmap (YTD column footnoted — compounded monthly vs the
       Annual table's Modified Dietz), Recent Daily P&L bars.
       (Trading Activity heatmap was removed from the UI.)
+      `test_performance_presentation.py` covers hierarchy, retained figures,
+      disclosure state, date binding, and shared control behavior; existing
+      return parity tests remain the calculation contract.
 
     Each tab's renderer is registered with `registerTabRenderer(name,
     fn)` and runs lazily on first activation. The Overview tab renders
@@ -773,6 +819,17 @@ Normal local output lives in `exports/transactions.json` and
     crypto txns) auto-hide their nav buttons (`hideEmptyTabs` in
     `app/10-holdings.js`); the panels stay in the DOM so deep links
     still resolve.
+
+    Native metric-guide disclosures expose definitions without hover.
+    `applyScrollRegionFocus` measures horizontal overflow for both keyboard
+    access and `data-overflow-x` cues, including after affected table/Board
+    rerenders. Reset the cue when columns fit. Only direct first-column
+    identity cells are sticky in Holdings/Board; exclude spanning lot-detail
+    cells and nested lot tables. Positions puts symbol before account so
+    the ticker remains visible while scrolling. Touch targets and compact
+    mobile controls supplement the existing keyboard tab order and horizontal
+    navigation. The demo banner keeps its fictional designation visible while
+    collapsing project details; it is not part of personal dashboard output.
 
 ## Invariants the code relies on
 

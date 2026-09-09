@@ -36,6 +36,7 @@ installation, set `PUPPETEER_EXECUTABLE_PATH` to its executable for browser chec
 4. For changes affecting dashboard output, build the fictional demo, exercise
    affected views, and run browser checks. Documentation-only edits need link,
    command, and skill-reference checks; they do not need a new pipeline run.
+   For README edits, also run `uv run python -m pytest tests/test_readme_claims.py -q`.
 5. Follow the privacy checklist before every commit and every push.
 
 ```bash
@@ -73,6 +74,7 @@ workflow instead of duplicating it for each model or client.
 | Current-position P&L or transaction-price fallbacks | `src/analytics/price_fallbacks.py`, `header.py`, `daily_pnl.py`; `test_current_position_pricing.py`, `test_restate_qty_wiring.py` | [Valuation contract](docs/INVARIANTS.md#architecture-post-refactor) |
 | Cache persistence or interrupted-save recovery | `src/io_safe.py`, `prices.py`, `sectors.py`; `test_io_safe.py`, `test_cache_persistence.py` | [Recovery procedure](docs/USAGE.md#cache-save-recovery) and [persistence invariants](docs/INVARIANTS.md#invariants-the-price-cache-relies-on) |
 | Analytics or dashboard behavior | `src/analytics/`, `src/dashboard/app/*.js`; module tests, `test_dashboard_consistency.py`, `test_dashboard_bundling.py`, then demo browser checks | [Analytics and rendering](.claude/skills/fin-add-analytics/SKILL.md) |
+| Dashboard layout, date labels, or filter scope | `dashboard/template.html`, `styles.css`, and tab renderers; `test_holdings_presentation.py`, `test_performance_presentation.py`, `test_tax_presentation.py`, `test_history_presentation.py`, then `tools/browser_smoke.js` | [Presentation contract](docs/DASHBOARD_REVIEW.md) and [analytics/rendering](.claude/skills/fin-add-analytics/SKILL.md) |
 | Recent activity or publication baseline | `src/analytics/changes.py`, `main._publish_dashboard`; `test_changes.py`, `test_changes_publication.py`, `test_changes_frontend.py` | [Analytics and rendering](.claude/skills/fin-add-analytics/SKILL.md) |
 | Account-specific cash flow or return attribution | `src/return_flows.py`, `analytics/_shared.py`; `test_account_transfer_flows.py`, `test_account_transfer_frontend.py` | [Account-transfer contract](docs/INVARIANTS.md#account-transfer-return-flows) |
 | Delayed transfer valuation or historical holdings | `src/return_flows.py`, `history.py`; `test_transfer_transit.py`, `test_transfer_transit_frontend.py`, daily/exact-date valuation parity | [Assets in transit](docs/INVARIANTS.md#assets-in-transit) |

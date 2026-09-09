@@ -262,6 +262,10 @@ function classifyRealized(t) {
 }
 
 // --- Tax bracket fill bar --------------------------------------------------
+function _taxScope(label, context) {
+  return `<div class="scope-context"><span class="scope-label">${_htmlEsc(label)}</span>${context ? ' ' + _htmlEsc(context) : ''}</div>`;
+}
+
 // Estimated tax on YTD realized capital gains (federal + state + NIIT)
 // with a naive even-quarters suggested estimated payment.  All figures
 // precomputed in Python (analytics/tax.py rate_estimates_by_year).
@@ -286,6 +290,9 @@ function _buildEstimatedTaxSection(e) {
       <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">${e.year}${proj} · what to set aside for estimated payments</span>
     </div>
     <div class="panel">
+      ${_taxScope(`${e.year} realized gains`, e.isProjection
+        ? `Recorded through ${SNAPSHOT_DATE}; income assumptions project the full year.`
+        : 'Uses the income and rate estimate for this year.')}
       <div class="bracket-summary">
         ${item('Federal (ST + LT)', e.estCapGainsTaxFederal)}
         ${stateItem}
@@ -330,6 +337,7 @@ function _buildSafeHarborSection(e) {
       <span style="margin-left:auto;">${statusChip}</span>
     </div>
     <div class="panel">
+      ${_taxScope(`${e.year} withholding estimate`, `Compared with the ${sh.prior_year} filed return.`)}
       <div class="bracket-summary">
         ${item(`${sh.prior_year} total tax (1040 line 24)`, sh.prior_year_tax)}
         ${item(`Prior-year prong (× ${(sh.threshold_pct * 100).toFixed(0)}%)`, sh.prior_year_prong)}
@@ -411,6 +419,9 @@ function _buildBracketSection(year) {
       <h2><span style="color:var(--accent);">Tax Bracket Fill — ${year}</span>${projTag}</h2>
     </div>
     <div class="bracket-wrap">
+      ${_taxScope(`${year} income estimate`, est.is_projection
+        ? `Year-end projection from data through ${SNAPSHOT_DATE}.`
+        : 'Bracket amounts use this year’s estimated income.')}
       <div class="bracket-bar">${segments}</div>
       <div class="bracket-legend">${legend}</div>
       <div class="bracket-summary">
@@ -431,6 +442,17 @@ function _buildBracketSection(year) {
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:8px;line-height:1.4;">
         Filled = income already allocated to that bracket.  Partial (gradient) shows the bracket where your taxable income ends.  Use <b>Room in Bracket</b> for short-term gains (they stack with ordinary income at ${(currentRate * 100).toFixed(0)}%); use <b>LTCG Headroom</b> for long-term gains — the amount you can realize at the current ${est.marginal_long != null ? (est.marginal_long * 100).toFixed(0) + '%' : ''} LTCG rate before the next tier bites.
       </div>
+      <details class="scope-context" id="tax-bracket-definitions">
+        <summary>Bracket amounts and headroom definitions</summary>
+        <div class="table-wrap">
+          <table class="mini-table"><caption class="sr-only">${year} estimated income by federal bracket</caption>
+            <thead><tr><th scope="col">Rate</th><th scope="col">Income range</th><th scope="col" class="num">Income in bracket</th><th scope="col" class="num">Room left</th></tr></thead>
+            <tbody>${bf.map(b => `<tr><td>${(b.rate * 100).toFixed(0)}%</td><td>${fmtMoney(b.lower, 0)}${b.upper == null ? '+' : '–' + fmtMoney(b.upper, 0)}</td><td class="num">${fmtMoney(b.in_bracket)}</td><td class="num">${b.room_left == null ? 'No upper limit' : fmtMoney(b.room_left)}</td></tr>`).join('')}</tbody>
+          </table>
+        </div>
+        <p><b>LTCG</b> means long-term capital gains. <b>LTCG Headroom</b> is the additional long-term gain available before the displayed rate increases; these gains stack above ordinary taxable income.</p>
+        ${est.niit_headroom != null ? `<p><b>NIIT</b> means Net Investment Income Tax. <b>NIIT Headroom</b> is the distance from estimated adjusted gross income (AGI) to the displayed ${fmtMoney(est.niit_threshold || 200000, 0)} threshold.</p>` : ''}
+      </details>
     </div>
   `;
 }
@@ -479,7 +501,10 @@ function renderTax() {
 
   // All txns with realized_gain set
   const realized = txns.filter(t => typeof t.realized_gain === 'number');
-  const allYears = [...new Set(realized.map(t => yearOf(t.date)).filter(Boolean))].sort();
+  // The default scope and current-year projection remain selectable even
+  // before the first disposal in the snapshot year.
+  const allYears = [...new Set([String(snapshotYear()),
+    ...realized.map(t => yearOf(t.date)).filter(Boolean)])].sort();
 
   const filtered = taxYearFilter === 'all' ? realized
     : realized.filter(t => yearOf(t.date) === taxYearFilter);
@@ -489,6 +514,8 @@ function renderTax() {
   // override in the UI.
   const estYear = taxYearFilter === 'all' ? snapshotYear() : parseInt(taxYearFilter, 10);
   const est = estimateTaxRates(estYear);
+  const realizationScope = taxYearFilter === 'all' ? 'All recorded years'
+    : `${taxYearFilter}${Number(taxYearFilter) === snapshotYear() ? ' through ' + SNAPSHOT_DATE : ''}`;
   if (taxShortRate === null) taxShortRate = est.marginalShort;
   if (taxLongRate === null) taxLongRate = est.marginalLong;
 
@@ -890,11 +917,20 @@ function renderTax() {
 
   // --- Render ---
   root.innerHTML = `
-    <div style="margin-bottom:12px;">${yearPills}</div>
+    <div style="margin-bottom:12px;" role="group" aria-label="Realization year">${yearPills}</div>
+    ${_taxScope(`Realizations · ${realizationScope}`, 'The year filter applies to these gain cards and the realized-gain tables below.')}
     ${statsHtml}
+    <details class="scope-context" id="tax-gain-definitions">
+      <summary>Gain and tax-estimate definitions</summary>
+      <p><b>ST</b> means short-term; <b>LT</b> means long-term. The §1256 figure is already included in the short- and long-term totals.</p>
+      <p><b>Estimated Tax</b> applies the selected ST and LT rates to the gains above. The detailed estimate below uses the income assumptions for ${est.year}.</p>
+    </details>
 
     <div class="panel" style="margin-top:16px;">
       <h3>Tax Rates &amp; Income — ${est.year}${est.isProjection ? ' <span style="color:var(--yellow);font-size:0.75rem;font-weight:400;">(year-end projection)</span>' : ''}</h3>
+      ${_taxScope(`${est.year} ${est.isProjection ? 'year-end projection' : 'annual estimate'}`, taxYearFilter === 'all'
+        ? 'All Years uses the dataset year for rate assumptions.'
+        : 'Income and rate assumptions for the selected year.')}
       <div style="color:var(--text-dim);font-size:0.75rem;margin-bottom:8px;">
         Filing status: <b style="color:var(--text);">${_htmlEsc(filingStatus())}</b>
         ${RETIREMENT_META.state ? ` · State: <b style="color:var(--text);">${_htmlEsc(RETIREMENT_META.state)}</b>` : ''}
@@ -968,7 +1004,8 @@ function renderTax() {
 
     ${_buildSafeHarborSection(est)}
 
-    <h3 class="tax-group-header">Forward planning — actionable today</h3>
+    <h3 class="tax-group-header">Open-lot planning</h3>
+    ${_taxScope(`Latest taxable holdings · ${SNAPSHOT_DATE}`, 'Lot values and eligibility use the latest dataset. Estimated savings use the rates selected above.')}
 
     <div class="section-header" style="margin-top:16px;">
       <h2><span style="color:var(--accent);">Tax-Loss Harvest Candidates</span></h2>
@@ -1018,6 +1055,7 @@ function renderTax() {
       <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">sold at a loss + bought same symbol within 30 days</span>
     </div>
     <div class="panel">
+      ${_taxScope(`All recorded loss sales · through ${SNAPSHOT_DATE}`, 'This check includes all years and matching buys across accounts.')}
       <table class="mini-table"><caption class="sr-only">Potential wash sales</caption>
         <thead><tr><th scope="col">Sell Date</th><th scope="col">Symbol</th><th scope="col" class="num">Loss</th><th scope="col">Offending Buy</th></tr></thead>
         <tbody>${washRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">No potential wash sales detected.</td></tr>'}</tbody>
@@ -1029,6 +1067,7 @@ function renderTax() {
     </div>
 
     <h3 class="tax-group-header">Historical realizations</h3>
+    ${_taxScope(`Realizations · ${realizationScope}`, 'Both tables follow the year filter above.')}
 
     <div class="section-header" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between;">
       <h2><span style="color:var(--accent);">Realized Gains by Year</span></h2>
@@ -1036,6 +1075,8 @@ function renderTax() {
         ? '<button class="tbtn" onclick="downloadForm8949()" title="Download taxable-account disposals as a Form 8949-style CSV (description, dates, proceeds, basis, gain, term) for your tax software / preparer.">⬇ Form 8949 CSV</button>'
         : ''}
     </div>
+    ${((ANALYTICS.tax || {}).form_8949 || []).length
+      ? _taxScope('CSV export · all recorded years', 'Includes taxable-account disposals; the year filter does not limit the download.') : ''}
     <div class="panel">
       <table class="mini-table"><caption class="sr-only">Realized gains by year</caption>
         <thead><tr>
@@ -1071,4 +1112,3 @@ function renderTax() {
 }
 
 registerTabRenderer('tax', renderTax);
-

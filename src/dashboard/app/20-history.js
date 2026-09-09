@@ -54,7 +54,7 @@ function _windowCutoffIso(windowKey, referenceIso) {
 let historyRange = 'lifetime';
 let historyCustomStart = ''; // used when historyRange === 'custom'
 let historyCustomEnd = '';
-const historyOverlays = new Set();  // 'basis' / 'gain' / 'benchmark'
+const historyOverlays = new Set(['netcontrib']);
 // Legend click-to-hide is kept as a secondary way to temporarily mute a
 // series without untoggling its pill; the set is keyed on the
 // display label (e.g. "Robinhood" or "Robinhood Basis").
@@ -67,11 +67,26 @@ const seriesHidden = new Set();
 // two modes have different interaction models, so composition renders
 // through its own path (_renderComposition) and reuses only the axis /
 // hover conventions.  Range filtering applies to both.
-// Default to Composition — "how is my portfolio built and how has that
-// evolved" is the more informative landing view for a buy-and-hold
-// tracker than a single total line (which the top bar already shows).
-let historyChartMode = 'composition';     // 'lines' | 'composition'
+// The landing view separates balance growth from money contributed.
+// Account composition remains one click away; advanced lines retain all overlays.
+let historyChartMode = 'lines';     // 'lines' | 'composition'
 let historyCompositionDim = 'account';    // 'account' | 'type' | 'sector'
+
+function setHistoryQuickView(view) {
+  if (view === 'balance') {
+    historyChartMode = 'lines';
+    historySelection.clear();
+    historySelection.add('total');
+    historyOverlays.clear();
+    historyOverlays.add('netcontrib');
+    seriesHidden.clear();
+  } else if (view === 'composition') {
+    historyChartMode = 'composition';
+    historyCompositionDim = 'account';
+  } else return;
+  renderHistControls();
+  renderHistory();
+}
 
 function setHistoryChartMode(m) {
   historyChartMode = m;
@@ -108,13 +123,13 @@ function seriesLabel(key) {
 }
 
 function setHistoryRange(r) {
+  const previousObservations = r === 'custom' ? filteredHistory() : [];
   historyRange = r;
-  // Switching to a preset clears the custom window so the inputs
-  // reflect the preset's derived range; switching *to* 'custom' when
-  // no bounds are set yet seeds them from the current view.
+  // Retain previously entered custom bounds. The first switch to Custom
+  // starts from the visible observations, captured before changing the mode.
   if (r === 'custom') {
     if (!historyCustomStart || !historyCustomEnd) {
-      const curr = filteredHistory();
+      const curr = previousObservations;
       if (curr.length) {
         historyCustomStart = historyCustomStart || curr[0].date;
         historyCustomEnd = historyCustomEnd || curr[curr.length - 1].date;
@@ -309,14 +324,41 @@ function filteredHistory() {
 
 // Render the per-item toggle pill bar in #histControls.
 function renderHistControls() {
+  renderKeepingFocus(_renderHistControls);
+}
+
+function _renderHistControls() {
   const el = document.getElementById('histControls');
   if (!el) return;
+
+  const quick = document.getElementById('historyQuickControls');
+  if (quick) {
+    const balance = historyChartMode === 'lines' && historySelection.size === 1
+      && historySelection.has('total') && historyOverlays.size === 1
+      && historyOverlays.has('netcontrib') && seriesHidden.size === 0;
+    const mix = historyChartMode === 'composition' && historyCompositionDim === 'account';
+    const views = [['balance', 'Balance & contributions', balance], ['composition', 'Account mix', mix]];
+    const common = ['lifetime', '1y', 'ytd'];
+    quick.innerHTML = `<div class="chart-view-controls" role="group" aria-label="History chart view">` +
+      views.map(([key, label, active]) => `<button id="histQuickView-${key}" class="tbtn${active ? ' active' : ''}" aria-pressed="${active}" onclick="setHistoryQuickView('${key}')">${label}</button>`).join('') +
+      `</div><div class="chart-range-controls" role="group" aria-label="History chart range">` +
+      common.map(key => `<button id="histQuickRange-${key}" class="tbtn${historyRange === key ? ' active' : ''}" aria-pressed="${historyRange === key}" onclick="setHistoryRange('${key}')">${PERF_WINDOW_LABEL[key]}</button>`).join('') +
+      `<select id="historyQuickRangeSelect" aria-label="More history ranges" onchange="setHistoryRange(this.value)">` +
+      `<option value="" disabled${common.includes(historyRange) ? ' selected' : ''}>More ranges</option>` +
+      PERF_TWR_PRESETS.filter(key => !common.includes(key)).map(key => `<option value="${key}"${historyRange === key ? ' selected' : ''}>${PERF_TWR_PRESET_LABEL[key]}</option>`).join('') +
+      `</select></div>`;
+  }
+  const observations = filteredHistory();
+  const scope = document.getElementById('historyScope');
+  if (scope) scope.textContent = observations.length
+    ? observations[0].date + ' – ' + observations[observations.length - 1].date
+    : 'No observations in range';
 
   // Same window keys as the Performance tab — see PERF_TWR_PRESETS.
   // History also supports 'custom' with explicit date inputs.
   const rangePills = PERF_TWR_PRESETS.map(r => {
     const cls = 'tbtn' + (historyRange === r ? ' active' : '');
-    return `<button class="${cls}" onclick="setHistoryRange('${r}')">${PERF_TWR_PRESET_LABEL[r]}</button>`;
+    return `<button id="historyRange-${r}" class="${cls}" onclick="setHistoryRange('${r}')">${PERF_TWR_PRESET_LABEL[r]}</button>`;
   }).join('');
 
   // Date inputs for the custom range — shown only when 'Custom' is active.
@@ -326,12 +368,12 @@ function renderHistControls() {
   const maxDate = history.length ? history[history.length - 1].date : '';
   const customRangeHtml = historyRange === 'custom' ? `
     <span class="hist-label" style="margin-left:12px;">From:</span>
-    <input type="date" class="hist-date" min="${_htmlEsc(minDate)}" max="${_htmlEsc(maxDate)}"
+    <input id="historyCustomFrom" type="date" class="hist-date" min="${_htmlEsc(minDate)}" max="${_htmlEsc(maxDate)}"
            aria-label="History chart range: from date"
            value="${_htmlEsc(historyCustomStart || minDate)}"
            onchange="setHistoryCustomStart(this.value)">
     <span class="hist-label">To:</span>
-    <input type="date" class="hist-date" min="${_htmlEsc(minDate)}" max="${_htmlEsc(maxDate)}"
+    <input id="historyCustomTo" type="date" class="hist-date" min="${_htmlEsc(minDate)}" max="${_htmlEsc(maxDate)}"
            aria-label="History chart range: to date"
            value="${_htmlEsc(historyCustomEnd || maxDate)}"
            onchange="setHistoryCustomEnd(this.value)">
@@ -340,22 +382,22 @@ function renderHistControls() {
   const totalPill = (() => {
     const cls = 'tbtn' + (historySelection.has('total') ? ' active' : '');
     const color = seriesColorFor('total');
-    return `<button class="${cls}" onclick="toggleHistorySeries('total')">` +
+    return `<button id="historySeriesTotal" class="${cls}" onclick="toggleHistorySeries('total')">` +
       `<span class="pill-swatch" style="background:${color}"></span>Total</button>`;
   })();
 
   const categoryPills = (field, options) => {
-    const pills = options.map(k => {
+    const pills = options.map((k, index) => {
       const sk = field + ':' + k;
       const cls = 'tbtn' + (historySelection.has(sk) ? ' active' : '');
       const color = seriesColorFor(sk);
       const handler = 'toggleHistorySeries(' + _jsString(field + ':' + k) + ')';
-      return `<button class="${cls}" onclick="${_htmlEsc(handler)}">` +
+      return `<button id="historySeries-${field}-${index}" class="${cls}" onclick="${_htmlEsc(handler)}">` +
         `<span class="pill-swatch" style="background:${color}"></span>${_htmlEsc(k)}</button>`;
     }).join('');
     // "all / none" bulk toggles at the end
-    const allBtn = `<button class="tbtn" style="font-size:0.72rem;opacity:0.7;" onclick="setHistoryGroupAll('${field}', true)">all</button>`;
-    const noneBtn = `<button class="tbtn" style="font-size:0.72rem;opacity:0.7;" onclick="setHistoryGroupAll('${field}', false)">none</button>`;
+    const allBtn = `<button id="historyGroup-${field}-all" class="tbtn" style="font-size:0.72rem;" onclick="setHistoryGroupAll('${field}', true)">all</button>`;
+    const noneBtn = `<button id="historyGroup-${field}-none" class="tbtn" style="font-size:0.72rem;" onclick="setHistoryGroupAll('${field}', false)">none</button>`;
     return pills + allBtn + noneBtn;
   };
 
@@ -373,9 +415,9 @@ function renderHistControls() {
   // hidden since they don't apply to a stacked area.
   const composition = historyChartMode === 'composition';
   const modeBtn = (m, label) =>
-    `<button class="tbtn${historyChartMode === m ? ' active' : ''}" onclick="setHistoryChartMode('${m}')">${label}</button>`;
+    `<button id="historyMode-${m}" class="tbtn${historyChartMode === m ? ' active' : ''}" onclick="setHistoryChartMode('${m}')">${label}</button>`;
   const dimBtn = (d, label) =>
-    `<button class="tbtn${historyCompositionDim === d ? ' active' : ''}" onclick="setHistoryCompositionDim('${d}')">${label}</button>`;
+    `<button id="historyDimension-${d}" class="tbtn${historyCompositionDim === d ? ' active' : ''}" onclick="setHistoryCompositionDim('${d}')">${label}</button>`;
   const modeRow = `
     <div class="hist-row">
       <span class="hist-label">Chart:</span>
@@ -390,13 +432,13 @@ function renderHistControls() {
 
   const overlayRow = composition ? '' : `
       <span class="hist-label" style="margin-left:16px;">Overlay:</span>
-      <button class="${overlayBasisCls}" onclick="toggleHistoryOverlay('basis')">Cost Basis</button>
-      <button class="${overlayGainCls}"  onclick="toggleHistoryOverlay('gain')">Unrealized Gain</button>
-      <button class="${overlaySpyCls}"  onclick="toggleHistoryOverlay('spy')"  title="If every dollar you contributed had gone to SPY and stayed there (buy-and-hold), where would those dollars be now?  Filter-aware: respects the active account/type filter.  Withdrawals do not sell simulated shares — same semantics as Schwab/Fidelity 'vs index' charts.">SPY</button>
-      <button class="${overlayBndCls}"  onclick="toggleHistoryOverlay('bnd')"  title="Same buy-and-hold simulation for BND (US aggregate bonds).  Filter-aware.">BND</button>
-      <button class="${overlayVxusCls}" onclick="toggleHistoryOverlay('vxus')" title="Same buy-and-hold simulation for VXUS (international ex-US equities).  Filter-aware.">VXUS</button>
-      <button class="${overlayContribCls}" onclick="toggleHistoryOverlay('netcontrib')">Net Contributed</button>
-      <button class="${overlayYoyCls}" onclick="toggleHistoryOverlay('yoy')" title="Overlay portfolio value from one year ago at the same calendar position">Year-over-Year</button>`;
+      <button id="historyOverlay-basis" class="${overlayBasisCls}" onclick="toggleHistoryOverlay('basis')">Cost Basis</button>
+      <button id="historyOverlay-gain" class="${overlayGainCls}"  onclick="toggleHistoryOverlay('gain')">Unrealized Gain</button>
+      <button id="historyOverlay-spy" class="${overlaySpyCls}"  onclick="toggleHistoryOverlay('spy')"  title="If every dollar you contributed had gone to SPY and stayed there (buy-and-hold), where would those dollars be now?  Filter-aware: respects the active account/type filter.  Withdrawals do not sell simulated shares — same semantics as Schwab/Fidelity 'vs index' charts.">SPY</button>
+      <button id="historyOverlay-bnd" class="${overlayBndCls}"  onclick="toggleHistoryOverlay('bnd')"  title="Same buy-and-hold simulation for BND (US aggregate bonds).  Filter-aware.">BND</button>
+      <button id="historyOverlay-vxus" class="${overlayVxusCls}" onclick="toggleHistoryOverlay('vxus')" title="Same buy-and-hold simulation for VXUS (international ex-US equities).  Filter-aware.">VXUS</button>
+      <button id="historyOverlay-netcontrib" class="${overlayContribCls}" onclick="toggleHistoryOverlay('netcontrib')">Net Contributed</button>
+      <button id="historyOverlay-yoy" class="${overlayYoyCls}" onclick="toggleHistoryOverlay('yoy')" title="Overlay portfolio value from one year ago at the same calendar position">Year-over-Year</button>`;
 
   const seriesRows = composition ? '' : `
     <div class="hist-row">
@@ -426,6 +468,11 @@ function renderHistControls() {
     </div>
     ${seriesRows}
   `;
+  // Custom dates must remain reachable when selected from the compact toolbar.
+  if (historyRange === 'custom') {
+    const disclosure = document.getElementById('histControlsWrap');
+    if (disclosure) disclosure.open = true;
+  }
 
   // Update collapsed summary so the user can see what's selected without
   // expanding (e.g. "1Y · cost basis, SPY · 3 accounts").
@@ -458,6 +505,8 @@ function renderHistControls() {
   const v = _snapshotValueForGroups(last);
   document.getElementById('historyLatestValue').textContent =
     '$' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const latestScope = document.getElementById('historyLatestScope');
+  if (latestScope) latestScope.textContent = 'Latest · ' + last.date;
 })();
 
 // Build series data for the currently-selected set of series, range, and overlays.
@@ -679,7 +728,7 @@ function renderHistory() {
   if (!isFinite(dataMin) || !isFinite(dataMax)) { dataMin = 0; dataMax = 1; }
   const range0 = dataMax - dataMin;
   const padPx = range0 > 0 ? range0 * 0.08 : Math.max(1, Math.abs(dataMax) * 0.08);
-  let minY = dataMin - padPx;
+  let minY = dataMin >= 0 ? Math.max(0, dataMin - padPx) : dataMin - padPx;
   let maxY = dataMax + padPx;
   // If data crosses zero (Unrealized Gain overlay can go negative),
   // ensure 0 stays inside the plotted range so the zero baseline line

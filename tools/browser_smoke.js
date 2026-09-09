@@ -81,6 +81,183 @@ async function checkAllocationGeometry(page) {
   }
 }
 
+async function checkHistoryControls(page) {
+  await page.click('#tabbtn-overview');
+  await page.select('#asOfPickerOverview', '2023-12-31');
+  const snapshot = await page.$eval('#stats', el => el.textContent);
+  const latest = await page.$eval('#historyLatestValue', el => el.textContent);
+  const fullScope = await page.$eval('#historyScope', el => el.textContent);
+  const balance = await page.$eval('#chartSvg', el => el.innerHTML);
+  await page.focus('#histQuickView-composition');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'histQuickView-composition');
+  assert.equal(await page.$eval('#histQuickView-composition', el => el.getAttribute('aria-pressed')), 'true');
+  assert.notEqual(await page.$eval('#chartSvg', el => el.innerHTML), balance, 'account mix must redraw the chart');
+  await page.focus('#histQuickView-balance');
+  await page.keyboard.press('Space');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'histQuickView-balance');
+  assert.equal(await page.$eval('#histQuickView-balance', el => el.getAttribute('aria-pressed')), 'true');
+  await page.focus('#histQuickRange-ytd');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'histQuickRange-ytd');
+  const range = await page.evaluate(() => ({dates: filteredHistory().map(h => h.date),
+    scope: document.getElementById('historyScope').textContent}));
+  assert.ok(range.dates.length > 1 && range.dates.every(date => date.startsWith('2026-')));
+  assert.notEqual(range.scope, fullScope);
+  assert.equal(range.scope, range.dates[0] + ' – ' + range.dates.at(-1));
+  assert.notEqual(await page.$eval('#chartSvg', el => el.innerHTML), balance, 'YTD must redraw the chart observations');
+  assert.equal(await page.$eval('#asOfPickerOverview', el => el.value), '2023-12-31');
+  assert.equal(await page.$eval('#stats', el => el.textContent), snapshot, 'chart range must preserve the snapshot cards');
+  assert.equal(await page.$eval('#historyLatestValue', el => el.textContent), latest);
+  await page.focus('#historyQuickRangeSelect');
+  await page.select('#historyQuickRangeSelect', 'custom');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'historyQuickRangeSelect');
+  assert.equal(await page.$eval('#histControlsWrap', el => el.open), true);
+  assert.equal(await page.$eval('#historyCustomFrom', el => el.value), range.dates[0], 'first Custom range starts at the visible range');
+  assert.equal(await page.$eval('#historyCustomTo', el => el.value), range.dates.at(-1));
+  for (const id of ['historyCustomFrom', 'historyCustomTo']) {
+    assert.equal(await page.$eval('#' + id, el => el.checkVisibility()), true, id + ' must be visible');
+  }
+  await page.focus('#historyGroup-account-all');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'historyGroup-account-all');
+  await page.focus('#historyOverlay-basis');
+  await page.keyboard.press('Space');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'historyOverlay-basis');
+  await page.click('#histQuickView-balance');
+  await page.click('#histQuickRange-lifetime');
+  await page.click('#histControlsWrap > summary');
+  await page.select('#asOfPickerOverview', '2026-06-30');
+}
+
+async function checkHoldingsLayouts(page) {
+  await page.click('#tabbtn-holdings');
+  // Choose a fixture account sharing a symbol, so account membership and
+  // account-specific amounts demonstrably differ without recreating any math.
+  const fixture = await page.evaluate(() => {
+    const shared = PPNL.by_symbol.find(row => row.accounts.length > 1 && row.value > 0);
+    const account = PPNL.by_account.find(row => row.symbol === shared.symbol && row.value > 0 && row.value < shared.value);
+    return {group: account.account_group, symbol: shared.symbol,
+      symbolValue: fmtMoney(shared.value), accountValue: fmtMoney(account.value)};
+  });
+  await page.select('#byAssetAccountGroupFilter', fixture.group);
+  const tableTotal = await page.$eval('#byAssetTotalValue', el => el.textContent);
+  const tableRows = await page.$eval('#byAssetTbody', el => el.textContent);
+  await page.click('#btnBoardBoard');
+  const boardTotal = await page.$eval('#byAssetTotalValue', el => el.textContent);
+  const paneTotal = '#boardPanes [data-pane="0"] .board-pane-total[title="Total market value of the rows shown"]';
+  assert.equal(boardTotal, await page.$eval(paneTotal, el => el.textContent));
+  assert.notEqual(boardTotal, tableTotal, 'Board heading must leave the Table account subtotal behind');
+  assert.notEqual(await page.$eval('#boardPanes [data-pane="0"] tbody', el => el.textContent), tableRows);
+  await page.select('#boardAccountFilter', fixture.group);
+  assert.match(await page.$eval('#boardScopeContext', el => el.textContent), /all accounts holding those symbols/);
+  const boardRow = async () => page.$$eval('#boardPanes [data-pane="0"] tbody tr',
+    (rows, symbol) => rows.find(row => row.cells[0].textContent.trim() === symbol)?.textContent, fixture.symbol);
+  assert.ok((await boardRow())?.includes(fixture.symbolValue), 'By Symbol keeps the exported all-account value');
+  await page.click('button[onclick="setBoardGroupBy(\'account\')"]');
+  assert.match(await page.$eval('#boardScopeContext', el => el.textContent), /amounts follow the selected account/);
+  assert.ok((await boardRow())?.includes(fixture.accountValue), 'By Account displays the exported account value');
+  assert.equal(await page.$eval('#byAssetTotalValue', el => el.textContent), await page.$eval(paneTotal, el => el.textContent));
+  await page.type('#boardSearch', 'fictional-no-matching-position');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'boardSearch');
+  assert.equal(await page.$eval('#byAssetTotalValue', el => el.textContent), '$0.00');
+  assert.ok(await page.$('#boardPanes .board-empty'));
+  await page.select('#asOfPickerHoldings', '2023-12-31');
+  assert.equal(await page.$eval('#byAssetTotalValue', el => el.textContent), '', 'historical Board notice must clear the latest total');
+  assert.ok(await page.$('#boardBody .board-note'));
+  await page.click('#boardBody .board-note button');
+  await page.click('#boardSearch');
+  await page.keyboard.press('Home');
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('End');
+  await page.keyboard.up('Shift');
+  await page.keyboard.press('Backspace');
+  await page.select('#boardAccountFilter', '');
+  await page.click('button[onclick="setBoardGroupBy(\'symbol\')"]');
+  await page.click('#btnBoardTable');
+  assert.equal(await page.$eval('#byAssetTotalValue', el => el.textContent), tableTotal, 'returning to Table restores its independent filter');
+  await page.select('#byAssetAccountGroupFilter', '');
+  await page.type('#byAssetSearch', 'fictional-no-matching-position');
+  assert.equal(await page.$eval('#byAssetTotalValue', el => el.textContent), '$0.00');
+  await page.click('#byAssetSearch');
+  await page.keyboard.press('Home');
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('End');
+  await page.keyboard.up('Shift');
+  await page.keyboard.press('Backspace');
+}
+
+async function checkStickyIdentity(page, selector) {
+  const initial = await page.$eval(selector, el => {
+    el.scrollLeft = 0;
+    const cell = el.querySelector('tbody tr td:not([colspan])');
+    return {overflow: el.scrollWidth > el.clientWidth + 1,
+      cue: getComputedStyle(el, '::before').content,
+      annotated: el.dataset.overflowX, sticky: getComputedStyle(cell).position,
+      x: cell.getBoundingClientRect().x};
+  });
+  assert.equal(initial.overflow, true, selector + ' should need horizontal scrolling at phone width');
+  assert.equal(initial.annotated, 'true');
+  assert.match(initial.cue, /Scroll horizontally/);
+  assert.equal(initial.sticky, 'sticky');
+  await page.focus(selector);
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(selector => document.querySelector(selector).scrollLeft > 20, {}, selector);
+  const after = await page.$eval(selector, el => el.querySelector('tbody tr td:not([colspan])').getBoundingClientRect().x);
+  assert.ok(Math.abs(after - initial.x) <= 1, selector + ' must keep the position identity visible while scrolling');
+}
+
+async function checkMobilePerformance(page) {
+  await page.click('#tabbtn-performance');
+  const account = await page.$eval('#perfAccountSelect', el => [...el.options].find(option => option.value && !option.value.startsWith('__')).value);
+  await page.focus('#perfAccountSelect');
+  await page.select('#perfAccountSelect', account);
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'perfAccountSelect');
+  assert.equal(await page.$eval('#perfSelectedHeading', el => el.textContent), account);
+  const scope = await page.$eval('#perfScopeContext', el => el.textContent);
+  const exportedValue = await page.evaluate(account => fmtMoney(history.at(-1).by_account_group[account]), account);
+  assert.equal(await page.$eval('.perf-primary-summary .stat-card .value', el => el.textContent), exportedValue,
+    'the selected account must own the primary value, using its exported snapshot total');
+  assert.equal(await page.$$eval('.perf-primary-summary .stat-card', els => els.length), 4);
+  assert.equal(await page.$eval('#perfLifetimeReference', el => el.open), false);
+  assert.equal(await page.$eval('#perfLifetimeReference > summary', el => el.checkVisibility()), true);
+  assert.equal(await page.$eval('.perf-mobile-account', el => el.checkVisibility()), true);
+  assert.equal(await page.$eval('.perf-mobile-ranges', el => el.checkVisibility()), true);
+  assert.equal(await page.$$eval('#perfControls .desktop-only', els => els.every(el => !el.checkVisibility())), true);
+  const ytd = '.perf-mobile-ranges [data-perf-window="ytd"]';
+  await page.focus(ytd);
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => document.activeElement.getAttribute('data-perf-window')), 'ytd', 'keyboard range selection must preserve focus');
+  assert.equal(await page.$eval(ytd, el => el.getAttribute('aria-pressed')), 'true');
+  assert.notEqual(await page.$eval('#perfScopeContext', el => el.textContent), scope);
+  assert.match(await page.$eval('#perfScopeContext', el => el.textContent), /2026-06-30/);
+  assert.equal(await page.$eval('#perfSelectedHeading', el => el.textContent), account);
+  await page.focus('#perfWindowSelect');
+  const ytdScope = await page.$eval('#perfScopeContext', el => el.textContent);
+  await page.select('#perfWindowSelect', '30day');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'perfWindowSelect');
+  assert.notEqual(await page.$eval('#perfScopeContext', el => el.textContent), ytdScope,
+    'a range chosen from the menu must change the displayed observation span');
+  await page.select('#perfWindowSelect', 'custom');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'perfWindowSelect');
+  for (const id of ['perfCustomStart', 'perfCustomEnd']) {
+    assert.equal(await page.$eval('#' + id, el => el.checkVisibility()), true, id + ' must open from More ranges');
+  }
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 1), 'custom Performance controls must fit the mobile page');
+  await page.focus('#perfCustomStart');
+  await page.$eval('#perfCustomStart', el => { el.value = '2023-12-31'; el.dispatchEvent(new Event('change', {bubbles: true})); });
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'perfCustomStart');
+  await page.focus('#perfCustomEnd');
+  await page.$eval('#perfCustomEnd', el => { el.value = '2025-12-31'; el.dispatchEvent(new Event('change', {bubbles: true})); });
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'perfCustomEnd');
+  assert.match(await page.$eval('#perfScopeContext', el => el.textContent), /2023-12-31 → 2025-12-31/);
+  const historicalValue = await page.evaluate(account => fmtMoney(history.find(h => h.date === '2025-12-31').by_account_group[account]), account);
+  assert.equal(await page.$eval('.perf-primary-summary .stat-card .value', el => el.textContent), historicalValue,
+    'custom window value must use the selected account at the exported end snapshot');
+  await page.click('.perf-mobile-ranges [data-perf-window="lifetime"]');
+  await page.select('#perfAccountSelect', '');
+}
+
 async function main() {
   const file = path.resolve(process.argv[2] || '_site/index.html');
   const browser = await puppeteer.launch({headless: true,
@@ -105,12 +282,18 @@ async function main() {
     await checkAllocationGeometry(page);
     await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement.className), 'skip-link');
-    await page.click('a[href="#about-project"]');
+    await page.click('#about-project summary');
     assert.equal(await page.$eval('#about-project', el => el.open), true);
     await page.click('#about-project summary');
+    assert.deepEqual(await page.$$eval('#tabnav [role="tab"]', els => els.slice(0, 3).map(el => el.dataset.tab)),
+      ['overview', 'holdings', 'performance']);
     await page.focus('#tabbtn-overview');
     await page.keyboard.press('ArrowRight');
     assert.equal(await page.$eval('#tabbtn-holdings', el => el.getAttribute('aria-selected')), 'true');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'tabbtn-holdings');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await page.$eval('#tabbtn-performance', el => el.getAttribute('aria-selected')), 'true');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'tabbtn-performance');
 
     const tabs = ['overview', 'holdings', 'transactions', 'options', 'retirement', 'planning', 'income', 'tax', 'crypto', 'performance'];
     for (const tab of tabs) {
@@ -119,6 +302,8 @@ async function main() {
       assert.ok(await page.$eval('#tab-' + tab, el => el.innerText.trim().length > 80), tab + ' must render content');
       assert.equal(await page.$$eval('[data-render-error]', els => els.length), 0, tab + ' render error');
     }
+    await checkHistoryControls(page);
+    await checkHoldingsLayouts(page);
 
     async function typeEach(selector, value) {
       await page.click(selector);
@@ -189,14 +374,30 @@ async function main() {
     assert.equal(risk.js.sharpe, risk.py.sharpe);
     assert.equal(risk.js.sortino, risk.py.sortino);
 
+    await page.setViewport({width: 390, height: 844, isMobile: true, hasTouch: true});
     await page.goto(pathToFileURL(file).href + '#tax', {waitUntil: 'load'});
     assert.equal(await page.$eval('#tabbtn-tax', el => el.getAttribute('aria-selected')), 'true');
-    await page.setViewport({width: 375, height: 812});
+    assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches), true);
+    for (const id of ['tax-gain-definitions', 'tax-bracket-definitions']) {
+      await page.focus('#' + id + ' > summary');
+      await page.keyboard.press('Enter');
+      assert.equal(await page.$eval('#' + id, el => el.open), true, id + ' must be keyboard accessible');
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 1), id + ' must fit the mobile page when open');
+      await page.keyboard.press('Space');
+      assert.equal(await page.$eval('#' + id, el => el.open), false);
+    }
     for (const tab of tabs) {
       await page.click('#tabbtn-' + tab);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert.ok(overflow <= 1, `${tab} overflows mobile viewport by ${overflow}px`);
     }
+    await page.click('#tabbtn-holdings');
+    await checkStickyIdentity(page, '#byAssetBody .sticky-identity');
+    await page.click('#btnBoardBoard');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 1), 'Board must fit the mobile page');
+    await checkStickyIdentity(page, '#boardPanes [data-pane="0"] .board-scroll');
+    await page.click('#btnBoardTable');
+    await checkMobilePerformance(page);
     await page.click('#perfViewBtnRisk');
     const riskOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert.ok(riskOverflow <= 1, `performance risk view overflows mobile viewport by ${riskOverflow}px`);
@@ -207,7 +408,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('[aria-label="Monthly returns table"]').scrollLeft > 0);
     await page.click('#perfViewBtnReturns');
     assert.deepEqual(errors, []);
-    console.log('PASS: 10 tabs, allocation ring geometry, per-key input, historical gains, Python/JS monthly risk parity, keyboard disclosures, CSV export, deep link, mobile Returns/Risk layout and table scrolling, no console/network errors.');
+    console.log('PASS: 10 tabs and keyboard navigation, allocation ring geometry, History scope controls, independent Table/Board filters and totals, per-key input, historical gains, Python/JS monthly risk parity, keyboard disclosures, CSV export, deep link, touch layout and sticky identities, mobile Performance scopes/Returns/Risk, no console/network errors.');
   } finally {
     await browser.close();
     await fs.rm(downloads, {recursive: true, force: true});

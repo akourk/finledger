@@ -18,17 +18,16 @@ DESCRIPTION = "A local-first financial ledger that turns broker exports into rec
 BANNER = f"""<header id="demo-intro" class="demo-intro" aria-label="About this demo">
   <div class="demo-heading"><strong>finledger</strong> &mdash; live demo
     <span class="demo-badge">Fictional portfolio · {AS_OF_DATE.strftime('%b %d, %Y')}</span></div>
-  <p>From scattered broker exports to one reconciled financial ledger.</p>
-  <div class="demo-links"><a href="#about-project" onclick="document.getElementById('about-project').open=true">About this project</a>
-    <a href="{REPO}">Source on GitHub &rarr;</a>
-    <a href="{REPO}/blob/main/docs/ENGINEERING_CASE_STUDY.md">Engineering case study</a></div>
   <details id="about-project">
-    <summary>How it works and what to explore</summary>
+    <summary>About this demo</summary>
+    <p>From scattered broker exports to one reconciled financial ledger.</p>
+    <div class="demo-links"><a href="{REPO}">Source on GitHub &rarr;</a>
+      <a href="{REPO}/blob/main/docs/ENGINEERING_CASE_STUDY.md">Engineering case study</a></div>
     <p>Python normalizes broker CSVs, reconciles transfers, tracks tax lots, and
     computes portfolio history. A self-contained JavaScript dashboard makes the
     results explorable. Data stays local; this public example uses fictional
     transactions and illustrative synthetic prices, with a fixed snapshot date.</p>
-    <p>Try a historical date in Holdings, compare lot methods in Tax, or follow
+    <p>Try a historical date or compare lot methods in Holdings, or follow
     the rollover in Performance. The reconciliation panel includes one explicitly
     explained statement timing difference to demonstrate an auditable exception.</p>
     <p>Planning and tax projections illustrate the software and are estimates.
@@ -38,9 +37,9 @@ BANNER = f"""<header id="demo-intro" class="demo-intro" aria-label="About this d
 </header>
 """
 STYLE = """<style id="demo-styles">
-.demo-intro{font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#141429;color:#dddde9;border-bottom:1px solid #373753;padding:18px 24px}
+.demo-intro{font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#141429;color:#dddde9;border:1px solid #373753;border-radius:8px;padding:12px 20px;margin-bottom:18px}
 .demo-intro p{margin:7px 0;max-width:1000px}.demo-heading{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:#eeeef8;font-size:16px}.demo-heading strong{color:#c4b5fd}.demo-badge{font-size:12px;color:#dddde9;border:1px solid #595975;border-radius:20px;padding:2px 9px}.demo-links{display:flex;flex-wrap:wrap;gap:8px 22px}.demo-intro a{color:#c4b5fd;text-underline-offset:3px}.demo-intro summary{cursor:pointer;color:#dddde9;font-weight:600;padding:8px 0}.demo-intro details{margin-top:5px;max-width:1100px}.demo-intro :focus-visible{outline:2px solid #c4b5fd;outline-offset:4px}
-@media(max-width:600px){.demo-intro{padding:14px 16px}.demo-heading{font-size:15px}}
+@media(max-width:600px){.demo-intro{padding:10px 12px;margin-bottom:14px}.demo-heading{font-size:14px;gap:5px 8px}.demo-intro summary{padding:6px 0;min-height:32px}}
 </style>"""
 FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%237c3aed'/%3E%3Cpath d='M18 46V18h30M18 31h23' fill='none' stroke='white' stroke-width='7'/%3E%3C/svg%3E"
 HEAD = f"""<meta name="description" content="{DESCRIPTION}">

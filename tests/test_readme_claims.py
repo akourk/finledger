@@ -22,9 +22,10 @@ def _readme() -> str:
 
 
 def test_test_count_badge_is_not_an_overclaim():
-    """The badge says "N+"; the suite has to actually clear N."""
+    """If a numeric badge is published, the suite must actually clear N."""
     m = re.search(r"badge/tests-(\d+)%2B", _readme())
-    assert m, "no test-count badge in the README"
+    if not m:
+        return  # The live workflow-status badge makes no numeric claim.
     claimed = int(m.group(1))
 
     proc = subprocess.run(

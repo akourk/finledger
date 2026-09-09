@@ -1,136 +1,137 @@
 # Dashboard presentation review
 
-The fixes and improvements below are not yet implemented. The review used the
-verified fictional demo, the four approved public screenshots, and all ten tabs
-at desktop and phone widths. No personal dashboard was inspected. The existing
-dark theme, compact tables, and detailed financial views provide a useful base.
+The six recommendations below are implemented. This record preserves the
+original findings and describes the resulting behavior. Review and development
+used the verified fictional demo and approved public screenshots; no personal
+dashboard was inspected. The dark theme, compact tables, and detailed financial
+views remain the foundation.
 
-## Recommended order
+## Implemented recommendations
 
 ### 1. Correct the Holdings heading when switching layouts
 
-Filtering Table to one account and then switching to Board leaves the shared
-heading showing the Table subtotal while Board can show all accounts. This was
-reproduced through the actual fictional demo controls. The Table renderer owns
-the heading total, but the layout switch does not update or hide it. Make that
-heading describe the active view, or keep the Table subtotal inside its layout.
+The original review reproduced a Table account subtotal remaining above Board
+rows with a different scope. The shared heading now follows the active layout
+and its filters. Empty selections show zero; historical-date and missing-data
+Board notices clear the amount. Returning to Table restores its own filtered
+snapshot subtotal.
 
-There is a related scope ambiguity: Board's By Symbol account selector keeps
-symbols held in the selected account, but their values and P&L remain combined
-across all accounts. Cross-account symbol aggregation is intentional; the selector
-does not currently explain that meaning. Label it explicitly, or make account
-scope a deliberate behavior change with matching financial tests. Table and Board
-also maintain independent filters, so changing layouts can change the visible
-scope without changing the common heading.
+Table and Board retain independent filters, with visible explanations. In
+Board's **By Symbol** mode, an account selection finds symbols held there;
+quantities, values, and P&L remain combined across all accounts holding those
+symbols. **By Account** supplies account-specific figures. This preserves the
+existing financial aggregation while making its scope explicit.
 
-Start in [Holdings](../src/dashboard/app/10-holdings.js), which writes
-`byAssetTotalValue`, and [Board](../src/dashboard/app/15-board.js), especially
-`setBoardLayout` and `boardRows`. Add a browser regression that selects an account,
-switches layouts and grouping, and checks the heading against the visible rows.
-Include a fictional symbol held in more than one account.
+[Holdings](../src/dashboard/app/10-holdings.js) and
+[Board](../src/dashboard/app/15-board.js) share the heading update. The
+[Holdings presentation regressions](../tests/test_holdings_presentation.py)
+exercise actual rendered filter handlers, layout/group changes, independent
+selections, empty results, missing data, and historical snapshots with a
+fictional symbol held in two accounts.
 
 ### 2. Make Performance follow the selected account and window
 
-The page currently presents a whole-portfolio all-time summary, account/window
-controls, a second set of metrics, and benchmark metrics with similar visual
-weight. Total Return, Realized, Unrealized, and Net Contributed repeat when the
-selection is Total/Lifetime. Changing the filter leaves the first summary fixed.
+Previously, fixed lifetime cards, windowed cards, and benchmark cards competed
+for attention, with repeated figures at Total/Lifetime. Account and date
+controls now precede one primary selected-scope summary: Portfolio Value,
+dollar Total Return, cumulative TWR, and annualized TWR. Dollar return and TWR
+remain distinct measures.
 
-Put account and date controls first, followed by one primary summary for that
-selection. Give dollar return and time-weighted percentage return distinct labels;
-they describe different calculations. Move the fixed lifetime summary into a
-compact, explicitly labeled reference. Place the benchmark chart closer to the
-summary and the detailed ratios with Risk. Preserve access to every existing
-figure and the explanation that realized/unrealized amounts do not simply sum
-to Total Return.
+A compact **Whole portfolio · all-time reference** retains the fixed figures.
+Realized/unrealized gains, contributions, benchmark figures, and return-method
+comparisons remain available in disclosures. The benchmark chart follows the
+primary summary; Sharpe, Sortino, and selected-scope Max Balance Drawdown live
+under **Risk**. Disclosure state survives filter changes, and controls retain
+focus across their rerender.
 
-Start in [Performance](../src/dashboard/app/90-performance.js). Check Total,
-individual account, custom window, and Returns/Risk states before deciding which
-cards can be consolidated. Do not combine returns measured over different spans.
+Dollar figures, TWR observations, and chart dates have separate labels where
+their measurement boundaries differ. Unrealized remains an end-date level.
+Annual returns use all available years for the selected account; winners and
+losers retain their latest-position, lifetime, whole-portfolio scope. These
+contracts are covered by the [Performance presentation tests](../tests/test_performance_presentation.py)
+and existing Python/JavaScript return checks.
 
 ### 3. Use color and type to emphasize meaning
 
-Holdings by Asset applies gain/loss coloring to every numeric column, including
-quantity, price, value, and cost basis. That makes ordinary positive balances
-compete with actual gains. Use neutral text for these levels; retain signed
-green/red treatment for gains, losses, and returns. Keep consistent account/sector
-colors where they identify a category.
+Holdings previously colored ordinary positive quantities, prices, values, and
+cost basis like gains. Those levels now use neutral text; gains, losses, and
+returns keep sign colors. Account and sector colors still identify categories.
+Portfolio value is larger and more prominent in the top summary, with return
+and recent change as supporting figures. Card spacing and alignment are more
+consistent while tabular numerals and keyboard focus treatments remain.
 
-Give portfolio value a clearer primary position and slightly larger type, with
-return and recent change as supporting figures. Use consistent spacing and card
-alignment rather than adding more borders. Retain the existing tabular numerals,
-contrast, focus rings, signed amounts, and negative-bar hatching.
-
-Start in [Holdings](../src/dashboard/app/10-holdings.js) and
-[styles](../src/dashboard/styles.css). Verify neutral levels, gains, losses, zero,
-and unavailable values in both table and Board layouts.
+The [Holdings presentation regressions](../tests/test_holdings_presentation.py)
+check rendered neutral levels alongside positive and negative gains.
 
 ### 4. Put scope and date beside the figures they describe
 
-An Overview/Holdings historical date does not change every nearby section.
-The top summary remains latest, History retains its own range, and target
-allocation/concentration use latest analytics. Tax similarly places a selected
-historical year above sections projecting the current year. Existing hints
-explain some boundaries, but those explanations are easy to miss while scanning.
+Overview/Holdings snapshot sections now show **Latest** or **As of** labels
+using the actual available snapshot date. The top summary, target allocation,
+and concentration are labeled latest; Lot Method Comparison is lifetime.
+History shows its own observation range. Native metric-guide disclosures make
+definitions available by keyboard and touch as well as hover.
 
-Show compact section labels such as "Latest", "As of [date]", "Lifetime", and
-"Projected [year]". Show actual measurement dates with filtered return summaries.
-Keep essential definitions available through a keyboard/touch disclosure as well
-as hover text. Rename the two Holdings sections to distinguish account summaries
-from individual positions and lots; make the Board label describe its P&L focus.
+The original Tax review overstated a selected-year/current-year mismatch.
+Tax Rates & Income already follows the selected year; **All Years** uses the
+latest dataset year for rate assumptions. The implemented labels distinguish
+those assumptions from latest open-lot values and eligibility. Estimated
+harvest savings use the selected rates. Potential Wash Sales and the Form 8949
+CSV include all recorded years regardless of the realization filter. The
+[Tax presentation tests](../tests/test_tax_presentation.py) protect these
+separate scopes.
 
-Start in the [template](../src/dashboard/template.html), Holdings, and
-[Tax](../src/dashboard/app/80-tax.js). These changes must describe the existing
-data scope accurately; changing the scope itself needs financial parity checks.
+Holdings now distinguishes its grouped summary from **Positions & lots**, and
+the **P&L board** toggle describes the alternate view's purpose.
 
 ### 5. Reduce the effort of using the dashboard on a phone
 
-The current navigation already scrolls horizontally and all reviewed tabs stay
-within the viewport. Wide holdings tables still require substantial horizontal
-scrolling. Add a clear overflow cue and consider keeping the identifying column
-visible while scrolling. Test lot expansion before making table columns sticky.
+Navigation already scrolled horizontally before this batch. The implementation
+retains that behavior and adds measured horizontal-overflow cues to wide tables.
+The first identifying column stays visible in Holdings and Board; Positions
+puts the symbol first. Expanded lot detail and nested lot-table cells remain
+outside the sticky-column rule. The same overflow measurement maintains
+keyboard access and clears cues when content fits.
 
-Use larger hit areas for compact filters and disclosures on touch devices.
-Performance's account and range controls could use a compact account selector
-and a short row of common ranges, retaining the remaining choices in a menu.
-Keep the selected account and dates visible. Preserve keyboard navigation,
-focusable scroll regions, and the existing desktop controls where they work well.
-
-The public demo introduction occupies substantial space on phones. It can be
-more compact while keeping its fictional-data designation visible and project
-details accessible. This banner is specific to the public demo; it does not
-explain the size of the private dashboard header.
+Touch controls have larger targets. Performance uses a compact account selector,
+Lifetime/1y/YTD/3mo shortcuts, and a More ranges menu on phones; desktop keeps
+its full controls. The public demo introduction is shorter, with its fictional
+designation always visible and project details under **About this demo**. The
+banner change affects the public demo, not generated personal dashboards.
 
 ### 6. Make common destinations and chart choices easier to find
 
-Move Performance beside Overview and Holdings in the existing navigation. Keep
-tab IDs, deep links, keyboard order, and mobile scrolling working together.
-The existing Board mode, search, column controls, and collapsible details already
-provide useful ways to explore; improve their naming and discoverability.
+Performance now follows Overview and Holdings in navigation. Tab IDs and deep
+links are preserved, and keyboard travel follows the visible order.
 
-Overview already offers Lines/Composition and a Net Contributed overlay under
-Chart Options. Expose a few common range and chart choices next to the chart.
-A simple value-versus-contributions view is a candidate for the default; retain
-the current account composition view as an equally reachable choice. Compare
-both before changing the default, since composition answers a different question.
+History opens with **Balance & contributions** over the lifetime range, showing
+portfolio value and net contributed separately. **Account mix** remains one
+click away. Lifetime, 1y, and YTD buttons and More ranges sit beside the chart;
+Chart Options retains custom dates, detailed series, overlays, benchmarks, and
+composition settings. Choosing Balance & contributions restores that simple
+series selection without changing the chosen date range.
 
-Start in [History](../src/dashboard/app/20-history.js) and the template. Keep
-contributions visually distinct from investment return.
+The first switch from a preset to Custom starts with that visible observation
+range; returning to Custom preserves previously entered dates. The
+[History presentation tests](../tests/test_history_presentation.py) cover these
+transitions and the distinct balance/contribution series. Quick and advanced
+chart controls retain keyboard focus after rerendering.
 
 ## Evidence and acceptance
 
-At review time, the Performance benchmark heading appeared roughly 760 pixels
+Before this batch, the Performance benchmark heading appeared roughly 760 pixels
 down the desktop page and 1,420 pixels down the phone page. These measurements
 include the public demo banner and are observations of the fictional sample,
-not targets for every dataset. Twenty tab/viewport states at 1440 and 390 pixels
-showed no page-wide overflow or script errors. Design priorities above are
-judgments from inspection, not results of user testing.
+not targets for every dataset. The initial review's twenty tab/viewport states
+at 1440 and 390 pixels showed no page-wide overflow or script errors. These are
+historical observations, not measurements of the updated layout or user testing.
 
-Implement in small batches, beginning with the layout-switch heading, then
-summary hierarchy and color. Exercise
-changed filters, historical dates, disclosure state, keyboard/touch access, and
-narrow tables against the assembled fictional demo. Keep existing calculations
-and scope contracts unless a separately tested behavior change is intended.
+Behavioral checks cover filter and layout totals, selected and fixed scopes,
+date boundaries, disclosure state, native controls, keyboard navigation, lot
+expansion, and narrow-table identity. The assembled fictional demo is the browser
+validation target. Final validation results belong in
+[Engineering review](REVIEW.md#validation-and-limits).
+
 Follow the [development loop](../CONTRIBUTING.md#development-loop) and
 [screenshot publication rules](PRIVACY.md#before-publishing-a-demo-or-screenshot)
-when a batch changes the rendered dashboard.
+for subsequent changes. Financial aggregation, return engines, and account/date
+contracts remain shared; presentation changes must not silently redefine them.

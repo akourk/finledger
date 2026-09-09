@@ -164,26 +164,40 @@ falls back to it when `metadata.csv` is absent.
 ## Dashboard
 
 The dashboard is a tabbed single-page app (URL hash routing, so
-`dashboard.html#planning` deep-links). Tabs:
+`dashboard.html#planning` deep-links). Overview, Holdings, and Performance lead
+the navigation. Tabs:
 
 - **Overview** — persistent top bar (Portfolio Value, Total Return,
   1-Day Change), alerts / "what changed since last run" /
   **reconciliation** (finledger vs broker-reported figures) feedback panels,
   stat cards (Cost Basis, Unrealized/Realized P&L, Net Contributed,
-  Income, Current Balance Drawdown), history chart with overlay toggles (Cost
-  Basis, Unrealized Gain, SPY Benchmark, Net Contributed,
-  Year-over-Year), top 10 holdings, recent transactions, allocation
-  donut.
-- **Holdings** — by Asset / Account / Type / Sector, with cost basis and
-  unrealized gain columns. **Holdings by Asset** offers **Table** and **Board**
-  layouts. Table shows account/symbol positions with expandable open lots at
-  the latest date; Board shows current positions in one to three independently
-  sorted panes with selectable P&L windows. Board is latest-only and its layout
-  settings are remembered when browser storage is available. Plus a
+  Income, Current Balance Drawdown), history chart, top 15 holdings, recent
+  transactions, and allocation charts by account, type, and sector. History
+  opens with portfolio **Balance & contributions** over the lifetime range.
+  **Account mix** switches to stacked account composition. Lifetime, 1y, and
+  YTD shortcuts sit beside the chart; More ranges includes custom dates.
+  Chart Options retains the detailed series, composition, and overlay controls
+  (Cost Basis, Unrealized Gain, benchmarks, Net Contributed, Year-over-Year).
+- **Holdings** — a summary grouped by Account / Type / Sector, with cost basis
+  and unrealized gain columns. **Positions & lots** offers **Table** and
+  **P&L board** layouts. Table shows symbol/account positions with expandable
+  open lots at the latest date; Board shows current positions in one to three
+  independently sorted panes with selectable P&L windows. Board is latest-only
+  and its layout settings are remembered when browser storage is available. Plus a
   **Target vs Actual** rebalancing-drift view (when `Target Allocation` is set),
   a concentration grid
   (positions / sectors / accounts with HHI + top-5 share), and a lot
   method comparison table (FIFO / LIFO / HIFO / Average).
+- **Performance** — account and window controls followed by a primary summary
+  of Portfolio Value, dollar Total Return, cumulative TWR, and annualized TWR.
+  The selected account, window, and actual measurement dates stay visible.
+  A compact **Whole portfolio · all-time reference** retains the fixed lifetime
+  figures; disclosures hold realized/unrealized gains, contributions, benchmark
+  figures, and return-method details. **Returns** places the SPY / BND / VXUS /
+  60-40 comparison chart near the summary, followed by annual returns and the
+  top 10 winners / losers. **Risk** starts with selected-scope Sharpe, Sortino,
+  and Max Balance Drawdown, followed by whole-portfolio drawdown history,
+  monthly P&L, and current-position Recent Daily P&L.
 - **Transactions** — every row with per-field filters, free-text search,
   symbol filter, and column visibility toggle.
 - **Options** — cumulative P&L chart, open contracts (with DTE), closed
@@ -211,13 +225,13 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   Expenses` figure — from `Budget` metadata rows), 12-month dividend /
   interest forecast per held position, annual summary, monthly chart,
   by-source table.
-- **Tax** — grouped into "Forward planning — actionable today" (income
-  build-up, marginal rate estimates with override inputs, Tax Bracket
-  Fill bar, Tax-Loss Harvest Candidates, Potential Wash Sales) and
-  "Historical realizations" (Realized Gains by Year, By Asset). Realized
+- **Tax** — realization-year controls, income and rate assumptions, open-lot
+  planning, Potential Wash Sales, and **Historical realizations** (Realized
+  Gains by Year, By Asset). Tax Rates & Income uses the selected year;
+  **All Years** uses the latest dataset year for rate assumptions. Realized
   gains are split short-term / long-term / Section 1256 (60/40 for
   broad-based index options); §1256 columns auto-hide when there's no
-  §1256 activity. Current-year figures are extrapolated from YTD pace
+  §1256 activity. Latest dataset-year estimates are extrapolated from YTD pace
   (salary, bonuses, dividends, 401K — capped at IRS limit; realized
   gains kept YTD-only since sells are lumpy). Includes an **estimated
   tax on realized gains** panel (federal + state + NIIT, net of any
@@ -225,48 +239,59 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   amount on the remainder), a **withholding safe-harbor check** (vs
   100%/110% of the prior year's 1040 — needs `Tax Return` metadata
   rows), and a **Form 8949 CSV** export of taxable-account disposals.
+  Open-lot values and eligibility use the latest holdings; estimated savings
+  use the selected rates. The wash-sale check and CSV include all recorded
+  years, regardless of the realization-year selection.
 - **Crypto** — per-coin holdings, realized & income, recent activity,
   conversion/wrap log.
-- **Performance** — anchor stat cards (Total Return, Realized,
-  Unrealized, Net Contributed, Fees Paid), account + window selectors,
-  windowed cards (incl. Sharpe / Sortino / Max Balance Drawdown), then
-  a **Returns ↔ Risk** sub-view.  Returns: Your Portfolio vs SPY / BND /
-  VXUS / 60-40 multi-benchmark chart, By-Account TWR (Modified Dietz +
-  money-weighted XIRR), Annual Returns table, top 10 winners / losers.
-  Risk: Balance Drawdown chart, year × month Monthly P&L heatmap (with YTD
-  column + best/worst-month summary), Recent Daily P&L bars.
 
 Recent Daily P&L reprices the selected export's current holdings at earlier
 dates, using only transaction quotes known by each date when cached prices are
 unavailable. Bars require consecutive observations with complete price coverage;
 gaps are omitted so missing or newly available prices cannot appear as returns.
 
-Dark theme, tabular-numeric formatting, mobile responsive
-(including narrow mobile viewports), no JS framework.
+The dark theme uses tabular numbers and neutral text for quantity, price,
+value, and cost basis; gains and returns retain sign colors. Portfolio value
+has the primary position in the top summary. Metric-guide disclosures provide
+definitions without requiring hover. The public demo keeps its fictional-data
+label visible and puts project details under **About this demo**.
+
+**Date scope:** the Overview/Holdings date picker changes their snapshot views,
+including holdings, allocation, and recent transactions. Their labels show
+**Latest** or the actual **As of** snapshot date. The top summary, Target vs
+Actual, and concentration remain latest; Lot Method Comparison remains lifetime.
+History keeps its own range. Performance uses its own account/window controls:
+its dollar figures, TWR observations, and chart range are labeled separately.
+Annual returns cover all available years for the selected account; winners and
+losers describe latest positions and lifetime gains across all accounts.
 
 Use the skip link to reach dashboard content by keyboard. When a navigation tab
 has focus, Left/Right switch tabs and Home/End select the first/last visible tab.
 Tab moves into the page controls. Sortable table headings support Enter/Space;
 lot disclosures are buttons. On narrow screens, the navigation and wide tables
 scroll horizontally; overflowing table regions can also receive keyboard focus.
+An overflow cue appears only when horizontal scrolling is needed. Holdings and
+Board keep the identifying first column visible while scrolling; expanded lot
+details scroll normally. Touch controls have larger targets. Performance uses
+an account selector, common range buttons, and a More ranges menu on phones,
+with the full desktop controls retained on wider screens.
 
 Table and Board keep separate filters. In Board's **By Symbol** mode, choosing
 an account selects symbols held there, while their figures remain combined
-across all accounts. Use **By Account** for account-specific rows. There is a
-known display limitation when switching layouts: the common section heading
-can retain the Table subtotal while Board shows a different selection. Use the
-Board pane totals for that view until the
-[heading fix](DASHBOARD_REVIEW.md#1-correct-the-holdings-heading-when-switching-layouts)
-is implemented.
+across all accounts, including quantities, values, and P&L. Use **By Account**
+for account-specific rows. The common section total follows the active layout
+and its filters; an empty selection shows zero. A historical-date or missing-data
+Board notice clears that total, and returning to Table restores its own subtotal.
 
 **Balance Drawdown** measures how far the balance has fallen from its running
 peak. Withdrawals can deepen a decline; contributions can restore the peak
-without recovering investment losses. The Risk section shows whole-portfolio
-daily statistics when available and a chart sampled at history dates. The
-account/window card uses the selected accounts and those snapshot dates, so
+without recovering investment losses. Performance's **Selected scope risk**
+card uses the selected accounts and history snapshot dates, so
 it can miss dips between snapshots. Lifetime maxima exclude declines from
 peaks below 5% of the all-time balance peak; shorter windows include all
-observed balances. Trailing windows end at the latest date in the export.
+observed balances. Below that card, the whole-portfolio section shows daily
+statistics when available and a chart sampled at history dates. Trailing
+windows end at the latest date in the export.
 The Calmar ratio was removed because combining investment return with this
 cash-flow-sensitive balance decline would misstate investment risk.
 

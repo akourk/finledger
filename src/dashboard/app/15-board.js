@@ -13,8 +13,10 @@
 // module for why a constant-share move is the wrong reading once a
 // position is traded inside the window), and the level columns come
 // from the same `holdings_by_account` rows the table layout renders.
-// The board and the table are two arrangements of one dataset; they
-// cannot disagree because neither computes anything.
+// The board and the table share underlying position figures, but have
+// independent filters. By Symbol reads the Python rollup across ALL
+// accounts; its account selector filters symbol membership, not amounts.
+// By Account reads the selected accounts' individual position rows.
 //
 // Window chips are INDEPENDENT toggles, not a radio group.  Each active
 // window contributes a sortable $/% column pair, so "sort by 1D while
@@ -336,6 +338,7 @@ function setBoardLayout(mode) {
   if (tableEl) tableEl.style.display = mode === 'board' ? 'none' : '';
   if (boardEl) boardEl.style.display = mode === 'board' ? '' : 'none';
   if (mode === 'board') renderPositionsBoard();
+  else renderByAssetTable();
 }
 
 function setBoardPaneCount(n) {
@@ -362,6 +365,7 @@ function renderPositionsBoard() {
   if (!host) return;
   if (!boardHasData()) {
     host.innerHTML = `<div class="board-note">No position data available.</div>`;
+    if (boardLayout === 'board') renderPositionsTotal(null);
     return;
   }
   // Board figures are anchored to the latest snapshot.  Rendering
@@ -373,6 +377,7 @@ function renderPositionsBoard() {
       is only meaningful for the latest snapshot.
       <button class="tbtn" onclick="setAsOfDate(null)">Back to latest</button>
     </div>`;
+    if (boardLayout === 'board') renderPositionsTotal(null);
     return;
   }
   if (!document.getElementById('boardPanes')) {
@@ -390,10 +395,11 @@ function renderBoardControls() {
   const accounts = [...new Set((PPNL.by_account || []).map(r => r.account_group))].sort();
   el.innerHTML = `
     <div class="controls board-controls">
+      <span class="scope-label">Board filters</span>
       <input type="text" id="boardSearch" aria-label="Search board positions by symbol or account"
              placeholder="Search symbol or account..."
              value="${_htmlEsc(boardSearch)}" oninput="boardSearch = this.value.trim().toLowerCase(); renderBoardPanes();" />
-      <select id="boardAccountFilter" aria-label="Filter board positions by account group" onchange="boardAccountFilter = this.value; renderBoardPanes();">
+      <select id="boardAccountFilter" aria-label="${boardGroupBy === 'symbol' ? 'Find symbols held in an account group' : 'Filter board positions by account group'}" aria-describedby="boardScopeContext" onchange="boardAccountFilter = this.value; renderBoardPanes();">
         <option value="">All account groups</option>
         ${accounts.map(a => `<option value="${_htmlEsc(a)}"${a === boardAccountFilter ? ' selected' : ''}>${_htmlEsc(a)}</option>`).join('')}
       </select>
@@ -404,13 +410,33 @@ function renderBoardControls() {
       <div class="toggle-group">
         ${[1, 2, 3].map(n => `<button class="tbtn${boardPaneCount === n ? ' active' : ''}" onclick="setBoardPaneCount(${n})" title="${n} pane${n > 1 ? 's' : ''}">${n}&#9646;</button>`).join('')}
       </div>
-      <span class="board-asof">as of ${_htmlEsc(PPNL.as_of || '')}</span>
-    </div>`;
+      <span class="scope-label board-asof">Latest · ${_htmlEsc(PPNL.as_of || LATEST_DATE)}</span>
+    </div>
+    <p class="scope-context" id="boardScopeContext"></p>`;
+  renderBoardScope();
+}
+
+function renderBoardScope() {
+  const el = document.getElementById('boardScopeContext');
+  if (!el) return;
+  const membership = boardAccountFilter
+    ? `Symbols held in ${boardAccountFilter}; quantities, values and P&L include all accounts holding those symbols.`
+    : 'By Symbol combines quantities, values and P&L across all accounts. The account filter selects symbols held in that account.';
+  el.textContent = 'These filters apply only to Board. ' + (boardGroupBy === 'symbol'
+    ? membership + ' Choose By Account for account-specific figures.'
+    : 'By Account shows each position in its account; amounts follow the selected account.');
 }
 
 function renderBoardPanes() {
   const el = document.getElementById('boardPanes');
   if (!el) return;
+  renderBoardScope();
+  if (boardLayout === 'board') {
+    const total = boardRows().reduce((s, r) => s + (typeof r.value === 'number' ? r.value : 0), 0);
+    renderPositionsTotal(total, boardGroupBy === 'symbol'
+      ? 'Market value of filtered Board symbols across all accounts'
+      : 'Market value of the filtered Board account positions');
+  }
   if (boardPaneCount === 1) {
     el.innerHTML = `<div class="board-grid board-grid-1">${boardPaneHtml(0)}</div>`;
   } else if (boardPaneCount === 2) {
@@ -423,6 +449,7 @@ function renderBoardPanes() {
         <div class="board-col-side">${boardPaneHtml(1)}${boardPaneHtml(2)}</div>
       </div>`;
   }
+  applyScrollRegionFocus();
 }
 
 boardLoadState();

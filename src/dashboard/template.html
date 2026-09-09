@@ -20,11 +20,12 @@
   <div class="top-bar-title">
     <h1>Portfolio Dashboard</h1>
     <div class="subtitle">Generated: <span id="generated"></span><span id="pricesAsOf"></span></div>
+    <div class="scope-context latest-scope-label"></div>
   </div>
   <div class="top-bar-summary" id="topBarSummary"></div>
   <button class="top-bar-refresh" id="topBarRefresh"
-          title="Reload this page.&#10;&#10;For up-to-date data, first run one of these in the repo, then click here:&#10;  • python -m src.main                  (full pipeline; ingests new CSVs)&#10;  • python -m src.main --refresh-prices  (~3s; just re-fetches today's close)"
-          onclick="window.location.reload()">↻ Refresh</button>
+          title="Reload the generated dashboard. Import or refresh your data first to see updated figures."
+          onclick="window.location.reload()">↻ Reload page</button>
 </div>
 
 <!-- Tabs follow the WAI-ARIA authoring-practices tabs pattern: the nav is
@@ -35,6 +36,7 @@
 <nav class="tabnav" id="tabnav" role="tablist" aria-label="Dashboard sections">
   <button class="tab-btn active" data-tab="overview"     id="tabbtn-overview"     role="tab" aria-controls="tab-overview"     aria-selected="true"  tabindex="0">Overview</button>
   <button class="tab-btn"        data-tab="holdings"     id="tabbtn-holdings"     role="tab" aria-controls="tab-holdings"     aria-selected="false" tabindex="-1">Holdings</button>
+  <button class="tab-btn"        data-tab="performance"  id="tabbtn-performance"  role="tab" aria-controls="tab-performance"  aria-selected="false" tabindex="-1">Performance</button>
   <button class="tab-btn"        data-tab="transactions" id="tabbtn-transactions" role="tab" aria-controls="tab-transactions" aria-selected="false" tabindex="-1">Transactions</button>
   <button class="tab-btn"        data-tab="options"      id="tabbtn-options"      role="tab" aria-controls="tab-options"      aria-selected="false" tabindex="-1">Options</button>
   <button class="tab-btn"        data-tab="retirement"   id="tabbtn-retirement"   role="tab" aria-controls="tab-retirement"   aria-selected="false" tabindex="-1">Retirement</button>
@@ -42,15 +44,13 @@
   <button class="tab-btn"        data-tab="income"       id="tabbtn-income"       role="tab" aria-controls="tab-income"       aria-selected="false" tabindex="-1">Income</button>
   <button class="tab-btn"        data-tab="tax"          id="tabbtn-tax"          role="tab" aria-controls="tab-tax"          aria-selected="false" tabindex="-1">Tax</button>
   <button class="tab-btn"        data-tab="crypto"       id="tabbtn-crypto"       role="tab" aria-controls="tab-crypto"       aria-selected="false" tabindex="-1">Crypto</button>
-  <button class="tab-btn"        data-tab="performance"  id="tabbtn-performance"  role="tab" aria-controls="tab-performance"  aria-selected="false" tabindex="-1">Performance</button>
 </nav>
 
 <main id="main-content" tabindex="-1">
 
 <!-- ============================ OVERVIEW ============================ -->
 <div id="tab-overview" class="tab-panel active" role="tabpanel" aria-labelledby="tabbtn-overview" tabindex="0">
-  <!-- Compact as-of selector — verbose explanation now lives in the
-       title attribute on the picker.  Reduced to a single line. -->
+  <!-- The snapshot selector and chart range have independent scopes. -->
   <div class="as-of-bar as-of-bar-compact">
     <label for="asOfPickerOverview">As of</label>
     <select id="asOfPickerOverview" class="as-of-picker"
@@ -63,6 +63,13 @@
        the as-of selector.  Six cards (down from twelve): redundant
        Top-bar duplicates and inventory-style metadata trimmed. -->
   <div class="stats" id="stats"></div>
+  <details class="metric-guide">
+    <summary>About these figures</summary>
+    <p>These cards, holdings, allocation, and recent transactions follow the selected snapshot.
+      The portfolio summary at the top always shows the latest export; the history chart has its own date range.</p>
+    <p>Unrealized P&amp;L compares open positions with their cost basis. Realized P&amp;L comes from closed lots.
+      Total Return compares portfolio value with net contributions; realized and unrealized P&amp;L do not simply add up to it.</p>
+  </details>
 
   <!-- Combined Status card (Attention + Data Health) and What's
        Changed card.  Side-by-side when both have content; either can
@@ -70,13 +77,15 @@
   <div class="overview-status-grid" id="overviewStatus"></div>
 
   <div class="section-header" id="historyHeader">
-    <h2><span style="color:var(--accent);">History</span></h2>
-    <span class="total-value" id="historyLatestValue"></span>
+    <h2>Portfolio history</h2>
+    <span class="scope-label" id="historyScope"></span>
+    <span class="header-total"><span class="scope-label" id="historyLatestScope">Latest</span> <span class="total-value" id="historyLatestValue"></span></span>
   </div>
   <div id="historyBody">
+    <div class="chart-quick-controls" id="historyQuickControls" aria-label="History chart controls"></div>
     <details class="hist-options-collapsible" id="histControlsWrap">
       <summary class="hist-options-summary">
-        <span class="dh-label">Chart Options</span>
+        <span class="dh-label">More chart options</span>
         <span class="dh-status" id="histControlsSummaryStatus">range, overlays, series toggles</span>
         <span class="dh-hint">click to expand</span>
       </summary>
@@ -89,11 +98,17 @@
       <div class="chart-tooltip" id="chartTooltip"></div>
       <div class="chart-legend" id="chartLegend"></div>
     </div>
+    <details class="metric-guide chart-guide">
+      <summary>How to read this chart</summary>
+      <p>Portfolio value shows the balance over time. Net Contributed shows whole-portfolio deposits less withdrawals.
+        This is a balance chart; percentage investment returns are on Performance.
+        Account mix shows where the balance is held. Changing this chart's range does not change the selected snapshot above.</p>
+    </details>
   </div>
 
   <div class="overview-split">
     <div class="panel" id="topHoldingsPanel">
-      <h3>Top Holdings</h3>
+      <h3>Top Holdings <span class="as-of-label scope-label"></span></h3>
       <div class="mini-scroll">
         <table class="mini-table">
           <caption class="sr-only">Largest positions by market value</caption>
@@ -103,7 +118,7 @@
       <div class="panel-foot"><a href="#holdings" onclick="activateTab('holdings')">View all holdings →</a></div>
     </div>
     <div class="panel" id="recentTxnsPanel">
-      <h3>Recent Transactions</h3>
+      <h3>Recent Transactions <span class="as-of-label scope-label"></span></h3>
       <div class="mini-scroll">
         <table class="mini-table">
           <caption class="sr-only">Most recent transactions across every account</caption>
@@ -115,8 +130,8 @@
   </div>
 
   <div class="section-header" style="margin-top:24px;">
-    <h2><span style="color:var(--accent);">Allocation</span></h2>
-    <span class="as-of-hint" style="margin-left:auto;">Hover any slice for details.</span>
+    <h2>Allocation <span class="as-of-label scope-label"></span></h2>
+    <span class="as-of-hint" style="margin-left:auto;">Values and percentages appear beside each chart.</span>
   </div>
   <div class="allocation-grid" id="allocationGrid">
     <div class="allocation-card">
@@ -160,7 +175,7 @@
     <span class="as-of-hint">Holdings and returns reflect the selected snapshot; open lots appear at the latest date.  Lot Method Comparison below is always lifetime.</span>
   </div>
   <div class="section-header" id="holdingsHeader">
-    <h2><span style="color:var(--accent);">Holdings<span class="as-of-label"></span></span></h2>
+    <h2>Holdings summary <span class="as-of-label scope-label"></span></h2>
     <div class="toggle-group" role="group" aria-label="Group holdings by">
       <button class="tbtn active" id="btnByAccount" onclick="setHoldingsView('account')">By Account</button>
       <button class="tbtn" id="btnByType" onclick="setHoldingsView('type')">By Type</button>
@@ -169,7 +184,14 @@
     <span class="total-value" id="holdingsTotalValue"></span>
   </div>
   <div id="holdingsBody">
-    <div class="table-wrap">
+    <details class="metric-guide">
+      <summary>About these returns and positions</summary>
+      <p>Time-weighted return (TWR) adjusts for money entering or leaving an account.
+        Money-weighted return (XIRR) reflects the timing of that money. Annualized returns express the measured period as a yearly rate.</p>
+      <p>Cost basis belongs to the open positions. Unrealized gain is their value less that basis;
+        realized gain comes from closed lots. Open lots and P&amp;L board are available at the latest snapshot.</p>
+    </details>
+    <div class="table-wrap sticky-identity">
       <table>
         <caption class="sr-only">Holdings grouped by account, account type or sector</caption>
         <thead><tr id="holdingsHeaderRow"></tr></thead>
@@ -179,18 +201,18 @@
   </div>
 
   <div class="section-header" style="margin-top:32px;" id="byAssetHeader">
-    <h2><span style="color:var(--accent);">Holdings by Asset<span class="as-of-label"></span></span></h2>
-    <!-- Table vs Board are two arrangements of ONE dataset — the board
-         reads analytics.position_pnl, which is anchored to the same
-         holdings rows the table renders.  Neither recomputes. -->
+    <h2>Positions &amp; lots <span class="as-of-label scope-label"></span></h2>
+    <!-- Both layouts consume the exported positions. Board can combine
+         a symbol across accounts; each layout retains its own filters. -->
     <div class="toggle-group" role="group" aria-label="Holdings by asset layout">
       <button class="tbtn active" id="btnBoardTable" onclick="setBoardLayout('table')">Table</button>
-      <button class="tbtn" id="btnBoardBoard" onclick="setBoardLayout('board')">Board</button>
+      <button class="tbtn" id="btnBoardBoard" onclick="setBoardLayout('board')">P&amp;L board</button>
     </div>
     <span class="total-value" id="byAssetTotalValue"></span>
   </div>
   <div id="boardBody" style="display:none;"></div>
   <div id="byAssetBody">
+    <p class="scope-context">Table filters apply only to this table. P&amp;L board keeps its own selection.</p>
     <div class="controls" id="byAssetControls">
       <input type="text" id="byAssetSearch" aria-label="Search holdings by symbol or sector" placeholder="Search symbol or sector..." />
       <select id="byAssetAccountGroupFilter" aria-label="Filter holdings by account group">
@@ -201,9 +223,9 @@
       </select>
       <span class="pill" id="byAssetCountPill"></span>
     </div>
-    <div class="table-wrap mini-scroll tall">
+    <div class="table-wrap mini-scroll tall sticky-identity">
       <table>
-        <caption class="sr-only">Every held position, one row per asset. Activate a row to expand its tax lots.</caption>
+        <caption class="sr-only">Positions by symbol and account. Activate a symbol's lot button to expand its tax lots.</caption>
         <thead><tr id="byAssetHeaderRow"></tr></thead>
         <tbody id="byAssetTbody"></tbody>
       </table>
@@ -215,7 +237,7 @@
   <!-- Concentration risk panel (precomputed in analytics.concentration).
        Lives on Holdings — it's a holdings-risk view. -->
   <div class="section-header" style="margin-top:32px;">
-    <h2><span style="color:var(--accent);">Concentration Risk</span></h2>
+    <h2>Concentration Risk <span class="latest-scope-label scope-label"></span></h2>
     <span class="as-of-hint" style="margin-left:auto;">
       How much of the portfolio sits in any one position / sector.
     </span>
@@ -228,6 +250,7 @@
   <details class="hist-options-collapsible" id="basisCollapse" style="margin-top:32px;">
     <summary class="hist-options-summary">
       <span class="dh-label">Lot Method Comparison</span>
+      <span class="scope-label">Lifetime · what-if</span>
       <span class="dh-status" id="basisSummaryLine">FIFO vs LIFO / HIFO / Average</span>
       <span class="dh-hint">click to expand</span>
     </summary>
@@ -249,8 +272,8 @@
       </div>
       <div class="chart-empty" id="basisNote" style="padding:12px;text-align:left;">
         Cost basis, realized P&amp;L, and unrealized P&amp;L computed under four lot-selection methods.
-        FIFO is the default used throughout the rest of the dashboard (and the IRS default).
-        LIFO/HIFO are tax-optimization alternatives; <b>Average</b> is the mutual-fund convention.
+        The rest of the dashboard uses each account's configured lot method;
+        this lifetime comparison shows hypothetical alternatives.
       </div>
     </div>
   </details>

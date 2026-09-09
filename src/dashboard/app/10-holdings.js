@@ -1,7 +1,7 @@
 // =========================================================================
 // As-of-date state — lets the user view holdings / overview stats /
 // allocation at any past snapshot date.  Uses the per-snapshot
-// `positions` list emitted by src/history.py, so FIFO state is
+// `positions` list emitted by src/history.py, so position state is
 // exactly what it was on that date (no JS replay of the basis walker).
 // Default: the latest snapshot (today's state, identical to the live
 // holdings table).
@@ -12,6 +12,23 @@ let asOfDate = history.length
 const LATEST_DATE = asOfDate;
 
 function isAsOfLatest() { return asOfDate === LATEST_DATE; }
+
+// Scope labels describe the data actually shown, including the prior
+// snapshot used when a requested date falls between exported snapshots.
+function renderDateScopes() {
+  const latest = `Latest · ${LATEST_DATE}`;
+  const snapshot = isAsOfLatest() ? null : getAsOfSnapshot();
+  const selected = isAsOfLatest() ? latest
+    : (snapshot ? `As of · ${snapshot.date}` : 'No prior snapshot');
+  document.querySelectorAll('.as-of-label').forEach(el => {
+    el.textContent = selected;
+    el.title = snapshot && snapshot.date !== asOfDate
+      ? `Latest available snapshot on or before ${asOfDate}` : '';
+  });
+  document.querySelectorAll('.latest-scope-label').forEach(el => {
+    el.textContent = latest;
+  });
+}
 
 // Find snapshot matching asOfDate (exact, else nearest <= that date).
 function getAsOfSnapshot() {
@@ -93,8 +110,7 @@ function asOfHoldingsByAsset() {
 function setAsOfDate(date) {
   asOfDate = date || LATEST_DATE;
   document.querySelectorAll('.as-of-picker').forEach(el => { el.value = asOfDate; });
-  const txt = isAsOfLatest() ? '' : ' (as of ' + asOfDate + ')';
-  document.querySelectorAll('.as-of-label').forEach(el => { el.textContent = txt; });
+  renderDateScopes();
   if (typeof renderStats === 'function') renderStats();
   if (typeof renderTopHoldings === 'function') renderTopHoldings();
   if (typeof renderAllocation === 'function') renderAllocation();
@@ -125,6 +141,7 @@ function setAsOfDate(date) {
     sel.value = asOfDate;
   });
 })();
+renderDateScopes();
 
 function _rolloverBridgeAdjustment(snapshotDate, filterSet) {
   if (!_ROLLOVER_BRIDGES.length || !snapshotDate) return 0;
@@ -175,9 +192,8 @@ renderPricesAsOf();
 
 // Render the persistent top-bar summary: portfolio value, total
 // return ($ + %), and 1-day change ($ + %).  Reads precomputed
-// header_summary from analytics.py for the 1-day figures (needs
-// server-side price cache) and derives total return from cash
-// summary + FIFO basis totals on the client.  Called once on load;
+// header_summary for the shared value and return figures. The fallback
+// for older exports uses value less contributed cash. Called once on load;
 // the values are frozen at pipeline-run time, so a "refresh" is
 // really "regenerate & reload".
 function renderTopBarSummary() {
@@ -208,7 +224,7 @@ function renderTopBarSummary() {
   const parts = [
     `<div class="tb-item">
        <span class="tb-label">Portfolio Value</span>
-       <span class="tb-value positive">${fmtMoney(value)}</span>
+       <span class="tb-value tb-portfolio-value">${fmtMoney(value)}</span>
      </div>`,
     `<div class="tb-divider"></div>`,
     `<div class="tb-item">
@@ -404,8 +420,11 @@ function applyScrollRegionFocus() {
     '.table-wrap, .mini-scroll, .annual-breakdown-wrap, .ab-scroll, ' +
     '.board-scroll, .lot-detail-inner, .recon-drill, .heatmap-wrap')
     .forEach(el => {
-      const scrolls = el.scrollWidth > el.clientWidth + 1 ||
-                      el.scrollHeight > el.clientHeight + 1;
+      const scrollsX = el.scrollWidth > el.clientWidth + 1;
+      const scrolls = scrollsX || el.scrollHeight > el.clientHeight + 1;
+      // The same measurement drives the visual cue and keyboard access;
+      // always reset it when a resize or column change removes overflow.
+      el.setAttribute('data-overflow-x', scrollsX ? 'true' : 'false');
       if (scrolls) {
         el.tabIndex = 0;
         // A focusable region needs a name; the table it wraps supplies
@@ -620,7 +639,7 @@ function renderHoldings() {
   // By Sector:  one row per sector total — sourced from the by-asset holdings
   //             list so the symbol→sector mapping is 1:1.
   // When asOfDate != latest, rows come from the snapshot's `positions`
-  // list (FIFO state as of that date) instead of live holdings.
+  // list (position state as of that date) instead of live holdings.
   const byAccountSrc = asOfHoldingsByAccount();
   const byAssetSrc = asOfHoldingsByAsset();
 
@@ -682,7 +701,8 @@ function renderHoldings() {
           const fmt = col === 'quantity'
             ? n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })
             : (HOLDINGS_PCT_COLS.has(col) ? n.toFixed(2) + '%' : fmtMoney(n));
-          const c = n < 0 ? 'negative' : (n > 0 ? 'positive' : '');
+          const c = col === 'value' || col === 'cost_basis' ? ''
+            : (n < 0 ? 'negative' : (n > 0 ? 'positive' : ''));
           // A return is only meaningful with the span it was measured
           // over, and each filter's span is its own.
           const t = (HOLDINGS_SPAN_COLS.has(col) && row._perfSpan)
@@ -712,6 +732,7 @@ function renderHoldings() {
     total ? '$' + total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 
   renderRebalancing();
+  applyScrollRegionFocus();
 }
 
 // Target vs Actual allocation (Holdings tab).  Reads ANALYTICS.rebalancing
@@ -756,9 +777,10 @@ function renderRebalancing() {
     : '';
   el.innerHTML = `
     <div class="section-header" style="margin-top:32px;">
-      <h2><span style="color:var(--accent);">Target vs Actual</span></h2>
+      <h2><span style="color:var(--accent);">Target vs Actual</span>
+        <span class="scope-label">Latest · ${_htmlEsc(LATEST_DATE)}</span></h2>
       <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">
-        allocation drift by sector vs <code>Target Allocation</code> in metadata.csv · max drift ${rb.max_abs_drift.toFixed(1)}%</span>
+        Allocation by sector against your targets · max drift ${rb.max_abs_drift.toFixed(1)}%</span>
     </div>
     <div class="panel">
       <table class="mini-table"><caption class="sr-only">Sector allocation: target share against current share, with the drift and the trade that would close it</caption>
@@ -916,6 +938,17 @@ function lotDetailHtml(p, colspan) {
   </td></tr>`;
 }
 
+// The heading is shared by Table and Board. Its amount belongs to the
+// visible rows, even though the two views keep independent filters.
+// A Board notice has no rows, so null clears the amount; an empty filter
+// result is a real $0.00 subtotal.
+function renderPositionsTotal(total, scope = '') {
+  const el = document.getElementById('byAssetTotalValue');
+  if (!el) return;
+  el.textContent = total == null ? '' : fmtMoney(total);
+  el.title = scope;
+}
+
 function renderByAssetTable() {
   const realizedToDate = realizedByAccountSymbol(isAsOfLatest() ? null : getAsOfSnapshot()?.date || asOfDate);
   const rows = asOfHoldingsByAccount().map(r => {
@@ -952,7 +985,7 @@ function renderByAssetTable() {
     return true;
   });
 
-  const cols = ['account_group', 'symbol', 'sector', 'quantity', 'price',
+  const cols = ['symbol', 'account_group', 'sector', 'quantity', 'price',
     'value', 'cost_basis', 'unrealized_gain', 'realized_gain',
     'total_return', 'pct_return'];
   const numCols = new Set(['quantity', 'price', 'value', 'cost_basis',
@@ -1004,7 +1037,8 @@ function renderByAssetTable() {
             : (col === 'pct_return'
               ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%'
               : fmtMoney(n));
-          const c = n < 0 ? 'negative' : (n > 0 ? 'positive' : '');
+          const c = ['quantity', 'price', 'value', 'cost_basis'].includes(col) ? ''
+            : (n < 0 ? 'negative' : (n > 0 ? 'positive' : ''));
           html = `<span class="${c}">${fmt}</span>`;
         }
       } else if (col === 'symbol') {
@@ -1028,9 +1062,13 @@ function renderByAssetTable() {
 
   // Totals + count
   const totalValue = filtered.reduce((s, r) => s + (typeof r.value === 'number' ? r.value : 0), 0);
-  document.getElementById('byAssetTotalValue').textContent =
-    totalValue ? '$' + totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+  // Read the visible layout from the DOM: this renderer also runs while
+  // the bundle loads, before 15-board.js initializes its layout state.
+  if (document.getElementById('byAssetBody')?.style.display !== 'none') {
+    renderPositionsTotal(totalValue, 'Market value of the filtered Table positions');
+  }
   byAssetCountPill.textContent = `${filtered.length} / ${rows.length}`;
+  applyScrollRegionFocus();
 }
 
 document.getElementById('byAssetHeaderRow').addEventListener('click', e => {

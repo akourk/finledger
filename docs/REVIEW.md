@@ -7,11 +7,11 @@ independently constructed fictional data. Personal inputs were not used for
 code testing or measurements.
 
 The correctness and optimization audit is complete at the scope described here.
-The latest application validation passed **1,983 tests** with one Windows
+Final dashboard presentation validation passed **2,010 tests** with one Windows
 symlink skip; the earlier counts below record individual follow-ups. Remaining
-transfer coverage is documented below. The later presentation review identified
-a Holdings layout-switch heading defect and proposed visual improvements; these
-are tracked in the [dashboard review](DASHBOARD_REVIEW.md).
+transfer coverage is documented below. The later
+presentation batch fixes the Holdings layout-switch heading and implements all
+six recommendations in the [dashboard review](DASHBOARD_REVIEW.md).
 
 ## Implemented improvements
 
@@ -39,6 +39,8 @@ are tracked in the [dashboard review](DASHBOARD_REVIEW.md).
 | Dated fallback quotes | Transaction-price fallbacks could retain pre-split units when valuing later quantities. | Rebase dated quotes consistently across current holdings, historical valuation, daily marks, and account-transfer flows. `test_transfer_quote_units.py` covers missing-cache and split boundaries. |
 | Recent activity | Activity compared FIFO what-if totals and advanced its baseline before dashboard publication could fail. | Use annotated account basis totals and publish the prepared baseline with JSON and HTML in the same replacement/rollback set. `test_changes.py`, `test_changes_publication.py`, and `test_changes_frontend.py` cover migration, invalid baselines, failure preservation, and rendered notices. |
 | Single-category allocation | Full and nearly full SVG arcs could collapse to coincident endpoints and render empty rings. | Split degenerate arcs while preserving ordinary slices. Chrome checks actual filled geometry, empty centers, proportions, and escaped labels. |
+| Holdings presentation scope | Switching Table/Board could retain the hidden Table subtotal, while Board's account selector did not explain its combined symbol totals. | Follow the visible layout's subtotal; clear it for Board notices and show zero for empty selections. Preserve and explain independent filters and symbol membership. `test_holdings_presentation.py` checks rendered handlers, group/layout switches, historical dates, empty results, neutral levels, and overflow cues. |
+| Dashboard hierarchy and access | Repeated Performance summaries competed for attention; date boundaries and wide-table navigation were easy to miss. | Make selected Performance scope primary, keep lifetime/detail disclosures, move ratios to Risk, and label each measurement span. Add date/metric guides, neutral level colors, mobile controls, sticky identity, measured scroll cues, earlier Performance navigation, and History quick controls with balance/contributions as the default. `test_performance_presentation.py`, `test_tax_presentation.py`, existing return parity, and browser checks cover the affected contracts. |
 | Test cleanup | The session isolation directory was never released. | Retain a `TemporaryDirectory` owner for process lifetime so normal interpreter shutdown cleans up the session's own files. |
 
 The rename workflow assumes a single writer, as does the rest of the pipeline.
@@ -110,13 +112,12 @@ require candidate comparisons; this is not a claim of universal linear scaling.
    adjustments from discrepancies. Further extraction should target a demonstrated
    duplicated rule; a framework rewrite has no demonstrated benefit.
 
-2. **Correct the Holdings heading when switching Table/Board layouts.** The
-   presentation review reproduced a Table subtotal remaining above Board rows
-   with a different account scope. Fix the heading's ownership and clarify
-   Board's symbol-membership filter before the proposed cosmetic changes. See
-   the [dashboard review](DASHBOARD_REVIEW.md#1-correct-the-holdings-heading-when-switching-layouts)
-   for the reproducer and validation boundary. Transfer coverage above remains
-   dependent on reconciliation evidence; this display fix can proceed independently.
+The Holdings heading defect and the six presentation recommendations are now
+implemented. Table and Board intentionally retain separate filters, and By Symbol
+retains its cross-account aggregation with visible scope guidance. No additional
+presentation work is prescribed by the original review; subsequent changes should
+follow demonstrated usability or correctness findings. Transfer coverage above
+still depends on reconciliation evidence.
 
 The recent-activity findings are now addressed: both paths use the annotated
 portfolio totals, and baseline publication participates in the same replacement
@@ -232,3 +233,24 @@ cards also passed desktop/mobile layout checks. All four public screenshots
 exactly match approved bytes, with their registry updated for the rebuilt demo.
 All **103 local documentation links and anchors** resolve, and the six shared
 skill entrypoints pass metadata and size checks.
+
+The dashboard presentation batch preserves the financial engines and records its
+before/after behavior in [Dashboard review](DASHBOARD_REVIEW.md). New regressions
+exercise active Holdings totals, fixed versus selected Performance scope,
+disclosure state, date bindings, and Tax's selected-year/latest/all-years
+boundaries. Browser validation uses the rebuilt fictional demo, including phone
+navigation, filter focus, horizontal overflow cues, and expanded lot details.
+The earlier screenshot approvals and layout measurements above describe their
+respective artifacts; they do not approve new rendered bytes.
+
+Final presentation validation passed **2,010 tests**, including Python/JavaScript
+parity, with the same Windows filesystem-symlink skip. The expanded Chrome smoke
+check covers the ten tabs, keyboard navigation and focus, History presets/custom
+dates, Table/Board scope and totals, sticky identities with expanded lots, mobile
+Performance controls, Tax definitions, and existing financial/export checks.
+Axe passed **12 states** with no serious or critical violations. Independent
+inspection at 320-pixel touch width and 390-pixel phone width found no page-wide
+overflow or rendering errors. The rebuilt fictional artifact passed its privacy
+and provenance scan. The user visually reviewed and approved all four refreshed
+public screenshots. All 128 local documentation links and anchors resolve, and
+the six shared skill entrypoints pass metadata and size checks.
