@@ -92,24 +92,20 @@ require candidate comparisons; this is not a claim of universal linear scaling.
 
 ## Further work, in priority order
 
-1. **Use actual basis in recent-activity summaries.** `analytics/changes.py`
-   reads the hypothetical FIFO comparison even when the annotated account uses
-   HIFO or broker-directed relief. An isolated fictional sale reproduced a
-   wrong basis delta and realized-gain delta. Derive the summary from the same
-   annotated holdings/state totals used elsewhere; preserve cash-principal rules.
-2. **Advance the activity baseline only after successful publication.** The
-   same module writes `last_run.json` during analytics construction, before later
-   analytics, invariant checks, and output publication. An injected downstream
-   error advanced the baseline, causing the successful retry to omit the pending
-   activity. Separate snapshot preparation from persistence after publication;
-   cover both analytics and publication failures.
-3. **Extend transfer coverage only with reconciliation evidence.** Approximate
+1. **Extend transfer coverage only with reconciliation evidence.** Approximate
    quantities now remain unverified with explicit warnings; supported cached split
    conversions carry each source lot through a shared transition in both walkers.
    Same-group changed-unit moves, ambiguous destination split rows, USD, and
    unmatched movements retain their limited coverage. Do not infer fees or basis
    adjustments from discrepancies. Further extraction should target a demonstrated
    duplicated rule; a framework rewrite has no demonstrated benefit.
+
+The recent-activity findings are now addressed: both paths use the annotated
+portfolio totals, and baseline publication participates in the same replacement
+and rollback set as JSON and HTML. Older FIFO-based baselines retain activity
+and value comparisons while their incompatible basis deltas restart. The focused
+follow-up review found no additional high-priority defect; this does not replace
+future testing of new broker formats, data coverage, or publication workflows.
 
 ## Validation and limits
 
@@ -206,3 +202,14 @@ The visual review follows [Privacy](PRIVACY.md) and remains separate from
 automated scanning. Passing scans and fictional-input tests do not prove that
 arbitrary financial content is free of private data. This review did not audit
 all historical commits or verify current tax law.
+
+The recent-activity follow-up passed **1,983 tests**, with the same Windows
+symlink skip. Fictional regressions cover actual HIFO totals, accumulator
+precision, savings principal, legacy/corrupt baselines, and full/refresh failures
+in analytics, invariant checks, serialization, rendering, and each publication
+replacement. Both prior defects were demonstrated with in-memory mutations.
+Chrome passed **10 tabs** and axe passed **12 states**; the activity and migration
+cards also passed desktop/mobile layout checks. All four public screenshots
+exactly match approved bytes, with their registry updated for the rebuilt demo.
+All **103 local documentation links and anchors** resolve, and the six shared
+skill entrypoints pass metadata and size checks.

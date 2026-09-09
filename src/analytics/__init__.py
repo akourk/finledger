@@ -74,7 +74,8 @@ def build_analytics(txns: list[dict], history: list[dict],
                     retirement_meta: dict | None = None,
                     cash_summary: dict | None = None,
                     basis_methods: dict | None = None,
-                    fifo_state: dict | None = None) -> dict:
+                    fifo_state: dict | None = None,
+                    basis_totals: dict | None = None) -> dict:
     """Compute the full analytics payload embedded in the export JSON.
 
     This is the single source of truth for derived figures the
@@ -219,10 +220,15 @@ def build_analytics(txns: list[dict], history: list[dict],
         except (ValueError, TypeError):
             monte_carlo = None
 
-    # Run-over-run changes — also persists a fresh snapshot for next time
-    changes = compute_changes(txns, holdings_by_account, history,
-                              cash_summary or {}, basis_methods or {},
-                              CACHE_DIR)
+    # Prepare the next activity baseline without writing it. Only successful
+    # dashboard publication advances it, using the same totals as the export.
+    if basis_totals is None:
+        from ..pipeline_stages import build_annotated_basis_totals
+        basis_totals = build_annotated_basis_totals(
+            holdings or holdings_by_account, fifo_state)
+        if fifo_state is None:
+            basis_totals["realized_gain"] = None
+    changes = compute_changes(txns, holdings_by_account, basis_totals, CACHE_DIR)
 
     # CUSIP collisions surface in main.py as console output.  For the
     # alerts panel we recompute (cheap) so it lands in the JSON too.

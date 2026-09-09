@@ -782,7 +782,9 @@ function renderOverviewStatus() {
     }
     const prevRun = (changes.prev_run_at || '').slice(0, 10);
     const sinceLabel = prevRun ? `since ${_htmlEsc(prevRun)}` : 'since last run';
-    if (rows.length || moverRows || newClosed.length) {
+    const basisNotice = changes.basis_comparison_available === false
+      ? '<div class="empty-state">Basis and realized-gain comparisons start from this update.</div>' : '';
+    if (rows.length || moverRows || newClosed.length || basisNotice) {
       if (changes.value_delta) {
         const vc = cls(changes.value_delta);
         chips.push(`<span class="dh-chip ${vc}" style="background:transparent;border:1px solid currentColor;">${fmt(changes.value_delta)}</span>`);
@@ -792,6 +794,7 @@ function renderOverviewStatus() {
         <div class="changes-list">
           ${rows.map(([l, v, c]) => `<div class="change-row"><span class="ch-label">${l}</span><span class="ch-val ${c}">${v}</span></div>`).join('')}
         </div>
+        ${basisNotice}
         ${moverRows ? `<div class="changes-movers"><h4>Top Movers</h4>${moverRows}</div>` : ''}
         ${newClosed.length ? `<div class="changes-movers"><h4>Positions</h4>${newClosed.join('')}</div>` : ''}
       </div>`);

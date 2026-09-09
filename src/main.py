@@ -35,22 +35,38 @@ from .sectors import enrich_holdings, save_cache as save_sector_cache
 
 
 def _publish_dashboard(txns, output_path, **payload):
-    """Validate and build both artifacts before replacing the previous pair."""
+    """Publish complete artifacts and their activity baseline as one file set.
+
+    The baseline goes last. Ordinary replacement failures restore all previous
+    files using the shared single-writer rollback protocol.
+    """
+    import json
     import tempfile
     from pathlib import Path
+    from .analytics.changes import SNAPSHOT_FILE
+    from .config import CACHE_DIR
     from .io_safe import replace_files
 
     output_path = Path(output_path)
     dashboard_path = output_path.parent / "dashboard.html"
     if output_path == dashboard_path:
         raise ValueError("JSON output path must differ from dashboard.html")
+    snapshot_path = CACHE_DIR / SNAPSHOT_FILE
+    if snapshot_path.resolve() in {output_path.resolve(), dashboard_path.resolve()}:
+        raise ValueError("Dashboard outputs must differ from the activity snapshot")
+    changes = (payload.get("analytics") or {}).get("changes") or {}
+    current = None if changes.get("skipped_empty_run") else changes.get("current")
     with tempfile.TemporaryDirectory(prefix="fin-output-") as directory:
         staged_json = Path(directory) / "transactions.json"
         staged_html = Path(directory) / "dashboard.html"
         export_json(txns, staged_json, **payload)
         generate_dashboard(staged_json, staged_html)
-        replace_files({output_path: staged_json.read_bytes(),
-                       dashboard_path: staged_html.read_bytes()})
+        contents = {output_path: staged_json.read_bytes(),
+                    dashboard_path: staged_html.read_bytes()}
+        if current is not None:
+            contents[snapshot_path] = json.dumps(
+                current, indent=2, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        replace_files(contents)
 
 def _usaa_position_before_date(txns: list[dict], symbol: str, asof_date: str) -> float:
     bal = 0.0
@@ -504,19 +520,21 @@ def _refresh_prices_only(args) -> None:
     # `fifo_state` is the walk from up top — the same lot state that
     # produced the holdings basis, reused here for the tax tab's
     # "approaching long-term" horizon.
+    from .pipeline_stages import build_annotated_basis_totals
+    basis_totals = build_annotated_basis_totals(holdings, fifo_state)
     analytics = build_analytics(txns, history, holdings, holdings_by_account,
                                  retirement_meta,
                                  cash_summary=cash,
                                  basis_methods=basis_methods,
-                                 fifo_state=fifo_state)
+                                 fifo_state=fifo_state,
+                                 basis_totals=basis_totals)
 
-    from .pipeline_stages import build_annotated_basis_totals
     _maybe_assert_invariants(txns, holdings_by_account, history, analytics, cash)
     _publish_dashboard(txns, output_path, holdings=holdings,
                 holdings_by_account=holdings_by_account,
                 history=history,
                 basis_methods=basis_methods,
-                basis_totals=build_annotated_basis_totals(holdings, fifo_state),
+                basis_totals=basis_totals,
                 cash_summary=cash,
                 retirement_meta=retirement_meta,
                 analytics=analytics,
@@ -1031,11 +1049,14 @@ def main():
     # annual returns + TWR + SPY benchmark — everything the dashboard
     # used to compute in JS.  Centralised so every consumer agrees.
     print("Computing analytics...")
+    from .pipeline_stages import build_annotated_basis_totals
+    basis_totals = build_annotated_basis_totals(holdings, fifo_state)
     analytics = build_analytics(txns, history, holdings, holdings_by_account,
                                  retirement_meta,
                                  cash_summary=cash,
                                  basis_methods=basis_methods,
-                                 fifo_state=fifo_state)
+                                 fifo_state=fifo_state,
+                                 basis_totals=basis_totals)
     perf = analytics["performance_by_filter"]
     opt = analytics["options"]["stats"]
     tax = analytics["tax"]
@@ -1048,13 +1069,12 @@ def main():
     output_path = args.output or (EXPORT_DIR / "transactions.json")
     from pathlib import Path
     output_path = Path(output_path)
-    from .pipeline_stages import build_annotated_basis_totals
     _maybe_assert_invariants(txns, holdings_by_account, history, analytics, cash)
     _publish_dashboard(txns, output_path, holdings=holdings,
                 holdings_by_account=holdings_by_account,
                 history=history,
                 basis_methods=basis_methods,
-                basis_totals=build_annotated_basis_totals(holdings, fifo_state),
+                basis_totals=basis_totals,
                 cash_summary=cash,
                 retirement_meta=retirement_meta,
                 analytics=analytics,

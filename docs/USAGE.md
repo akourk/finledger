@@ -281,6 +281,17 @@ reconciliation with a possible account departure, cannot also
 confirm rollover cash from a Distribution. An independent arrival is required;
 otherwise the unresolved Distribution remains flagged in Data Health.
 
+**Recent activity** compares the current dashboard with the previous successful
+publication. Its basis and realized-gain changes follow your actual account lot
+methods and broker-directed lots. A failed import, calculation, render, or
+ordinary file replacement leaves the previous comparison baseline intact, so
+retrying still shows the pending activity. Empty imports do not reset it.
+
+After upgrading from an older activity snapshot, value and transaction changes
+remain available. Basis and realized-gain comparisons start from the first
+successful update because the older figures used hypothetical FIFO totals.
+The activity panel explains this one-time reset.
+
 
 ## Input validation and recovery
 

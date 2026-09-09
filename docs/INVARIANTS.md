@@ -499,15 +499,30 @@ Normal local output lives in `exports/transactions.json` and
       using an observed boundary over the trailing history. Snapshot row count
       is not months elapsed; inserting intermediate samples must not change
       the scenario's annual funding. Pinned by `test_monte_carlo_inputs.py`.
-    - `changes` — run-over-run diff vs `cache/last_run.json`.  Saves
-      a fresh snapshot at the end of each run.  First run returns
-      `{first_run: True}`.  An EMPTY run (no txns and no value) never
+    - `changes` — run-over-run diff vs `cache/last_run.json`. Computation
+      only reads the prior baseline and returns a pending `current` snapshot.
+      Both pipeline paths supply the same annotated `basis_totals` used by
+      the export; never use a what-if method or rounded transaction sums.
+      `main._publish_dashboard` stages JSON, HTML, and the new baseline
+      together, replacing the baseline last. Ordinary preparation or replacement
+      failures preserve the previous file set through `io_safe.replace_files`.
+      This retains that helper's single-writer and abrupt-crash limitations;
+      it is not an atomic transaction across files or a power-loss guarantee.
+      Direct analytics calls and failed publications never advance the baseline.
+      First run returns `{first_run: True}`. An EMPTY run (no txns and no value) never
       overwrites the previous snapshot (`skipped_empty_run`) — a
       zeroed snapshot made the next real run report the entire
       portfolio value as "new".  (That zeroing was historically
       caused by tests leaking writes to the real cache; the test
       suite now pins every `FIN_*_DIR` at a session tmp dir in
       conftest.py, so no test can touch real dirs.)
+      Snapshot schema 2 marks annotated totals. Valid legacy snapshots still
+      support value, transaction, and mover comparisons, but basis/realized
+      deltas stay null until both baselines have compatible authoritative totals.
+      The dashboard explains that reset. Malformed, unsupported-version, or
+      nonfinite baselines cannot poison the diff and are not changed by a read.
+      Coverage: `test_changes.py`, `test_changes_publication.py`, and
+      `test_changes_frontend.py`.
     - `alerts` — aggregated severity-tagged signals (concentration
       flags, harvest candidates, stale data, coverage gaps, failing
       tickers, CUSIP rename suggestions, long-term-soon thresholds).

@@ -21,6 +21,11 @@ consults the assembled output and runs last. `export.export_json` exports the
 analytics payload automatically, and both the full and refresh pipeline paths
 must supply equivalent inputs.
 
+Keep computation separate from successful publication. Recent activity prepares
+`changes.current`; `main._publish_dashboard` writes that baseline with JSON and
+HTML. Adding an analytics calculation must not advance run history before later
+checks or rendering can fail. Use `test_changes_publication.py` for this boundary.
+
 Reuse the shared financial sources:
 
 | Figure or rule | Source |
