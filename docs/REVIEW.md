@@ -6,6 +6,13 @@ development guidance, and publication checks. Reproducers and measurements use
 independently constructed fictional data. Personal inputs were not used for
 code testing or measurements.
 
+The correctness and optimization audit is complete at the scope described here.
+The latest application validation passed **1,983 tests** with one Windows
+symlink skip; the earlier counts below record individual follow-ups. Remaining
+transfer coverage is documented below. The later presentation review identified
+a Holdings layout-switch heading defect and proposed visual improvements; these
+are tracked in the [dashboard review](DASHBOARD_REVIEW.md).
+
 ## Implemented improvements
 
 | Boundary | Previous behavior | Change and regression coverage |
@@ -20,7 +27,7 @@ code testing or measurements.
 | Cache persistence | In-place writes could leave truncated JSON or mismatched prices, splits, and coverage; deletion errors discarded pending work. | Serialize the entire dirty price set before mutation, stage replacements and original backups, retire old files last, and retain dirty state on failure. A recovery manifest blocks cold loads after an interrupted save or failed rollback. `test_cache_persistence.py` and `test_io_safe.py` cover serialization, disk errors, migration, rollback, and abrupt process exit. Sector saves use the same helper separately. |
 | Drawdown meaning and dates | Raw balance declines were presented as investment risk, and a Calmar card divided investment return by cash-flow-sensitive balance drawdown. Python trailing windows also used the wall clock. | Label Balance Drawdown, disclose cash movements, sampling scope, and the lifetime size filter; remove the incompatible Calmar ratio. Anchor trailing windows to the latest data date with matching Python/JS durations. `test_drawdown_semantics.py` covers withdrawals, deposits, losses, bridges, and window agreement. |
 | Weekend crypto coverage | Ordinary and forced requests clamped crypto dates to Friday, skipping weekend marks. | Share the asset calendar with settlement classification; retain weekend dates for crypto while preserving equity/fund cutoffs, provisional marks, and closed-position limits. `test_price_calendars.py` covers UTC settlement, mixed batches, proxy targets, and forced refreshes. |
-| Transfer matching cost | Each inbound transfer scanned all outbound rows and repeatedly parsed dates, across every basis/history walk. | Index candidates by symbol and date while preserving greedy order, quantity tolerances, ties, and validation behavior. `test_transfer_pairing_index.py` compares with the exhaustive matcher across boundary cases and seeded fictional ledgers. |
+| Transfer matching cost | Each inbound transfer scanned all outbound rows and repeatedly parsed dates, across every basis/history walk. | Index candidates by symbol and date while preserving candidate order and deterministic ties. Verification now requires reconciled quantities; approximate matches remain diagnostics. `test_transfer_pairing_index.py` compares equal-unit cases with an exhaustive matcher across boundary cases and seeded fictional ledgers. |
 | Mobile Risk view | The monthly returns table widened the page beyond the viewport; the smoke check visited only Returns. | Contain the table in a named, keyboard-scrollable region. Browser checks now open Risk on mobile, assert viewport containment, and exercise horizontal keyboard scrolling. |
 | Account transfer attribution | Portfolio-neutral in-kind transfers could appear as account losses or gains. | Price verified cross-group pairs once and export scope-aware flow supplements for Python/JS returns, XIRR, annual tables, account contribution/P&L cards, and filtered benchmarks. Preserve whole-portfolio external contributions and report missing transfer valuations. |
 | Delayed transfer valuation | Assets disappeared from portfolio measurements between outbound and inbound posting dates. | Retain a separately marked in-transit position with carried basis, included only in scopes containing both custodians. Reconcile history, daily totals, returns, holdings, allocation, and composition without changing posted account balances. Tests cover whole portfolios in transit, missing daily marks, splits/options, scope boundaries, and precision before rounding. |
@@ -28,6 +35,9 @@ code testing or measurements.
 | Current-position repricing | The final transaction price could overwrite earlier dates; inconsistent split units and changing price coverage could create false P&L. | Share a chronological quote walk and quantity conversion for header/daily P&L. Require complete consecutive daily observations and expose missing header marks as coverage. |
 | Option basis units | FMV receipts and missing-amount trades treated per-share option premiums as whole-contract amounts. | Apply the canonical contract multiplier to price-derived basis/proceeds, preserving explicit dollar amounts and overrides. Cover later sales and all lot methods. |
 | Transaction-created lots | History duplicated broker acquisition pieces and provenance construction from the annotated walker. | Reuse `basis._push_txn_lots`; retain separate state and relief methods. Multi-piece HIFO regressions detect blended-lot errors that matching receipt totals would hide. |
+| Transfer share units | Approximate quantity matches could consume the wrong departure; split conversions could distort individual carried lots. | Verify quantities in common share units using supported cached split evidence. Share lot receipt construction across both walkers, preserving each lot's basis, acquisition date, and provenance; flag unsupported or ambiguous moves. |
+| Dated fallback quotes | Transaction-price fallbacks could retain pre-split units when valuing later quantities. | Rebase dated quotes consistently across current holdings, historical valuation, daily marks, and account-transfer flows. `test_transfer_quote_units.py` covers missing-cache and split boundaries. |
+| Recent activity | Activity compared FIFO what-if totals and advanced its baseline before dashboard publication could fail. | Use annotated account basis totals and publish the prepared baseline with JSON and HTML in the same replacement/rollback set. `test_changes.py`, `test_changes_publication.py`, and `test_changes_frontend.py` cover migration, invalid baselines, failure preservation, and rendered notices. |
 | Single-category allocation | Full and nearly full SVG arcs could collapse to coincident endpoints and render empty rings. | Split degenerate arcs while preserving ordinary slices. Chrome checks actual filled geometry, empty centers, proportions, and escaped labels. |
 | Test cleanup | The session isolation directory was never released. | Retain a `TemporaryDirectory` owner for process lifetime so normal interpreter shutdown cleans up the session's own files. |
 
@@ -100,11 +110,19 @@ require candidate comparisons; this is not a claim of universal linear scaling.
    adjustments from discrepancies. Further extraction should target a demonstrated
    duplicated rule; a framework rewrite has no demonstrated benefit.
 
+2. **Correct the Holdings heading when switching Table/Board layouts.** The
+   presentation review reproduced a Table subtotal remaining above Board rows
+   with a different account scope. Fix the heading's ownership and clarify
+   Board's symbol-membership filter before the proposed cosmetic changes. See
+   the [dashboard review](DASHBOARD_REVIEW.md#1-correct-the-holdings-heading-when-switching-layouts)
+   for the reproducer and validation boundary. Transfer coverage above remains
+   dependent on reconciliation evidence; this display fix can proceed independently.
+
 The recent-activity findings are now addressed: both paths use the annotated
 portfolio totals, and baseline publication participates in the same replacement
 and rollback set as JSON and HTML. Older FIFO-based baselines retain activity
 and value comparisons while their incompatible basis deltas restart. The focused
-follow-up review found no additional high-priority defect; this does not replace
+recent-activity follow-up found no additional high-priority defect; this does not replace
 future testing of new broker formats, data coverage, or publication workflows.
 
 ## Validation and limits
@@ -195,8 +213,9 @@ resolve and all six skill entrypoints pass metadata/size checks. Final isolated
 transfer benchmark medians were **0.345 s** for one symbol and **0.276 s** for
 eight symbols, with both semantic digests unchanged. These measurements cover
 five basis walks and 144 snapshots over 4,000 fictional rows, not complete
-pipeline or network timing. The further-work findings above were separately
-reproduced with fictional inputs and downstream failure injection.
+pipeline or network timing. The two recent-activity defects identified at that
+stage were separately reproduced with fictional inputs and downstream failure
+injection, then resolved in the follow-up below.
 
 The visual review follows [Privacy](PRIVACY.md) and remains separate from
 automated scanning. Passing scans and fictional-input tests do not prove that

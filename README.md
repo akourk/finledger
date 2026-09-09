@@ -15,7 +15,6 @@ assets move between accounts, and checking the results against broker statements
 The demo and screenshots use fictional transactions and illustrative prices.
 
 [![tests](https://github.com/akourk/finledger/actions/workflows/tests.yml/badge.svg)](https://github.com/akourk/finledger/actions/workflows/tests.yml)
-![tests: 1400+](https://img.shields.io/badge/tests-1400%2B-brightgreen)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 

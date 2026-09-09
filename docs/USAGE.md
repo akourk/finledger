@@ -175,8 +175,13 @@ The dashboard is a tabbed single-page app (URL hash routing, so
   Year-over-Year), top 10 holdings, recent transactions, allocation
   donut.
 - **Holdings** — by Asset / Account / Type / Sector, with cost basis and
-  unrealized gain columns. Plus a **Target vs Actual** rebalancing-drift
-  view (when `Target Allocation` is set), a concentration grid
+  unrealized gain columns. **Holdings by Asset** offers **Table** and **Board**
+  layouts. Table shows account/symbol positions with expandable open lots at
+  the latest date; Board shows current positions in one to three independently
+  sorted panes with selectable P&L windows. Board is latest-only and its layout
+  settings are remembered when browser storage is available. Plus a
+  **Target vs Actual** rebalancing-drift view (when `Target Allocation` is set),
+  a concentration grid
   (positions / sectors / accounts with HHI + top-5 share), and a lot
   method comparison table (FIFO / LIFO / HIFO / Average).
 - **Transactions** — every row with per-field filters, free-text search,
@@ -238,6 +243,21 @@ gaps are omitted so missing or newly available prices cannot appear as returns.
 
 Dark theme, tabular-numeric formatting, mobile responsive
 (including narrow mobile viewports), no JS framework.
+
+Use the skip link to reach dashboard content by keyboard. When a navigation tab
+has focus, Left/Right switch tabs and Home/End select the first/last visible tab.
+Tab moves into the page controls. Sortable table headings support Enter/Space;
+lot disclosures are buttons. On narrow screens, the navigation and wide tables
+scroll horizontally; overflowing table regions can also receive keyboard focus.
+
+Table and Board keep separate filters. In Board's **By Symbol** mode, choosing
+an account selects symbols held there, while their figures remain combined
+across all accounts. Use **By Account** for account-specific rows. There is a
+known display limitation when switching layouts: the common section heading
+can retain the Table subtotal while Board shows a different selection. Use the
+Board pane totals for that view until the
+[heading fix](DASHBOARD_REVIEW.md#1-correct-the-holdings-heading-when-switching-layouts)
+is implemented.
 
 **Balance Drawdown** measures how far the balance has fallen from its running
 peak. Withdrawals can deepen a decline; contributions can restore the peak
