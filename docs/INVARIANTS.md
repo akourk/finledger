@@ -810,6 +810,10 @@ Normal local output lives in `exports/transactions.json` and
       `test_performance_presentation.py` covers hierarchy, retained figures,
       disclosure state, date binding, and shared control behavior; existing
       return parity tests remain the calculation contract.
+      The drawdown SVG measures its visible size and redraws on visibility or
+      size changes. Keep its text at CSS scale; an assumed width while Risk is
+      hidden stretches labels on reveal. `tools/browser_smoke.js` checks label
+      geometry across view changes, filter rerenders, and desktop/mobile resize.
 
     Each tab's renderer is registered with `registerTabRenderer(name,
     fn)` and runs lazily on first activation. The Overview tab renders

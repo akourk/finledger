@@ -711,7 +711,10 @@ function renderMultiLineChart(seriesArr, opts) {
 }
 
 // --- Drawdown section (Performance tab) ------------------------------------
+let _drawdownResizeObserver = null;
 function _buildDrawdownSection() {
+  _drawdownResizeObserver?.disconnect();
+  _drawdownResizeObserver = null;
   const dd = ANALYTICS.drawdown || {};
   const series = dd.series || [];
   if (!series.length) return '';
@@ -752,46 +755,58 @@ function _buildDrawdownSection() {
     ${c.sub ? `<div class="ds-sub">${_htmlEsc(c.sub)}</div>` : ''}
   </div>`).join('');
 
-  // Inline mini chart of drawdown series (bars going down from 0)
+  // Inline area chart of drawdown series below the running peak.
   const chartId = 'drawdownChart';
   const chartHtml = `<div class="chart-wrap">
-    <svg class="chart-svg" id="${chartId}" preserveAspectRatio="none" style="height:180px;"
+    <svg class="chart-svg" id="${chartId}" style="height:180px;"
            role="img"
            aria-label="Portfolio balance decline from the running peak over time, including cash movements. The cards above give the maximum and current drawdown as text."></svg>
   </div>`;
 
-  // Render after DOM insertion
+  // Risk starts hidden. Measure when shown and after resizes so SVG text
+  // stays at its CSS font size instead of stretching a fallback viewBox.
   queueMicrotask(() => {
     const svg = document.getElementById(chartId);
     if (!svg || !series.length) return;
-    const W = Math.round(svg.getBoundingClientRect().width) || 800;
-    const H = 180, PAD = { l: 48, r: 12, t: 10, b: 22 };
-    const plotW = W - PAD.l - PAD.r;
-    const plotH = H - PAD.t - PAD.b;
-    const minDd = Math.min(...series.map(s => s.drawdown_pct));
-    const lo = Math.min(-0.01, minDd * 1.05);
-    const xOf = i => PAD.l + (series.length === 1 ? plotW / 2 : (i * plotW) / (series.length - 1));
-    const yOf = v => PAD.t + ((v - 0) / (lo - 0 || 1)) * plotH;
-    const parts = [];
-    for (let k = 0; k <= 4; k++) {
-      const v = (lo * k) / 4;
-      const y = yOf(v);
-      parts.push(`<line class="grid-line" x1="${PAD.l}" y1="${y}" x2="${W - PAD.r}" y2="${y}"/>`);
-      parts.push(`<text class="axis-label" x="${PAD.l - 6}" y="${y + 3}" text-anchor="end">${(v * 100).toFixed(0)}%</text>`);
+    const draw = () => {
+      const {width: W, height: H} = svg.getBoundingClientRect();
+      if (!W || !H) return;
+      const PAD = { l: 48, r: 24, t: 10, b: 22 };
+      const plotW = W - PAD.l - PAD.r;
+      const plotH = H - PAD.t - PAD.b;
+      const minDd = Math.min(...series.map(s => s.drawdown_pct));
+      const lo = Math.min(-0.01, minDd * 1.05);
+      const xOf = i => PAD.l + (series.length === 1 ? plotW / 2 : (i * plotW) / (series.length - 1));
+      const yOf = v => PAD.t + ((v - 0) / (lo - 0 || 1)) * plotH;
+      const parts = [];
+      for (let k = 0; k <= 4; k++) {
+        const v = (lo * k) / 4;
+        const y = yOf(v);
+        parts.push(`<line class="grid-line" x1="${PAD.l}" y1="${y}" x2="${W - PAD.r}" y2="${y}"/>`);
+        parts.push(`<text class="axis-label" x="${PAD.l - 6}" y="${y + 3}" text-anchor="end">${(v * 100).toFixed(0)}%</text>`);
+      }
+      const d = series.map((s, i) => `${i === 0 ? 'M' : 'L'}${xOf(i)},${yOf(s.drawdown_pct)}`).join(' ');
+      const area = `M${xOf(0)},${yOf(0)} ` + series.map((s, i) => `L${xOf(i)},${yOf(s.drawdown_pct)}`).join(' ') +
+        ` L${xOf(series.length - 1)},${yOf(0)} Z`;
+      parts.push(`<path d="${area}" fill="rgba(248,113,113,0.2)"/>`);
+      parts.push(`<path d="${d}" fill="none" stroke="#f87171" stroke-width="1.6"/>`);
+      const xTicks = Math.min(6, series.length, Math.max(2, Math.floor(plotW / 72) + 1));
+      for (let i = 0; i < xTicks; i++) {
+        const idx = Math.round((i * (series.length - 1)) / (xTicks - 1 || 1));
+        const x = xOf(idx);
+        parts.push(`<text class="axis-label" x="${x}" y="${H - 6}" text-anchor="middle">${_htmlEsc((series[idx].date || '').slice(0, 7))}</text>`);
+      }
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.innerHTML = parts.join('');
+    };
+    draw();
+    if (typeof ResizeObserver === 'function') {
+      // Replacing Performance's HTML also replaces this SVG. Keep only the
+      // current observer, including when multiple renders share a microtask.
+      _drawdownResizeObserver?.disconnect();
+      _drawdownResizeObserver = new ResizeObserver(draw);
+      _drawdownResizeObserver.observe(svg);
     }
-    const d = series.map((s, i) => `${i === 0 ? 'M' : 'L'}${xOf(i)},${yOf(s.drawdown_pct)}`).join(' ');
-    const area = `M${xOf(0)},${yOf(0)} ` + series.map((s, i) => `L${xOf(i)},${yOf(s.drawdown_pct)}`).join(' ') +
-      ` L${xOf(series.length - 1)},${yOf(0)} Z`;
-    parts.push(`<path d="${area}" fill="rgba(248,113,113,0.2)"/>`);
-    parts.push(`<path d="${d}" fill="none" stroke="#f87171" stroke-width="1.6"/>`);
-    const xTicks = Math.min(6, series.length);
-    for (let i = 0; i < xTicks; i++) {
-      const idx = Math.round((i * (series.length - 1)) / (xTicks - 1 || 1));
-      const x = xOf(idx);
-      parts.push(`<text class="axis-label" x="${x}" y="${H - 6}" text-anchor="middle">${_htmlEsc((series[idx].date || '').slice(0, 7))}</text>`);
-    }
-    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-    svg.innerHTML = parts.join('');
   });
 
   return `
@@ -2132,8 +2147,8 @@ ${spanNote}`
 }
 
 // Returns ↔ Risk sub-view for the Performance tab.  Both views render
-// into the DOM (string-built SVGs scale via viewBox), so switching is a
-// pure display toggle — no chart re-render needed.
+// into the DOM, so switching only changes visibility. Drawdown's size
+// observer redraws its labels when the hidden chart becomes measurable.
 let _perfView = 'returns';
 function setPerfView(v) {
   _perfView = v === 'risk' ? 'risk' : 'returns';

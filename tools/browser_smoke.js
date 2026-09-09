@@ -258,6 +258,85 @@ async function checkMobilePerformance(page) {
   await page.select('#perfAccountSelect', '');
 }
 
+async function checkDrawdownGeometry(page, state) {
+  // Risk starts hidden. A viewBox based on its zero-width fallback can look
+  // correct in a string probe while stretching every label in the browser.
+  try {
+    await page.waitForFunction(() => {
+      const svg = document.getElementById('drawdownChart');
+      return svg?.checkVisibility() && svg.querySelector('text')
+        && Math.abs(svg.viewBox.baseVal.width - svg.getBoundingClientRect().width) < 1;
+    }, {timeout: 3000});
+  } catch (error) {
+    if (error.name !== 'TimeoutError') throw error;
+    // Report the actual geometry below rather than an opaque polling timeout.
+  }
+  const geometry = await page.$eval('#drawdownChart', svg => {
+    const bounds = svg.getBoundingClientRect();
+    return {visible: svg.checkVisibility(), width: bounds.width,
+      viewWidth: svg.viewBox.baseVal.width,
+      labels: [...svg.querySelectorAll('text')].map(label => {
+        const matrix = label.getScreenCTM();
+        const rect = label.getBoundingClientRect();
+        return {text: label.textContent, font: parseFloat(getComputedStyle(label).fontSize),
+          scaleX: Math.hypot(matrix.a, matrix.b), scaleY: Math.hypot(matrix.c, matrix.d),
+          left: rect.left - bounds.left, right: rect.right - bounds.left,
+          top: rect.top - bounds.top, bottom: rect.bottom - bounds.top};
+      }), height: bounds.height};
+  });
+  assert.equal(geometry.visible, true, state + ': drawdown chart must be visible');
+  assert.ok(geometry.labels.length >= 4, state + ': drawdown axes must render');
+  for (const label of geometry.labels) {
+    assert.ok(Math.abs(label.scaleX - 1) < 0.01 && Math.abs(label.scaleY - 1) < 0.01,
+      `${state}: ${label.text} must use unscaled text; scale=${label.scaleX},${label.scaleY}, chart=${geometry.width}/${geometry.viewWidth}`);
+    assert.ok(label.font >= 9 && label.font <= 14, state + ': axis text must retain a readable font size');
+    assert.ok(label.left >= -1 && label.right <= geometry.width + 1
+      && label.top >= -1 && label.bottom <= geometry.height + 1,
+    state + ': ' + label.text + ' must stay inside the chart');
+  }
+  const dates = geometry.labels.filter(label => /^\d{4}-\d{2}$/.test(label.text));
+  assert.ok(dates.length >= 2, state + ': chart must show its date span');
+  for (let i = 1; i < dates.length; i++) {
+    assert.ok(dates[i].left - dates[i - 1].right >= 4, state + ': date labels must not overlap');
+  }
+}
+
+async function checkDrawdownPresentation(page, mobile = false) {
+  const initialViewport = page.viewport();
+  const kind = mobile ? 'mobile' : 'desktop';
+  const resize = width => page.setViewport({...initialViewport, width});
+  const selectAccount = async value => {
+    if (mobile) await page.select('#perfAccountSelect', value);
+    else await page.click('#perfAccountButton-' + (value || 'total'));
+  };
+  const selectWindow = value => page.click(
+    `${mobile ? '.perf-mobile-ranges' : '#perfControls .desktop-only'} [data-perf-window="${value}"]`);
+  await page.click('#tabbtn-performance');
+  await page.click('#perfViewBtnReturns');
+  await page.click('#perfViewBtnRisk');
+  await checkDrawdownGeometry(page, kind + ' initial Risk reveal');
+  await resize(mobile ? 320 : 1024);
+  await checkDrawdownGeometry(page, kind + ' visible resize');
+  await page.click('#perfViewBtnReturns');
+  await resize(mobile ? 430 : 1280);
+  await page.click('#perfViewBtnRisk');
+  await checkDrawdownGeometry(page, kind + ' hidden Risk resize');
+  await page.click('#tabbtn-overview');
+  await resize(initialViewport.width);
+  await page.click('#tabbtn-performance');
+  await checkDrawdownGeometry(page, kind + ' hidden Performance resize and return');
+  await selectAccount('__retirement__');
+  await checkDrawdownGeometry(page, kind + ' visible account rerender');
+  await selectWindow('ytd');
+  await checkDrawdownGeometry(page, kind + ' visible window rerender');
+  await page.click('#perfViewBtnReturns');
+  await selectAccount('');
+  await selectWindow('lifetime');
+  await page.click('#perfViewBtnRisk');
+  await checkDrawdownGeometry(page, kind + ' hidden account/window rerender');
+  await page.click('#perfViewBtnReturns');
+}
+
 async function main() {
   const file = path.resolve(process.argv[2] || '_site/index.html');
   const browser = await puppeteer.launch({headless: true,
@@ -304,6 +383,7 @@ async function main() {
     }
     await checkHistoryControls(page);
     await checkHoldingsLayouts(page);
+    await checkDrawdownPresentation(page);
 
     async function typeEach(selector, value) {
       await page.click(selector);
@@ -398,6 +478,7 @@ async function main() {
     await checkStickyIdentity(page, '#boardPanes [data-pane="0"] .board-scroll');
     await page.click('#btnBoardTable');
     await checkMobilePerformance(page);
+    await checkDrawdownPresentation(page, true);
     await page.click('#perfViewBtnRisk');
     const riskOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     assert.ok(riskOverflow <= 1, `performance risk view overflows mobile viewport by ${riskOverflow}px`);
@@ -408,7 +489,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('[aria-label="Monthly returns table"]').scrollLeft > 0);
     await page.click('#perfViewBtnReturns');
     assert.deepEqual(errors, []);
-    console.log('PASS: 10 tabs and keyboard navigation, allocation ring geometry, History scope controls, independent Table/Board filters and totals, per-key input, historical gains, Python/JS monthly risk parity, keyboard disclosures, CSV export, deep link, touch layout and sticky identities, mobile Performance scopes/Returns/Risk, no console/network errors.');
+    console.log('PASS: 10 tabs and keyboard navigation, allocation ring geometry, History scope controls, independent Table/Board filters and totals, per-key input, historical gains, Python/JS monthly risk parity, keyboard disclosures, CSV export, deep link, touch layout and sticky identities, mobile Performance scopes/Returns/Risk, readable drawdown labels across reveal/resize/rerender, no console/network errors.');
   } finally {
     await browser.close();
     await fs.rm(downloads, {recursive: true, force: true});
