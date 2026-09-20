@@ -17,6 +17,10 @@ Open `_site/index.html`. The page needs no server, account, API key, external
 script, or live market connection. `npm test` runs ordinary keyboard/browser
 interactions and axe accessibility scans against the final bannered page.
 
+The favicon lives in `src/dashboard/template.html` as an embedded SVG. Local
+exports and the public demo share it, with no separate icon file or network
+request needed when opening a saved dashboard.
+
 ## Inputs and isolation
 
 `tools/build_sample_snapshot.py` generates eleven broker and metadata CSVs

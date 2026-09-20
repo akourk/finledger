@@ -41,7 +41,6 @@ STYLE = """<style id="demo-styles">
 .demo-intro p{margin:7px 0;max-width:1000px}.demo-heading{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:#eeeef8;font-size:16px}.demo-heading strong{color:#c4b5fd}.demo-badge{font-size:12px;color:#dddde9;border:1px solid #595975;border-radius:20px;padding:2px 9px}.demo-links{display:flex;flex-wrap:wrap;gap:8px 22px}.demo-intro a{color:#c4b5fd;text-underline-offset:3px}.demo-intro summary{cursor:pointer;color:#dddde9;font-weight:600;padding:8px 0}.demo-intro details{margin-top:5px;max-width:1100px}.demo-intro :focus-visible{outline:2px solid #c4b5fd;outline-offset:4px}
 @media(max-width:600px){.demo-intro{padding:10px 12px;margin-bottom:14px}.demo-heading{font-size:14px;gap:5px 8px}.demo-intro summary{padding:6px 0;min-height:32px}}
 </style>"""
-FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%237c3aed'/%3E%3Cpath d='M18 46V18h30M18 31h23' fill='none' stroke='white' stroke-width='7'/%3E%3C/svg%3E"
 HEAD = f"""<meta name="description" content="{DESCRIPTION}">
 <meta property="og:title" content="finledger — Interactive financial ledger demo">
 <meta property="og:description" content="{DESCRIPTION}">
@@ -54,7 +53,6 @@ HEAD = f"""<meta name="description" content="{DESCRIPTION}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="{PREVIEW_IMAGE}">
 <meta name="twitter:image:alt" content="finledger dashboard showing a clearly labeled fictional sample portfolio">
-<link rel="icon" href="{FAVICON}">
 {STYLE}
 """
 _SKIP_LINK_END = 'href="#main-content">Skip to dashboard content</a>'
