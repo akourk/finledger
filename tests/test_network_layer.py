@@ -63,13 +63,39 @@ class _FakeDate:
         return datetime.date.fromisoformat(self._iso)
 
 
+class _FakeHistory:
+    """Daily quotes plus action rows, including zero split-event rows."""
+
+    def __init__(self, splits, *, close=100.0, include_splits=True):
+        self.empty = splits is None
+        self.columns = ["Close"] + (["Stock Splits"] if include_splits else [])
+        self._data = {
+            "Close": _FakeSeries([(_FakeDate("2024-06-03"), close)]),
+            "Stock Splits": splits,
+        }
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+
 class _FakeTicker:
     def __init__(self, *, splits=None, dividends=None, info=None,
-                 info_raises=False):
+                 info_raises=False, history=None, history_raises=False):
         self._splits = splits
         self._dividends = dividends
         self._info = info
         self._info_raises = info_raises
+        self._history = history
+        self._history_raises = history_raises
+        self.history_calls = []
+
+    def history(self, **kwargs):
+        self.history_calls.append(kwargs)
+        if self._history_raises:
+            raise RuntimeError("simulated quote failure")
+        if self._history is not None:
+            return self._history
+        return _FakeHistory(self._splits)
 
     @property
     def splits(self):
@@ -151,9 +177,104 @@ class TestFetchSplits:
         P = prices_yf(_FakeYF(_FakeTicker(splits=_FakeSeries([]))))
         assert P._fetch_splits("AAA") == []
 
-    def test_a_none_series_is_empty(self, prices_yf):
+    def test_unavailable_history_raises(self, prices_yf):
         P = prices_yf(_FakeYF(_FakeTicker(splits=None)))
-        assert P._fetch_splits("AAA") == []
+        with pytest.raises(RuntimeError, match="unavailable"):
+            P._fetch_splits("AAA")
+
+    def test_requests_errors_instead_of_silent_empty_splits(self, prices_yf):
+        ticker = _FakeTicker(history_raises=True)
+        P = prices_yf(_FakeYF(ticker))
+        with pytest.raises(RuntimeError, match="quote failure"):
+            P._fetch_splits("AAA")
+        assert ticker.history_calls == [{
+            "period": "max", "auto_adjust": False,
+            "actions": True, "raise_errors": True,
+        }]
+
+    def test_missing_action_column_does_not_claim_no_splits(self, prices_yf):
+        ticker = _FakeTicker(history=_FakeHistory(
+            _FakeSeries([]), include_splits=False))
+        P = prices_yf(_FakeYF(ticker))
+        with pytest.raises(RuntimeError, match="unavailable"):
+            P._fetch_splits("AAA")
+
+    def test_action_only_history_is_not_a_successful_quote(self, prices_yf):
+        ticker = _FakeTicker(history=_FakeHistory(
+            _FakeSeries([]), close=float("nan")))
+        P = prices_yf(_FakeYF(ticker))
+        with pytest.raises(RuntimeError, match="no valid prices"):
+            P._fetch_splits("AAA")
+
+    def test_zero_action_rows_are_not_split_events(self, prices_yf):
+        P = prices_yf(_FakeYF(_FakeTicker(splits=_FakeSeries([
+            (_FakeDate("2024-06-01"), 4.0),
+            (_FakeDate("2024-06-03"), 0.0),
+        ]))))
+        assert P._fetch_splits("AAA") == [["2024-06-01", 4.0]]
+
+    @pytest.mark.parametrize("ratio", [float("nan"), float("inf"), -1.0])
+    def test_invalid_split_ratio_is_not_cached(self, prices_yf, ratio):
+        P = prices_yf(_FakeYF(_FakeTicker(splits=_FakeSeries([
+            (_FakeDate("2024-06-01"), ratio),
+        ]))))
+        with pytest.raises(ValueError, match="invalid split ratio"):
+            P._fetch_splits("AAA")
+
+    @pytest.mark.parametrize("raises", [False, True])
+    def test_failed_refresh_preserves_split_evidence_and_prices(
+            self, prices_yf, raises):
+        ticker = _FakeTicker(splits=None, history_raises=raises)
+        P = prices_yf(_FakeYF(ticker))
+        old_prices = {"2024-05-31": 25.0}
+        old_splits = [["2024-06-01", 4.0]]
+        P._load_prices()["AAA"] = dict(old_prices)
+        P._load_splits()["AAA"] = list(old_splits)
+        P._load_meta()["symbols"]["AAA"] = {
+            "covered_start": "2024-05-31", "covered_end": "2024-06-03",
+        }
+        P.revalidate_stale_caches(["AAA"], force=True, verbose=False)
+        assert P._load_splits()["AAA"] == old_splits
+        assert P._load_prices()["AAA"] == old_prices
+        assert P._load_meta()["symbols"]["AAA"]["covered_start"] == "2024-05-31"
+
+    @pytest.mark.parametrize("raises", [False, True])
+    def test_failed_backfill_stays_missing_until_verified(
+            self, prices_yf, monkeypatch, raises):
+        monkeypatch.setenv("FIN_AS_OF_DATE", "2024-06-10")
+        ticker = _FakeTicker(splits=None, history_raises=raises)
+        P = prices_yf(_FakeYF(ticker))
+        old_prices = {"2024-06-03": 100.0, "2024-06-07": 105.0}
+        P._load_prices()["AAA"] = dict(old_prices)
+        P._load_meta()["symbols"]["AAA"] = {
+            "covered_start": "2024-06-03", "covered_end": "2024-06-07",
+            "settled_through": "2024-06-07",
+        }
+
+        P.ensure_coverage(["AAA"], "2024-06-03", "2024-06-07", verbose=False)
+        assert "AAA" not in P._load_splits()
+        assert not P._splits_dirty
+        assert P._load_prices()["AAA"] == old_prices
+        assert len(ticker.history_calls) == 1
+        entry = P._load_meta()["symbols"]["AAA"]
+        assert entry["split_retry_after"] == "2024-06-11"
+        assert entry["split_failure_count"] == 1
+
+        # Recovery really reports no split events, which may now be cached.
+        ticker._history_raises = False
+        ticker._splits = _FakeSeries([])
+        P.ensure_coverage(["AAA"], "2024-06-03", "2024-06-07", verbose=False)
+        assert "AAA" not in P._load_splits()
+        assert len(ticker.history_calls) == 1
+        monkeypatch.setenv("FIN_AS_OF_DATE", "2024-06-11")
+        P.ensure_coverage(["AAA"], "2024-06-03", "2024-06-07", verbose=False)
+        assert P._load_splits()["AAA"] == []
+        assert P._splits_dirty
+        assert len(ticker.history_calls) == 2
+        assert "split_retry_after" not in entry
+        assert "split_failure_count" not in entry
+        P.ensure_coverage(["AAA"], "2024-06-03", "2024-06-07", verbose=False)
+        assert len(ticker.history_calls) == 2
 
     def test_a_caret_suffix_is_stripped_before_the_lookup(self, prices_yf):
         """Robinhood writes delisted/preferred placeholders as `AKRO^`.
@@ -176,6 +297,126 @@ class TestFetchSplits:
         P = prices_yf(_FakeYF(_FakeTicker(
             splits=_FakeSeries([("2024-06-01T00:00:00", 2.0)]))))
         assert P._fetch_splits("AAA") == [["2024-06-01", 2.0]]
+
+
+class TestSplitFetchBackoff:
+    @staticmethod
+    def _seed(P):
+        series = {"2024-06-03": 100.0, "2024-06-07": 105.0}
+        P._load_prices()["AAA"] = dict(series)
+        entry = {
+            "covered_start": "2024-06-03", "covered_end": "2024-06-07",
+            "settled_through": "2024-06-07", "last_fetch": "2024-06-07T20:00:00",
+            "failure_count": 0,
+        }
+        P._load_meta()["symbols"]["AAA"] = dict(entry)
+        return series, entry
+
+    @staticmethod
+    def _backfill(P):
+        P.ensure_coverage(["AAA"], "2024-06-03", "2024-06-07", verbose=False)
+
+    def test_split_only_failures_back_off_without_failing_quotes(
+            self, prices_yf, monkeypatch):
+        from datetime import date, timedelta
+
+        ticker = _FakeTicker(history_raises=True)
+        P = prices_yf(_FakeYF(ticker))
+        series, original_entry = self._seed(P)
+        day = date(2024, 6, 10)
+        for failures, days in enumerate([1, 2, 4, 8, 16, 30, 30], start=1):
+            monkeypatch.setenv("FIN_AS_OF_DATE", day.isoformat())
+            self._backfill(P)
+            entry = P._load_meta()["symbols"]["AAA"]
+            assert entry["split_failure_count"] == failures
+            assert entry["split_retry_after"] == (day + timedelta(days=days)).isoformat()
+            assert {k: v for k, v in entry.items()
+                    if not k.startswith("split_")} == original_entry
+            assert "AAA" not in P._load_splits()
+            assert P._load_prices()["AAA"] == series
+            self._backfill(P)
+            assert len(ticker.history_calls) == failures
+            day += timedelta(days=days)
+
+    @pytest.mark.parametrize("first", ["deep", "backfill"])
+    def test_deep_refresh_and_backfill_share_the_cooldown(
+            self, prices_yf, monkeypatch, first):
+        monkeypatch.setenv("FIN_AS_OF_DATE", "2024-06-10")
+        ticker = _FakeTicker(history_raises=True)
+        P = prices_yf(_FakeYF(ticker))
+        series, original_entry = self._seed(P)
+        if first == "deep":
+            P.revalidate_stale_caches(["AAA"], verbose=False)
+        else:
+            self._backfill(P)
+        self._backfill(P)
+        P._load_meta().pop("last_deep_refresh", None)
+        P.revalidate_stale_caches(["AAA"], verbose=False)
+        assert len(ticker.history_calls) == 1
+        entry = P._load_meta()["symbols"]["AAA"]
+        assert entry["split_failure_count"] == 1
+        assert {k: v for k, v in entry.items()
+                if not k.startswith("split_")} == original_entry
+        assert P._load_prices()["AAA"] == series
+
+        # An explicit deep refresh can retry early; it still cannot convert
+        # an unavailable history into confirmed no-split evidence.
+        P.revalidate_stale_caches(["AAA"], force=True, verbose=False)
+        assert len(ticker.history_calls) == 2
+        assert entry["split_failure_count"] == 2
+        assert entry["split_retry_after"] == "2024-06-12"
+        assert "AAA" not in P._load_splits()
+
+        ticker._history_raises = False
+        ticker._splits = _FakeSeries([])
+        P.revalidate_stale_caches(["AAA"], force=True, verbose=False)
+        assert len(ticker.history_calls) == 3
+        assert P._load_splits()["AAA"] == []
+        assert "split_failure_count" not in entry
+        assert "split_retry_after" not in entry
+
+    def test_force_does_not_fetch_splits_before_unblocking_price_tombstone(
+            self, prices_yf, monkeypatch):
+        monkeypatch.setenv("FIN_AS_OF_DATE", "2024-06-10")
+        ticker = _FakeTicker(history_raises=True)
+        P = prices_yf(_FakeYF(ticker))
+        self._seed(P)
+        entry = P._load_meta()["symbols"]["AAA"]
+        entry.update({"failure_count": 5, "tombstone": True,
+                      "retry_after": "2024-06-30", "split_failure_count": 2,
+                      "split_retry_after": "2024-06-12"})
+        P.revalidate_stale_caches(["AAA"], force=True, verbose=False)
+        assert ticker.history_calls == []
+        assert entry["split_failure_count"] == 2
+        assert entry["failure_count"] == 5
+        assert not entry.get("tombstone")
+
+    @pytest.mark.parametrize("split_error", [False, True])
+    def test_fresh_quotes_require_split_check_even_during_split_backoff(
+            self, prices_yf, monkeypatch, split_error):
+        from datetime import date, datetime
+
+        monkeypatch.setenv("FIN_AS_OF_DATE", "2024-06-10")
+        ticker = _FakeTicker(splits=_FakeSeries([]), history_raises=split_error)
+        P = prices_yf(_FakeYF(ticker))
+        self._seed(P)
+        entry = P._load_meta()["symbols"]["AAA"]
+        entry.update({"split_failure_count": 4, "split_retry_after": "2024-06-18"})
+        P._apply_fetch_success("AAA", {"2024-06-10": 106.0},
+                               date(2024, 6, 10), date(2024, 6, 10),
+                               datetime(2024, 6, 10, 20), verbose=False)
+        assert len(ticker.history_calls) == 1
+        assert entry["covered_end"] == "2024-06-10"
+        assert entry["failure_count"] == 0
+        assert P._load_prices()["AAA"]["2024-06-10"] == 106.0
+        if split_error:
+            assert "AAA" not in P._load_splits()
+            assert entry["split_failure_count"] == 5
+            assert entry["split_retry_after"] == "2024-06-26"
+        else:
+            assert P._load_splits()["AAA"] == []
+            assert "split_failure_count" not in entry
+            assert "split_retry_after" not in entry
 
 
 # ---------------------------------------------------------------------------

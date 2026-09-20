@@ -51,8 +51,8 @@ today-basis balance which cancels cleanly against the today-basis
 adjusted price.  See `split_factor_since` / `split_adjust_qty`.
 
 Failure handling uses exponential backoff (1d → 2d → 4d → 8d → 16d, capped
-at 30d) plus a tombstone after 5 consecutive failures.  Delisted / renamed
-/ invalid tickers stop getting retried forever.
+at 30d) plus a tombstone after 5 consecutive failures. Weekly refreshes can
+retry open symbols when due; closed symbols stay blocked until forced.
 
 Weekend / holiday lookups walk backward to the most recent prior trading
 day within a 7-day window.
@@ -70,6 +70,7 @@ from zoneinfo import ZoneInfo
 
 from .config import CACHE_DIR, CRYPTO_SYMBOLS, SYMBOL_MAP, load_json_cache
 from .io_safe import check_pending_recovery, replace_files
+from .market_symbols import option_underlying_quote
 
 # Prices are sharded one JSON file per symbol under PRICES_DIR — only
 # symbols with new data get rewritten on save, git diffs scope to the
@@ -916,6 +917,35 @@ def _record_failure(symbol: str, error: str, now: datetime) -> None:
     _meta_dirty = True
 
 
+def _split_fetch_due(symbol: str, now: datetime) -> bool:
+    """Whether an optional full-history split request may be retried."""
+    entry = _load_meta()["symbols"].get(symbol, {})
+    retry_after = entry.get("split_retry_after")
+    return not retry_after or now.date() >= _parse_iso(retry_after)
+
+
+def _record_split_failure(symbol: str, now: datetime) -> None:
+    """Back off unavailable split history without changing quote coverage."""
+    global _meta_dirty
+    entry = _load_meta()["symbols"].setdefault(symbol, {})
+    failures = entry.get("split_failure_count", 0) + 1
+    entry["split_failure_count"] = failures
+    days = min(_BACKOFF_CAP_DAYS,
+               _BACKOFF_BASE_DAYS * (2 ** min(failures - 1, _BACKOFF_CAP_DAYS)))
+    entry["split_retry_after"] = (now.date() + timedelta(days=days)).isoformat()
+    _meta_dirty = True
+
+
+def _record_split_success(symbol: str) -> None:
+    """Clear split-only cooldown once full split history is verified."""
+    global _meta_dirty
+    entry = _load_meta()["symbols"].get(symbol, {})
+    for key in ("split_failure_count", "split_retry_after"):
+        if key in entry:
+            del entry[key]
+            _meta_dirty = True
+
+
 def _cap_covered_end(value: str) -> str:
     """Clamp a ``covered_end`` claim to the local calendar date.
 
@@ -979,24 +1009,39 @@ def _fetch_splits(symbol: str) -> list[list]:
     """Fetch split history for `symbol`.  Returns `[[ISO_date, ratio], ...]`.
 
     Ratio is `new_shares / old_shares` — so 2.0 for a 2:1 forward split,
-    0.1 for a 1:10 reverse split.  Raises on API error; returns [] on
-    no-data.
+    0.1 for a 1:10 reverse split. Raises on unavailable history; returns
+    [] only when a successful quote history reports no split events.
     """
     yf = _lazy_yf()
     if yf is None:
         raise RuntimeError("yfinance not installed — pip install yfinance")
     probe = symbol.rstrip("^")
     ticker = yf.Ticker(probe)
-    splits = ticker.splits
-    if splits is None or splits.empty:
-        return []
+    # The convenience .splits property swallows Yahoo errors and returns
+    # an empty series. Treating that as confirmed "no splits" can erase
+    # known events and invalidate irreplaceable historical prices.
+    history = ticker.history(period="max", auto_adjust=False, actions=True,
+                             raise_errors=True)
+    if (history is None or history.empty
+            or "Stock Splits" not in history.columns
+            or "Close" not in history.columns):
+        raise RuntimeError("split history unavailable")
+    if not any(math.isfinite(float(value)) and float(value) > 0
+               for _idx, value in history["Close"].items()):
+        raise RuntimeError("split history has no valid prices")
+    splits = history["Stock Splits"]
     out: list[list] = []
     for idx, ratio in splits.items():
+        ratio = float(ratio)
+        if not math.isfinite(ratio) or ratio < 0:
+            raise ValueError("invalid split ratio")
+        if ratio == 0:
+            continue
         try:
             dt_str = idx.date().isoformat()
         except AttributeError:
             dt_str = str(idx)[:10]
-        out.append([dt_str, float(ratio)])
+        out.append([dt_str, ratio])
     return out
 
 
@@ -1328,10 +1373,11 @@ def option_intrinsic(symbol: str, on_date) -> float | None:
     parsed = parse_option_symbol(symbol or "")
     if not parsed:
         return None
-    s = get_price(parsed["underlying"], on_date)
+    underlying, scale = option_underlying_quote(parsed["underlying"])
+    s = get_price(underlying, on_date)
     if s is None or s <= 0:
         return None
-    s *= split_factor_since(parsed["underlying"], on_date)
+    s *= scale * split_factor_since(underlying, on_date)
     if parsed["type"] == "Call":
         return max(0.0, s - parsed["strike"])
     return max(0.0, parsed["strike"] - s)
@@ -1346,7 +1392,7 @@ def option_underlyings(symbols) -> set[str]:
     for sym in symbols:
         p = parse_option_symbol(sym or "")
         if p:
-            out.add(p["underlying"])
+            out.add(option_underlying_quote(p["underlying"])[0])
     return out
 
 
@@ -1365,7 +1411,7 @@ def price_source_symbol(symbol: str) -> str | None:
     else:
         parsed = parse_option_symbol(symbol or "")
         if parsed:
-            symbol = parsed["underlying"]
+            symbol = option_underlying_quote(parsed["underlying"])[0]
     if _classify_no_fetch(symbol):
         return None
     return symbol
@@ -1585,8 +1631,11 @@ def _apply_fetch_success(sym: str, merged: dict[str, float],
     # coverage we may have a new split to record.
     splits_cache = _load_splits()
     if not (splits_known_clean and sym in splits_cache):
+        # Fresh quote data can introduce a split. Required evidence must
+        # be checked even while optional full-history refreshes are on backoff.
         try:
             new_splits = _fetch_splits(sym)
+            _record_split_success(sym)
             old_splits = splits_cache.get(sym)
             if old_splits != new_splits:
                 splits_cache[sym] = new_splits
@@ -1603,7 +1652,7 @@ def _apply_fetch_success(sym: str, merged: dict[str, float],
         except Exception:
             # Splits fetch failures are non-fatal — keep prior cached
             # splits (if any) and carry on.
-            pass
+            _record_split_failure(sym, now)
     if verbose:
         sp = _load_splits().get(sym, [])
         sp_note = f", {len(sp)} split(s)" if sp else ""
@@ -1707,7 +1756,8 @@ def _invalidate_prices_for_split_change(symbol: str, old_splits, new_splits,
 
 def revalidate_stale_caches(symbols: list[str], *,
                              verbose: bool = True,
-                             force: bool = False) -> None:
+                             force: bool = False,
+                             closed_symbols: set[str] | None = None) -> None:
     """Periodic deep refresh of cached data that the daily-fetch path
     doesn't naturally re-validate:
 
@@ -1718,11 +1768,10 @@ def revalidate_stale_caches(symbols: list[str], *,
        balance scaling silently breaks.  Re-pulling splits weekly for
        all held symbols closes that window.
 
-    2. **Tombstoned symbols** — after 5 consecutive failed fetches we
-       stop trying; that's correct for delisted tickers but wrong for
-       (rare) re-listings.  Clearing the tombstone every
-       ``_DEEP_REFRESH_DAYS`` lets the symbol have another shot at a
-       successful fetch.
+    2. **Tombstoned symbols** — retry requested, open symbols once their
+       backoff expires. Closed symbols retain their tombstones until an
+       explicit forced refresh. A failed retry retains the failure count
+       so the weekly refresh cannot restart the exponential schedule.
 
     Called from ``main.py`` before ``ensure_coverage`` so any newly-
     discovered split is in the splits cache before the history walker
@@ -1730,8 +1779,9 @@ def revalidate_stale_caches(symbols: list[str], *,
     ``last_deep_refresh`` field in the meta file — daily runs skip the
     work; weekly runs do it once.
 
-    Pass ``force=True`` to bypass the throttle (e.g. for an explicit
-    ``--refresh-caches`` CLI flag — not implemented yet but trivial).
+    Pass ``force=True`` (``--refresh-caches``) to bypass the weekly
+    throttle and retry tombstones, including closed positions. Cached
+    prices and split evidence remain available while requests are skipped.
     """
     global _meta_dirty, _splits_dirty
     meta = _load_meta()
@@ -1745,21 +1795,32 @@ def revalidate_stale_caches(symbols: list[str], *,
         except (ValueError, TypeError):
             pass   # corrupted timestamp → treat as stale
 
-    # 1. Refresh splits for every non-tombstoned, fetchable symbol.
+    # Resolve and deduplicate actual quote targets, including scaled
+    # proxies. A shared target stays active if any consumer still needs it.
+    closed = closed_symbols or set()
+    targets: dict[str, bool] = {}
+    for sym in symbols:
+        proxy = _proxy_entry(sym)
+        target = proxy[0] if proxy is not None else sym
+        if not _classify_no_fetch(target):
+            targets[target] = targets.get(target, True) and sym in closed
+
+    # 1. Refresh splits only when the price path permits a request too.
+    # Tombstones are unblocked AFTER this loop: one price retry supplies
+    # evidence before we request their full split history again.
     splits_cache = _load_splits()
     splits_changes = 0
-    skipped = 0
-    for sym in symbols:
-        if _classify_no_fetch(sym):
-            skipped += 1
+    for target in targets:
+        if _should_skip(target, now):
             continue
-        # Resolve proxies — the splits live under the proxy ticker
-        entry = _proxy_entry(sym)
-        target = entry[0] if (entry is not None and entry[1] == "direct") else sym
+        if not force and not _split_fetch_due(target, now):
+            continue
         try:
             new_splits = _fetch_splits(target)
         except Exception:
-            continue   # network blip; next run will retry
+            _record_split_failure(target, now)
+            continue
+        _record_split_success(target)
         old_splits = splits_cache.get(target)
         if old_splits != new_splits:
             splits_cache[target] = new_splits
@@ -1775,11 +1836,9 @@ def revalidate_stale_caches(symbols: list[str], *,
     #     fetch-time refresh only fires when price coverage extends, so
     #     a revised historical dividend (rare, but ex-date corrections
     #     happen) would otherwise never be picked up.
-    for sym in symbols:
-        if _classify_no_fetch(sym):
+    for target in targets:
+        if _should_skip(target, now):
             continue
-        entry = _proxy_entry(sym)
-        target = entry[0] if (entry is not None and entry[1] in ("direct", "scaled")) else sym
         if _is_total_return_symbol(target):
             _refresh_dividends(target, verbose=verbose)
 
@@ -1787,11 +1846,13 @@ def revalidate_stale_caches(symbols: list[str], *,
     #    chance on the next ensure_coverage call.  We don't fetch
     #    them now (that's ensure_coverage's job); we just unblock.
     untombstoned = 0
-    for sym, entry in meta.get("symbols", {}).items():
-        if entry.get("tombstone"):
+    for target, is_closed in targets.items():
+        entry = meta["symbols"].get(target, {})
+        retry_after = entry.get("retry_after")
+        due = not retry_after or now.date() >= _parse_iso(retry_after)
+        if entry.get("tombstone") and (force or (not is_closed and due)):
             entry.pop("tombstone", None)
             entry.pop("retry_after", None)
-            entry["failure_count"] = 0
             _meta_dirty = True
             untombstoned += 1
 
@@ -1918,7 +1979,7 @@ def ensure_coverage(symbols: list[str], start, end, *,
             # Fully covered by the price cache, but splits cache might be
             # stale / missing (e.g. for cache entries from before the splits
             # feature landed).  Backfill on first encounter.
-            if sym not in splits_cache:
+            if sym not in splits_cache and _split_fetch_due(sym, now):
                 splits_to_backfill.append(sym)
 
     if verbose:
@@ -2049,7 +2110,11 @@ def ensure_coverage(symbols: list[str], start, end, *,
             try:
                 new_splits = _fetch_splits(sym)
             except Exception:
-                new_splits = []
+                # Missing evidence must remain missing so a later run can
+                # retry; a failed request does not establish "no splits".
+                _record_split_failure(sym, now)
+                continue
+            _record_split_success(sym)
             splits_cache[sym] = new_splits
             _splits_dirty = True
             if new_splits:

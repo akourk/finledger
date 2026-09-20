@@ -91,6 +91,14 @@ When extending snapshots, test CLI export, copy, restore, and normal ingestion;
 assert final share balances and preservation of previous outputs after failure.
 Snapshot transport succeeding does not prove the restored CSV parses.
 
+For paired cash-merger rows, determine receipt ownership before emitting either
+leg. Extend `tests/test_robinhood_corp_actions.py` with both CSV row orders and
+multiple surrenders; check each receipt is consumed once, realized gain and
+historical cash are correct, and the surrendered position closes. Read the
+`src/reorgs.py` contract in [architecture](../../../docs/INVARIANTS.md#architecture-post-refactor)
+before changing pairing. A quote rename cannot supply missing corporate-action
+transactions or establish transferred basis.
+
 A new broker should have a writer in `tools/build_sample_snapshot.py` and
 appropriate fictional price coverage in `samples/prices.fixture.json`. Rebuild
 the shipped snapshot only after updating the fictional generator or explaining

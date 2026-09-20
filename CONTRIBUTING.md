@@ -67,10 +67,11 @@ workflow instead of duplicating it for each model or client.
 | Change | Source and focused checks | Workflow |
 | --- | --- | --- |
 | Pipeline orchestration or refresh | `src/main.py`, `pipeline_stages.py`; `test_pipeline_snapshot.py`, `test_pipeline_path_parity.py`, `test_import_safety.py` | [Development loop](.claude/skills/fin-dev-loop/SKILL.md) |
-| Broker format or snapshot import | `src/scanner.py`, `parsers/`, `snapshot.py`, `accounts.py`; parser-specific tests, `test_snapshot_workflow.py`, `test_parser_silent_drop.py` | [Broker parser](.claude/skills/fin-add-broker/SKILL.md) |
+| Broker format, corporate action, or snapshot import | `src/scanner.py`, `parsers/`, `reorgs.py`, `snapshot.py`, `accounts.py`; parser-specific tests, `test_robinhood_corp_actions.py`, `test_snapshot_workflow.py`, `test_parser_silent_drop.py` | [Broker parser](.claude/skills/fin-add-broker/SKILL.md) |
 | New financial action | `src/actions.py`, `normalize.py`; `test_actions_catalog.py` and affected financial consumers | [Action catalog](.claude/skills/fin-add-action/SKILL.md) |
 | Lots, cash principal, or cost basis | `src/basis.py`, `history.py`, `pipeline_stages.py`; `test_lot_walker_parity.py`, `test_cash_basis_parity.py`, `test_pipeline_path_parity.py` | [Lot parity](.claude/skills/fin-lot-walker-sync/SKILL.md) |
 | Valuation or price cache | `src/valuation.py`, `prices.py`; `test_valuation_kernel.py`, `test_value_at_date_parity.py`, `test_prices.py`, `test_price_cache_corruption.py`, `test_prices_backoff.py` | [Price invariants](docs/INVARIANTS.md#invariants-the-price-cache-relies-on) |
+| Market lookup retries, split availability, or option quote dependencies | `src/prices.py`, `market_symbols.py`, `pipeline_stages.py`; `test_price_refresh_scheduling.py`, `test_network_layer.py`, `test_option_price_requirements.py`, `test_index_option_quotes.py`, `test_pipeline_path_parity.py` | [Development loop](.claude/skills/fin-dev-loop/SKILL.md) and [price invariants](docs/INVARIANTS.md#invariants-the-price-cache-relies-on) |
 | Current-position P&L or transaction-price fallbacks | `src/analytics/price_fallbacks.py`, `header.py`, `daily_pnl.py`; `test_current_position_pricing.py`, `test_restate_qty_wiring.py` | [Valuation contract](docs/INVARIANTS.md#architecture-post-refactor) |
 | Cache persistence or interrupted-save recovery | `src/io_safe.py`, `prices.py`, `sectors.py`; `test_io_safe.py`, `test_cache_persistence.py` | [Recovery procedure](docs/USAGE.md#cache-save-recovery) and [persistence invariants](docs/INVARIANTS.md#invariants-the-price-cache-relies-on) |
 | Analytics or dashboard behavior | `src/analytics/`, `src/dashboard/app/*.js`; module tests, `test_dashboard_consistency.py`, `test_dashboard_bundling.py`, then demo browser checks | [Analytics and rendering](.claude/skills/fin-add-analytics/SKILL.md) |
@@ -139,6 +140,11 @@ not stop at successful export/import. Assert resulting share balances and
 preservation of previous outputs on failure. Use a fixed date, fictional price
 coverage, and disabled network access so a missing format case cannot hide
 behind environment differences or live quotes.
+
+For paired cash-merger rows, exercise both CSV orders and multiple surrenders;
+assert compensation is consumed once, realized gain is correct, and historical
+cash and final shares agree. The ownership boundary is documented with
+`src/reorgs.py` in [architecture](docs/INVARIANTS.md#architecture-post-refactor).
 
 ### Windows validation
 

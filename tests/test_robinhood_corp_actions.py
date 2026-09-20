@@ -47,6 +47,74 @@ def _balance(txns: list[dict], symbol: str) -> float:
 # ---------------------------------------------------------------------------
 
 class TestCashMerger:
+    @pytest.mark.parametrize("cash_first", [False, True])
+    def test_cash_merger_compensation_is_counted_once_in_either_row_order(
+            self, isolated_workdir, stub_prices, monkeypatch, cash_first):
+        """Cash replaces surrendered shares, with one gain and no dividend."""
+        from src.accounts import configure_accounts
+        from src.basis import compute_basis_default, state_to_holdings
+        from src.cash_bridge import balance_at, usd_series
+        from src.history import compute_history
+        from src.normalize import normalize_action
+        from src.pipeline_stages import walk_balances
+
+        monkeypatch.setenv("FIN_AS_OF_DATE", "2024-02-29")
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        surrender = {"Activity Date": "2/2/2024", "Trans Code": "MRGS",
+                     "Instrument": "FICT", "Quantity": "3S"}
+        cash = {"Activity Date": "2/2/2024", "Trans Code": "MRGC",
+                "Instrument": "FICT", "Amount": "$90.00"}
+        write_robinhood_csv(csv, [
+            {"Activity Date": "1/2/2024", "Trans Code": "ACH",
+             "Amount": "$60.00"},
+            {"Activity Date": "1/2/2024", "Trans Code": "Buy",
+             "Instrument": "FICT", "Quantity": "3", "Price": "$20.00",
+             "Amount": "($60.00)"},
+            *([cash, surrender] if cash_first else [surrender, cash]),
+        ])
+        txns = _parse(csv)
+        configure_accounts(txns, {"account_types": {"Robinhood": "Taxable"}})
+        for txn in txns:
+            txn["action"] = normalize_action(txn)
+        txns, balances = walk_balances(txns)
+
+        assert not [t for t in txns if t["action"] == "Dividend"]
+        sells = [t for t in txns if t["action"] == "Sell"]
+        assert len(sells) == 1
+        assert sells[0]["amount"] == pytest.approx(90.0)
+        assert balances[("Robinhood", "FICT")] == pytest.approx(0.0)
+        state = compute_basis_default(txns)
+        assert state["realized_total"] == pytest.approx(30.0)
+        assert sells[0]["cost_basis"] == pytest.approx(60.0)
+        assert state_to_holdings(state, "fifo") == []
+        assert balance_at(usd_series(txns, "Robinhood"), "2024-02-29") == 90.0
+
+        latest = compute_history(txns, {"FICT": "Other"})[-1]
+        assert latest["total"] == pytest.approx(90.0)
+        assert not [p for p in latest["positions"] if p["symbol"] == "FICT"]
+        cash_positions = [p for p in latest["positions"] if p["symbol"] == "USD"]
+        assert len(cash_positions) == 1
+        assert cash_positions[0]["value"] == pytest.approx(90.0)
+
+    def test_multiple_surrenders_consume_each_cash_receipt_only_once(
+            self, isolated_workdir):
+        csv = isolated_workdir / "data" / "robinhood-1.csv"
+        write_robinhood_csv(csv, [
+            {"Activity Date": "2/2/2024", "Trans Code": "MRGC",
+             "Instrument": "FICT", "Amount": "$60.00"},
+            {"Activity Date": "2/2/2024", "Trans Code": "MRGC",
+             "Instrument": "FICT", "Amount": "$90.00"},
+            {"Activity Date": "2/2/2024", "Trans Code": "MRGS",
+             "Instrument": "FICT", "Quantity": "2S"},
+            {"Activity Date": "2/2/2024", "Trans Code": "MRGS",
+             "Instrument": "FICT", "Quantity": "3S"},
+            {"Activity Date": "2/2/2024", "Trans Code": "MRGS",
+             "Instrument": "FICT", "Quantity": "1S"},
+        ])
+        txns = _parse(csv)
+        assert [t["action"] for t in txns] == ["Sell", "Sell", "Sell"]
+        assert [t["amount"] for t in txns] == [60.0, 90.0, 0.0]
+
     def test_mrgs_plus_mrgc_emits_single_sell(self, isolated_workdir):
         """A MRGS surrender paired with an MRGC cash receipt collapses
         to one Sell at the implied per-share price.  Balance zeros."""

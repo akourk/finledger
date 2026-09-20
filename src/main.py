@@ -270,23 +270,24 @@ def _refresh_split_evidence(txns, *, force=False):
     existing market prices; finish those requests before any lot walk.
     """
     from .config import BENCHMARK_SYMBOLS
-    from .pipeline_stages import compute_position_endings
+    from .pipeline_stages import compute_position_endings, extend_option_price_requirements
     from .prices import _load_splits, _proxy_entry
 
     endings, trivial = compute_position_endings(txns)
     symbols = {t["symbol"] for t in txns if t.get("symbol")} - trivial
     symbols.update(BENCHMARK_SYMBOLS)
-    symbols.update(option_underlyings(symbols))
     for symbol in BENCHMARK_SYMBOLS:
         endings.pop(symbol, None)
+    symbols, endings = extend_option_price_requirements(symbols, endings)
 
     targets = {}
     for symbol in symbols:
         entry = _proxy_entry(symbol)
-        targets[symbol] = entry[0] if entry and entry[1] == "direct" else symbol
+        targets[symbol] = entry[0] if entry else symbol
     before = {target: list(_load_splits().get(target, []))
               for target in targets.values()}
-    revalidate_stale_caches(sorted(symbols), force=force)
+    revalidate_stale_caches(sorted(symbols), force=force,
+                            closed_symbols=set(endings))
     after = _load_splits()
     changed = {symbol for symbol, target in targets.items()
                if before[target] != after.get(target, [])}
@@ -839,7 +840,7 @@ def main():
     # ENVXW spinoff warrants under 1 share that never produce material
     # snapshot value).  Pulled into pipeline_stages so the refresh path
     # can reuse it.
-    from .pipeline_stages import compute_position_endings
+    from .pipeline_stages import compute_position_endings, extend_option_price_requirements
     from .config import BENCHMARK_SYMBOLS as _BENCHMARK_SYMBOLS
     closed_position_ends, trivial = compute_position_endings(txns)
     # Benchmarks must stay current even when the user briefly HELD one:
@@ -862,9 +863,10 @@ def main():
     # themselves are unfetchable (multi-word), but the intrinsic-value
     # floor (prices.option_intrinsic) needs the UNDERLYING's price
     # series — including for underlyings the user never held directly.
-    # Full-range fetch is broader than the option's holding window but
-    # it batches with everything else and fetches once.
-    all_symbols_ever.update(option_underlyings(all_symbols_ever))
+    # Shared underlying quotes stay current while any consumer is open;
+    # closed contracts only require history through their closing date.
+    all_symbols_ever, closed_position_ends = extend_option_price_requirements(
+        all_symbols_ever, closed_position_ends)
     earliest_date = min((t.get("date", "") for t in txns if t.get("date")),
                         default="")
     today_str = now(fallback=datetime.now).date().isoformat()
@@ -880,7 +882,8 @@ def main():
         # another chance.  Throttled internally; daily runs no-op.
         # `--refresh-caches` flag forces it.
         revalidate_stale_caches(sorted(all_symbols_ever),
-                                force=args.refresh_caches)
+                                force=args.refresh_caches,
+                                closed_symbols=set(closed_position_ends))
         # No `force_today_for` here on purpose.  It briefly existed as a
         # blunt stand-in for settle awareness: refetch the latest bar for
         # everything held, every run, because the cache couldn't tell a

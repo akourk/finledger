@@ -238,6 +238,49 @@ def compute_position_endings(txns: list[dict]) -> tuple[dict[str, str], set[str]
     return closed_position_ends, trivial
 
 
+def extend_option_price_requirements(
+        symbols: Iterable[str], endings: dict[str, str],
+) -> tuple[set[str], dict[str, str]]:
+    """Add option quote targets and combine every consumer's fetch window.
+
+    A symbol absent from ``endings`` needs quotes through the requested run
+    end. A closed contract needs its underlying through the contract's recorded
+    closing date, even when the underlying itself was sold earlier. Shared
+    targets take the latest consumer end, or remain current if any consumer is
+    open. Include benchmarks in ``symbols`` with their end overrides removed
+    before calling so their ongoing demand is preserved.
+
+    Only parsed option roots use the quote mapping; literal security symbols
+    retain their identity. The inputs are not mutated, and the original option
+    symbols/endings remain available for the price layer's normal filtering.
+    """
+    from .market_symbols import option_underlying_quote
+    from .prices import parse_option_symbol
+
+    expanded = set(symbols)
+    adjusted_endings = dict(endings)
+    target_ends: dict[str, str | None] = {}
+    for symbol in tuple(expanded):
+        parsed = parse_option_symbol(symbol)
+        target = (option_underlying_quote(parsed["underlying"])[0]
+                  if parsed else symbol)
+        expanded.add(target)
+        consumer_end = endings.get(symbol)
+        if target not in target_ends:
+            target_ends[target] = consumer_end
+        elif target_ends[target] is None or consumer_end is None:
+            target_ends[target] = None
+        else:
+            target_ends[target] = max(target_ends[target], consumer_end)
+
+    for target, end in target_ends.items():
+        if end is None:
+            adjusted_endings.pop(target, None)
+        else:
+            adjusted_endings[target] = end
+    return expanded, adjusted_endings
+
+
 # ---------------------------------------------------------------------------
 # Stage 4: cash principal (a Savings account's basis = external cash in)
 # ---------------------------------------------------------------------------

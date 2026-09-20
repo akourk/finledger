@@ -197,6 +197,24 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
     consumed_occ:  set[int] = set()
     consumed_mrgc: set[int] = set()
 
+    # Resolve cash-merger ownership before emitting any rows. A cash leg can
+    # precede its surrender in the CSV; claiming it during the surrender walk
+    # would first emit it as a Dividend and then count it again as Sell proceeds.
+    # Preserve the existing same-date/symbol, one-cash-row-per-surrender rule.
+    # SXCH remains excluded: an exchange does not establish ownership of MRGC.
+    mrgc_pending = {key: iter(cash_rows) for key, cash_rows in mrgc_pool.items()}
+    mrgc_pairs: dict[int, dict] = {}
+    for pair_date, surrender_row in rows:
+        if ((surrender_row.get("Trans Code") or "").strip() not in ("MRGS", "SPR")
+                or not (surrender_row.get("Quantity") or "").strip().endswith("S")):
+            continue
+        pair_symbol = (surrender_row.get("Instrument") or "").strip()
+        pending = mrgc_pending.get((pair_date, pair_symbol))
+        cash_row = next(pending, None) if pending is not None else None
+        if cash_row is not None:
+            mrgc_pairs[id(surrender_row)] = cash_row
+            consumed_mrgc.add(id(cash_row))
+
     txns: list[dict] = []
     for date, row in rows:
         action = (row.get("Trans Code") or "").strip()
@@ -303,15 +321,9 @@ def parse_robinhood(filepath: Path) -> list[Transaction]:
             mrg_qty, is_surrender = qty, qty_raw.endswith("S")
             if is_surrender:
                 # Look for paired MRGC cash receipt (cash-only merger)
-                proceeds = 0.0
-                cash_rows = (mrgc_pool.get((date, underlying), [])
-                             if action != "SXCH" else [])
-                for mrgc_row in cash_rows:
-                    if id(mrgc_row) in consumed_mrgc:
-                        continue
-                    proceeds = abs(_num(mrgc_row.get("Amount", "")))
-                    consumed_mrgc.add(id(mrgc_row))
-                    break
+                mrgc_row = mrgc_pairs.get(id(row))
+                proceeds = (abs(_num(mrgc_row.get("Amount", "")))
+                            if mrgc_row is not None else 0.0)
                 price = (proceeds / mrg_qty) if (mrg_qty > 0 and proceeds > 0) else 0.0
                 kind = ("Stock exchange surrender" if action == "SXCH" else
                         "Cash merger" if action == "MRGS" and proceeds > 0 else

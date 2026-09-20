@@ -59,6 +59,22 @@ to improve code does not authorize running it against personal inputs. A
 sample snapshot alone is also insufficient for a deterministic public build:
 its prices, effective date, network policy, and output provenance matter.
 
+## Market lookup investigations
+
+Read the [price invariants](../../../docs/INVARIANTS.md#invariants-the-price-cache-relies-on)
+before changing retry policy or quote dependencies. Use mocked provider calls,
+a fixed clock, and fictional cache entries to measure request counts and verify
+unchanged valuation output. An unavailable quote does not prove delisting or
+establish how a corporate action should be accounted for.
+
+`tests/test_price_refresh_scheduling.py` protects open/closed retry scheduling
+and forced refresh; `tests/test_network_layer.py` distinguishes unavailable
+split history from verified zero splits and protects existing evidence.
+For option dependencies, check `tests/test_option_price_requirements.py` for
+shared direct/option consumers and `tests/test_index_option_quotes.py` for
+quote identifiers, strike units, historical dates, and freshness. Changes to
+shared requirement construction also need `tests/test_pipeline_path_parity.py`.
+
 ## Dashboard iteration
 
 Edit `src/dashboard/{template.html,styles.css,app/*.js}`. The bundler in

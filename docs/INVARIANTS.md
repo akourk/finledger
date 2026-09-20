@@ -173,8 +173,9 @@ Normal local output lives in `exports/transactions.json` and
     `cache/prices/{SYMBOL}.json`, one file per symbol; values rounded
     to 6 significant digits; the legacy monolithic
     `cache/price_cache.json` auto-migrates on first load) covers
-    `[earliest_txn_date, today]`. Missing ranges are fetched from yfinance
-    and merged in — symbols sharing an identical gap (the common daily
+    `[earliest_txn_date, today]`, capped at the last required date for closed
+    positions and their option quote dependencies. Missing ranges are fetched
+    from yfinance and merged in — symbols sharing an identical gap (the common daily
     case) are served by ONE batched `yf.download` roundtrip, with a
     per-symbol serial fallback owning retry/failure bookkeeping.
     `cache/price_cache_meta.json` tracks per-symbol
@@ -182,7 +183,10 @@ Normal local output lives in `exports/transactions.json` and
     bar is final — see the settle-awareness invariants below),
     `last_fetch`, `failure_count`,
     `retry_after`, and `tombstone` (true after 5 consecutive failures).
-    Delisted / renamed tickers stop being retried.  Prices use
+    Weekly refreshes retain closed-position tombstones and retry requested
+    open symbols only when due; explicit forced refresh can retry either.
+    Split-only failures have independent `split_failure_count` and
+    `split_retry_after` fields, preserving quote coverage. Prices use
     `auto_adjust=False` — yfinance's `Close` column is still split-adjusted
     (that adjustment can't be disabled), but not dividend-adjusted, so it
     matches actual market close on each date. Alongside prices, each
@@ -1039,9 +1043,13 @@ Normal local output lives in `exports/transactions.json` and
   route through `valuation` — with a companion test that the kernel
   really does floor, so the delegation can't quietly discharge the
   guard for everyone at once.  Underlying tickers
-  of option symbols join the price-fetch set
-  (`prices.option_underlyings`) so the floor works even for
+  of option symbols join the price-fetch set so the floor works even for
   underlyings never held directly.
+  `pipeline_stages.extend_option_price_requirements` aggregates their historical
+  coverage windows; `prices.option_underlyings`
+  supplies current quote dependencies for the fast refresh. Both use
+  `market_symbols.option_underlying_quote` for index roots and retain
+  the original contract identity.
 - **Robinhood option exercises (OEXCS + OCC) are paired in the parser.**
   Robinhood writes the contract disposal and its cash proceeds as two
   rows: OEXCS ("1S" quantity = 1 contract, empty amount) and OCC
@@ -1643,6 +1651,11 @@ includes those exceptions, rather than reconstructing it from catalog sets.
   LIQ/SOFF/CONV/SPR pooling, classification, description parsing).
   Pure, testable; the parsers call into these instead of inlining the
   pairing/classification logic.
+  Robinhood cash-merger receipts are paired to same-date/symbol surrenders
+  before either row is emitted. CSV order cannot turn compensation into
+  both a Dividend and Sell proceeds; each cash receipt is consumed once.
+  `tests/test_robinhood_corp_actions.py` checks reversed row order, multiple
+  surrenders, realized gain, share closure, and historical cash value.
 - **`src/broker_lots.py`** — report-directed lot relief.  Parses the
   Coinbase tax-center **gain/loss report** (kept in `data/` as
   reference; scanner classifies it `skip` by filename `rawtx`/`gainloss`
@@ -2030,6 +2043,15 @@ process.
   are fetched** for a symbol. If you hand-edit the price cache to cover a
   new date range, also clear the corresponding splits entry so the
   backfill loop refetches it.
+  An unavailable full quote history is not evidence of zero splits.
+  Split requests raise on provider failure or missing quote/action data;
+  callers preserve known events and prices, and failed first-time backfills
+  remain unknown. Split-only failures have their own exponential retry delay
+  (`split_failure_count` / `split_retry_after`) without changing price coverage
+  or price failure state. Deep refresh and backfill share that delay; a forced
+  deep refresh or required split check after new prices can retry immediately.
+  Verified split history clears it. `tests/test_network_layer.py` protects
+  these distinctions.
 - **A CHANGED split history invalidates the symbol's price cache**
   (`prices._invalidate_prices_for_split_change`, called from both
   `revalidate_stale_caches` and `ensure_coverage`'s fetch-time splits
@@ -2124,8 +2146,16 @@ process.
   `_fetch_splits` is normally only re-run alongside a price-cache
   extension, so a split AFTER you've run the pipeline would silently
   break historical balance scaling; (2) tombstoned symbols that
-  may have been re-listed.  Throttled by ``last_deep_refresh`` field
-  in the meta file.  Force with ``--refresh-caches`` flag.
+  may have been re-listed. Split and dividend requests respect price backoff
+  and tombstones. Resolve and deduplicate proxy targets before requests;
+  a shared target remains active if any consumer still needs it.
+  Automatic retries only unblock requested, open symbols whose retry date
+  has arrived, preserving the failure count. Closed-position tombstones
+  remain blocked across weekly refreshes and process restarts. Throttled by
+  ``last_deep_refresh`` in the meta file. ``--refresh-caches`` also unblocks
+  requested closed tombstones explicitly. Neither path deletes cached history
+  merely because a quote cannot be fetched. Covered by
+  `tests/test_price_refresh_scheduling.py`.
 - **Closed-position fetch clamping** (``main.py``'s
   ``closed_position_ends`` dict, plumbed through
   ``ensure_coverage(..., symbol_end_overrides=...)``).  For symbols
@@ -2136,6 +2166,19 @@ process.
   delisted post-merger and just produce noisy "possibly delisted"
   stderr.  Each closed symbol's fetch range is clamped to its
   last-non-zero-balance date.
+  Option underlying quotes aggregate the requirements of every direct and
+  option consumer: any open consumer keeps the quote current; otherwise the
+  latest closing date wins. Both pipeline paths use
+  `pipeline_stages.extend_option_price_requirements`, covered by
+  `tests/test_option_price_requirements.py`.
+- **Index option roots are not stock quote tickers.** `market_symbols.py`
+  maps SPX/SPXW to the S&P 500 quote and NDX/NDXP to the Nasdaq-100 quote;
+  XSP uses one tenth of the S&P 500 level. These are quote dependencies only,
+  not ledger renames. Intrinsic value compares the scaled index level with
+  the contract strike, while the existing contract multiplier still applies
+  to value. Freshness follows the same quote target. Dashboard consumers use
+  exported Python valuations. `tests/test_index_option_quotes.py` covers
+  units, historical dates, equity split behavior, and freshness.
 - **Trivial-symbol filter** (``main.py``).  Symbols whose max
   historical balance was < 1 share AND final balance is dust-filtered
   (fractional corporate-action artifacts immediately disposed of) never produce material

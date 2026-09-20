@@ -70,6 +70,36 @@ keeps its usual weekly throttle; if split records changed, refresh backfills
 only the affected price histories before recalculating holdings and returns.
 Use `--refresh-caches` with it to force that revalidation.
 
+Missing quotes do not establish that a security was delisted or remove it
+from holdings. Broker sales, merger proceeds, and other transactions determine
+share balances and realized gains. Closed positions still need historical
+prices for dates when they were held. Repeated failures use backoff and, after
+five failures, an unavailable marker (a tombstone). Normal weekly refreshes
+leave closed-position tombstones alone and preserve their cached history;
+open positions can retry after their backoff expires. Use `--refresh-caches`
+with a full run when you deliberately want to retry unavailable closed symbols.
+Avoid that flag on routine runs if those repeated historical requests are
+unwanted. Failed split-history backfills also use their own retry delay while
+retaining cached prices. After a parser update, run the full pipeline once so
+corrected transactions replace the prior export; `--refresh-prices` reuses
+that export.
+
+Robinhood cash mergers pair each surrender with one cash receipt for the same
+date and symbol within a CSV. The pair becomes one sale: shares are removed,
+proceeds enter cash, and realized gain is proceeds minus relieved basis. Either
+CSV row order is supported. A receipt with no matching surrender retains the
+existing cash-dividend treatment; check that both legs were imported. Stock
+exchanges and stock-for-stock mergers currently use zero-proceeds surrenders
+and zero-basis receipts, so automatic basis continuity is not supported.
+
+Index-option roots resolve to index quotes for valuation: SPX/SPXW use the
+S&P 500, NDX/NDXP use the Nasdaq-100, and XSP uses one tenth of the S&P 500.
+Contract labels and the option multiplier remain unchanged. A quote needed
+by any open holding or option stays current; otherwise its request ends at
+the latest closing date among its consumers. Ordinary ticker renames and
+fund reorganizations still require correct transaction and mapping evidence;
+an unavailable quote does not automatically replace the security.
+
 ### Portable snapshots
 
 `--export-snapshot` bundles every CSV in `data/` into a single JSON file

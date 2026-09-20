@@ -197,10 +197,9 @@ class TestDeepCacheRefresh:
         revalidate_stale_caches(["AAPL"], verbose=False)
         assert called == ["AAPL"]
 
-    def test_clears_tombstones(self, isolated_workdir, monkeypatch):
-        """Tombstoned symbols should have their tombstone flag cleared
-        on deep refresh — gives delisted-then-relisted tickers another
-        chance."""
+    def test_forced_refresh_retries_requested_tombstones(self, isolated_workdir, monkeypatch):
+        """Explicit refresh retries even before the normal retry date,
+        without resetting the failure history."""
         from src.prices import revalidate_stale_caches, _load_meta
 
         meta = _load_meta()
@@ -213,12 +212,12 @@ class TestDeepCacheRefresh:
         }
 
         monkeypatch.setattr("src.prices._fetch_splits", lambda s: [])
-        revalidate_stale_caches([], verbose=False)
+        revalidate_stale_caches(["DEAD"], verbose=False, force=True)
 
         meta_after = _load_meta()
         entry = meta_after["symbols"]["DEAD"]
         assert "tombstone" not in entry
-        assert entry["failure_count"] == 0
+        assert entry["failure_count"] == 5
         assert "retry_after" not in entry
 
 
