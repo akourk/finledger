@@ -66,6 +66,13 @@ both JSON-in-HTML and DOM rendering. Use the existing escaping helpers for the
 actual output context. Keep keyboard controls as real buttons and preserve
 focus during rerenders.
 
+For position-level lot summaries, aggregate the eligible exported lots before
+applying a position visibility cutoff. A small fractional lot can change both
+the total quantity and the next long-term date. Keep parent totals, expanded
+lot detail, and quantity precision consistent; compare the same account/date
+scope across views. `tests/test_tax_quantity_presentation.py` covers Tax's
+position cutoff, small short-term lots, and rendered Holdings quantity parity.
+
 ## Interactive calculations and dates
 
 The compute-once rule has an intentional boundary: user-selected date windows

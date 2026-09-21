@@ -254,3 +254,13 @@ overflow or rendering errors. The rebuilt fictional artifact passed its privacy
 and provenance scan. The user visually reviewed and approved all four refreshed
 public screenshots. All 128 local documentation links and anchors resolve, and
 the six shared skill entrypoints pass metadata and size checks.
+
+The Tax quantity follow-up moves the long-term eligibility visibility cutoff
+from individual lots to complete account/symbol positions. Four fictional
+rendering regressions cover fractional short-term lots, expanded lot totals,
+aggregate value/basis thresholds, account separation, and eight-decimal display.
+All four fail with the prior filtering/formatting behavior and pass with the fix.
+The full regression suite passed with one Windows filesystem-symlink skip;
+Chrome smoke checks and all 12 accessibility states passed. The refreshed public
+demo passed its privacy/provenance scan. All four recaptured screenshots match
+the previously approved image bytes; their registry references the new artifact.

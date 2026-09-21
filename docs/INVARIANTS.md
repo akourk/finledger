@@ -371,7 +371,7 @@ Normal local output lives in `exports/transactions.json` and
       reward-dust lots); position totals still include them, pinned
       to the Holdings table by the `lots_holdings_basis_parity`
       data-health check (high severity).  Single per-lot source:
-      `tax.lt_horizon` (the Tax tab's Approaching-Long-Term section)
+      `tax.lt_horizon` (the Tax tab's Long-Term Eligibility by Asset section)
       is a filtered reshape of the same rows, and the
       `long_term_soon` alert reads lt_horizon rather than scanning
       txns.  Drives the Holdings tab's expandable per-lot detail.
@@ -745,7 +745,13 @@ Normal local output lives in `exports/transactions.json` and
       those assumptions. Projection labels come from `est.isProjection`,
       not from a blanket claim that every selected year is projected.
       Harvest candidates and long-term eligibility use latest taxable
-      lots; estimated savings apply the selected rates. Potential Wash
+      lots; estimated savings apply the selected rates.
+      Long-term eligibility applies its $10 value-or-basis visibility cutoff
+      after grouping lots by account and symbol. Every eligible dated lot
+      in a displayed position contributes to its quantities, values, basis,
+      and next eligibility date, even when the individual lot is below the
+      cutoff. Quantity cells retain up to eight decimals, matching Holdings
+      (`test_tax_quantity_presentation.py`). Potential Wash
       Sales and Form 8949 CSV use all recorded years independently of the
       realization-year filter. Visible scope labels and native definitions
       describe these boundaries (`test_tax_presentation.py`).

@@ -270,7 +270,12 @@ the navigation. Tabs:
   100%/110% of the prior year's 1040 — needs `Tax Return` metadata
   rows), and a **Form 8949 CSV** export of taxable-account disposals.
   Open-lot values and eligibility use the latest holdings; estimated savings
-  use the selected rates. The wash-sale check and CSV include all recorded
+  use the selected rates. **Long-Term Eligibility by Asset** shows one row per
+  account and symbol with at least $10 in combined lot value or basis.
+  **Qty (LT / Total)** separates long-term shares from the total dated tax-lot
+  quantity; small fractional lots contribute to both the totals and eligibility
+  timing. Expand a row to see its lots. Quantities show up to eight decimals,
+  as in Holdings. The wash-sale check and CSV include all recorded
   years, regardless of the realization-year selection.
 - **Crypto** — per-coin holdings, realized & income, recent activity,
   conversion/wrap log.

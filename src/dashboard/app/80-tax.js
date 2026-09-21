@@ -713,15 +713,13 @@ function renderTax() {
   // Answers the actionable question "how many shares of X can I sell
   // at LT rates today, and when does the next batch qualify?".
   //
-  // Lot dust-filter: |value| or |cost_basis| ≥ $10 so sub-penny
-  // crypto residuals don't bloat the count.  Sort: assets with ST
-  // lots first (asc by their soonest LT crossing — most actionable
+  // Position dust-filter: |value| or |cost_basis| ≥ $10 so sub-penny
+  // crypto residuals don't bloat the count. Include every lot before
+  // filtering so fractional lots still count toward quantity and timing.
+  // Sort: assets with ST lots first (asc by their soonest LT crossing — most actionable
   // on top); fully-LT assets at the bottom (desc by value, so big
   // positions you can already sell at LT are easy to spot).
-  const ltLots = ((ANALYTICS.tax || {}).lt_horizon || []).filter(r => {
-    const v = r.value != null ? r.value : (r.cost_basis || 0);
-    return Math.abs(v) >= 10 || Math.abs(r.cost_basis || 0) >= 10;
-  });
+  const ltLots = (ANALYTICS.tax || {}).lt_horizon || [];
   // Roll lots up per (account_group, symbol).
   const ltAssetMap = new Map();
   for (const r of ltLots) {
@@ -755,15 +753,16 @@ function renderTax() {
       }
     }
   }
-  // Account-filter chip row needs to know what's available BEFORE
-  // filtering, so derive it from the unfiltered map.
-  const ltAccounts = [...new Set([...ltAssetMap.values()].map(a => a.account_group))]
+  const ltVisibleAssets = [...ltAssetMap.values()].filter(a =>
+    Math.abs(a.total_value) >= 10 || Math.abs(a.total_basis) >= 10);
+  // Account-filter chips describe visible positions before account selection.
+  const ltAccounts = [...new Set(ltVisibleAssets.map(a => a.account_group))]
     .sort((a, b) => a.localeCompare(b));
 
   // Apply account filter (single-select; null = all).
   const ltFiltered = _ltAccountFilter
-    ? [...ltAssetMap.values()].filter(a => a.account_group === _ltAccountFilter)
-    : [...ltAssetMap.values()];
+    ? ltVisibleAssets.filter(a => a.account_group === _ltAccountFilter)
+    : ltVisibleAssets;
 
   // Sort.  The 'default' sort puts actionable assets (any ST lot) on
   // top, ordered by their soonest LT crossing; fully-LT assets fall
@@ -803,7 +802,7 @@ function renderTax() {
     const expanded = _ltExpanded.has(a.key);
     const arrow = expanded ? '▾' : '▸';
     // Qty rendering — show LT/Total with the visual bar inline.
-    const fmtQ = q => q.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    const fmtQ = q => q.toLocaleString(undefined, { maximumFractionDigits: 8 });
     const qtyCell = `
       <div style="display:flex;flex-direction:column;gap:3px;">
         <div style="font-size:0.85rem;">
@@ -1039,10 +1038,12 @@ function renderTax() {
       ${ltAcctChips}
       <table class="mini-table lt-asset-table"><caption class="sr-only">Long-term eligibility by asset</caption>
         <thead>${ltHeadHtml}</thead>
-        <tbody>${ltAssetRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">No open taxable lots.</td></tr>'}${ltMoreNote}</tbody>
+        <tbody>${ltAssetRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">No open taxable positions with at least $10 in value or basis.</td></tr>'}${ltMoreNote}</tbody>
       </table>
       <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">
-        One row per <em>(account, symbol)</em>.  Click any row to see its individual lots and timing;
+        One row per <em>(account, symbol)</em> with at least $10 in value or basis.
+        Small fractional lots count toward quantities and eligibility timing.
+        Click any row to see its individual lots and timing;
         click a column header to sort.  Yellow rows have a lot crossing into long-term within 60
         days — selling those sooner means paying the higher ordinary-income rate.  Retirement
         accounts are excluded (tax-deferred — the short/long distinction doesn't apply).
