@@ -2143,6 +2143,17 @@ process.
   `retry_after` / `last_error` / `tombstone`. "No data returned" only
   counts as a failure when the requested range is ≥7 days — shorter
   ranges get a free pass (weekend-run forgiveness).
+- **A missing market-data dependency is a setup failure.** The full CLI and
+  `--refresh-prices` verify that `yfinance` imports before any writes or market
+  requests, and stop with the locked dependency installation and `uv run`
+  instructions on an import error. Help, dry runs, snapshots, and account-mapping
+  setup do not require it. Once the import succeeds, clear only legacy
+  per-symbol quote failure state whose exact error is
+  `yfinance not installed — pip install yfinance`, including its retry delay
+  and tombstone. Preserve cached history, coverage, unrelated provider backoff,
+  and separate split-failure state. Installing the dependency must allow the
+  next run to retry without a manual cache reset. This boundary is covered by
+  `tests/test_dependency_preflight.py`.
 - **`_classify_no_fetch` gates both the sectors module and the prices
   module** on the same rule set (empty, USD, multi-word). Keep them
   aligned if you change one.

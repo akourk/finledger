@@ -330,6 +330,46 @@ def _lazy_yf():
     return _yf or None
 
 
+class MarketDataDependencyError(RuntimeError):
+    """Local setup cannot support a price refresh."""
+
+
+def require_market_data() -> None:
+    """Check installation before the CLI mutates inputs, caches, or exports."""
+    if _lazy_yf() is None:
+        raise MarketDataDependencyError(
+            "Cannot load yfinance or one of its dependencies.\n"
+            "From the project folder, install the locked dependencies:\n"
+            "  uv sync --locked --all-groups\n"
+            "Then run with the project's Python environment:\n"
+            "  uv run python -m src.main\n"
+            "No files were changed. Missing dependencies do not start a "
+            "price retry cooldown."
+        )
+
+
+def reset_dependency_failures() -> int:
+    """Recover legacy installation failures after a successful import.
+
+    Older CLI runs recorded a missing package as a per-symbol fetch failure.
+    Match that exact diagnostic: a provider error must keep its retry policy.
+    Split failures have no recorded cause, so retain their independent state.
+    Normal cache publication persists these changes with the refreshed prices.
+    """
+    require_market_data()
+    global _meta_dirty
+    reset = 0
+    for entry in _load_meta()["symbols"].values():
+        if entry.get("last_error") != "yfinance not installed — pip install yfinance":
+            continue
+        entry["failure_count"] = 0
+        for key in ("retry_after", "tombstone", "last_error", "last_fetch"):
+            entry.pop(key, None)
+        _meta_dirty = True
+        reset += 1
+    return reset
+
+
 # ---------------------------------------------------------------------------
 # Load / save
 # ---------------------------------------------------------------------------

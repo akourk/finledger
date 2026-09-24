@@ -14,7 +14,25 @@ files and generated personal dashboards must stay local; see [Privacy](PRIVACY.m
 uv sync --locked --all-groups
 ```
 
-Use `uv run` before the Python commands below when using this environment.
+Use `uv run` before the Python commands below so they use the environment where
+these dependencies were installed. A plain `python` command may use a different
+Python installation.
+
+Normal runs and `--refresh-prices` check that `yfinance` can be imported before
+changing files or fetching market data. If it or one of its dependencies is
+missing, the command stops with setup instructions. Install the dependencies,
+then rerun:
+
+```bash
+uv sync --locked --all-groups
+uv run python -m src.main
+```
+
+Once the dependency loads, the next run automatically clears old quote retry
+delays and unavailable markers caused specifically by the missing dependency.
+No manual cooldown reset is needed. Cached prices and other provider failure
+delays are preserved. Help, dry runs, snapshots, and account-mapping setup remain
+available without the market-data dependency.
 
 ## Usage
 

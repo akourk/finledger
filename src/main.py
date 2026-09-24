@@ -21,12 +21,14 @@ from .history import compute_history
 from .normalize import normalize_action
 from .parsers import parse_all_files, validate_ingestion
 from .prices import (
+    MarketDataDependencyError,
     apply_option_intrinsic_floor,
     build_display_map,
     ensure_coverage, ensure_proxy_anchors,
     fetch_latest_close_batch, get_price,
     option_underlyings,
     revalidate_stale_caches,
+    require_market_data, reset_dependency_failures,
     save_caches as save_price_cache,
 )
 from .metadata import parse_metadata
@@ -664,6 +666,14 @@ def main():
                 print(f"    ... and {len(result['skipped']) - 10} more")
         return
 
+    # Administrative modes above need no market-data installation. All
+    # dashboard runs check it before renaming inputs or changing local state.
+    require_market_data()
+    recovered = reset_dependency_failures()
+    if recovered:
+        print(f"Cleared {recovered} price retry cooldown(s) caused by missing "
+              "yfinance; market-data dependencies are now available.")
+
     if args.refresh_prices:
         _refresh_prices_only(args)
         return
@@ -1094,6 +1104,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except MarketDataDependencyError as exc:
+        print(f"Setup required: {exc}", file=sys.stderr)
+        sys.exit(1)
     except (ValueError, OSError) as exc:
         print(f"Import/export failed: {exc}", file=sys.stderr)
         sys.exit(1)
