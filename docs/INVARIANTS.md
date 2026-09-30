@@ -120,7 +120,16 @@ Normal local output lives in `exports/transactions.json` and
 4. **Deduplicate** (`export.deduplicate`) — identical rows across *different*
    source files are overlapping exports; identical rows *within* one file are
    legitimate (e.g. three same-day CBETH sells). The hash-based dedupe keeps
-   the max intra-file count.
+   the max intra-file count. Identity rounds quantity and price to eight
+   decimals and amount to cents; this matching tolerance does not round fees.
+   For each identity shared across files, the retained source must contain
+   every other source's fee multiset, including repeated fees. Otherwise
+   deduplication rejects the import without exposing financial values.
+   It must not select conflicting fees by file order or combine sources to
+   invent extra transactions. Same-file fee differences and compatible subsets
+   remain valid. `tests/test_deduplication.py` protects these boundaries;
+   `tests/test_deduplication_cli.py` checks that rejection preserves JSON, HTML,
+   and the activity baseline.
 5. **Reconcile USAA → Schwab Roth transfers** (`main._reconcile_usaa_to_schwab_transfer`) —
    Schwab reports the inbound "Security Transfer" leg but USAA's export doesn't
    contain the outbound leg. Synthesize matching `Synthetic Transfer Out` rows

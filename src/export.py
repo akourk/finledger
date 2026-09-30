@@ -27,13 +27,16 @@ def _txn_hash(txn: dict) -> str:
     return hashlib.md5(key.encode()).hexdigest()
 
 
-def deduplicate(txns: list[dict]) -> list[dict]:
+def deduplicate(txns: list[dict]) -> tuple[list[dict], int]:
     """Remove cross-file duplicates while preserving intra-file duplicates.
 
     Identical rows within the same source file are legitimate (e.g. 3 identical
     CBETH sells in one Coinbase export). Identical rows across different source
     files are overlapping exports. For each identity hash, we keep the max count
-    from any single source file.
+    from any single source file, provided that source's fee multiset contains
+    every other source's fee multiset. Otherwise the overlap is ambiguous and
+    must fail before publishing. Fees retain their parsed numeric precision;
+    different-fee repeats within a source are legitimate transactions.
 
     Returns (deduped_list, num_removed).
     """
@@ -41,21 +44,35 @@ def deduplicate(txns: list[dict]) -> list[dict]:
 
     # Count occurrences of each hash per source file
     hash_source_counts: dict[str, Counter] = defaultdict(Counter)
+    hash_source_fees: dict[str, dict[str, Counter]] = defaultdict(
+        lambda: defaultdict(Counter)
+    )
     hash_txns: dict[str, list[dict]] = defaultdict(list)
 
     for txn in txns:
         h = _txn_hash(txn)
         source = txn.get("source", "")
         hash_source_counts[h][source] += 1
+        hash_source_fees[h][source][txn.get("fees", 0)] += 1
         hash_txns[h].append(txn)
 
     # For each hash, keep the max count from any single source file
     result = []
     for h, source_counts in hash_source_counts.items():
         keep_count = max(source_counts.values())
-        # Take from the source with the most (they're all identical anyway,
-        # but this preserves the correct source attribution)
+        # Equal-size multisets can contain each other only when equal, so the
+        # first maximum-count source either dominates all evidence or none of
+        # the maximum-count sources can. Keep the existing representative and
+        # row order whenever the overlap is unambiguous.
         best_source = source_counts.most_common(1)[0][0]
+        best_fees = hash_source_fees[h][best_source]
+        if any(count > best_fees[fee]
+               for fees in hash_source_fees[h].values()
+               for fee, count in fees.items()):
+            raise ValueError(
+                "Conflicting fee evidence across overlapping exports; "
+                "review source files before importing."
+            )
         kept = 0
         for txn in hash_txns[h]:
             if txn.get("source", "") == best_source and kept < keep_count:

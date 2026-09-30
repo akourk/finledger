@@ -366,19 +366,24 @@ class TestPipelineIntegration:
         _, balances = walk_balances(txns)
         assert balances[(ACCOUNT, "USD")] == pytest.approx(105.00)
 
-    def test_metadata_ships_the_rows_the_account_needs(self):
-        """The parser only works end-to-end with an ``Account Type`` row
-        mapping this group to Savings; the shipped metadata must carry it
-        (plus the declared rate for the income forecast)."""
-        from pathlib import Path
+    def test_synthetic_metadata_supplies_account_type_and_apr(self, isolated_workdir):
+        """Savings classification and forecast APR come from temporary metadata.
 
+        These values are independently invented; no local account rows are read.
+        """
         from src.metadata import parse_metadata
         from src.parsers.sfcu import ACCOUNT
 
-        data_dir = Path(__file__).resolve().parent.parent / "data"
-        if not (data_dir / "metadata.csv").exists():   # public checkout has no data/
-            pytest.skip("no local metadata.csv")
+        data_dir = isolated_workdir / "data"
+        (data_dir / "metadata.csv").write_text(
+            "Type,Date,Amount,Symbol,Note\n"
+            f"Account Type,,,{ACCOUNT},Savings\n"
+            f"Savings APR,2024-01-01,0.025,{ACCOUNT},Fictional rate\n",
+            encoding="utf-8",
+        )
         meta = parse_metadata(data_dir)
         assert meta["account_types"].get(ACCOUNT) == "Savings"
-        assert any(r["account_group"] == ACCOUNT
-                   for r in meta["savings_apr"])
+        assert meta["savings_apr"] == [{
+            "account_group": ACCOUNT, "date": "2024-01-01",
+            "rate": 0.025, "note": "Fictional rate",
+        }]

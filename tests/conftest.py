@@ -1,9 +1,10 @@
 """Test infrastructure: temp directories, yfinance stubbing, helpers.
 
 The fin pipeline reaches out to yfinance for sector lookups and price
-fetching.  Tests should never make real network calls — every test
-gets a `stub_prices` fixture that injects deterministic prices into
-the cache files in a tmp-managed working directory.
+fetching. Real Python socket and curl_cffi network operations are denied
+by default. Tests opt into `stub_prices` to register fictional prices;
+provider mocks remain available. Python CLI children use `offline_python`
+or an explicit deny-only provider guard (the demo builder has its own guard).
 
 The price/sector caches and the parsers' module-level state both rely
 on globals, so the `isolated_workdir` fixture sets `cwd` to a tmp dir
@@ -60,6 +61,39 @@ os.environ["FIN_PROJECT_ROOT"] = str(_GUARD_ROOT)
 os.environ["FIN_DATA_DIR"]     = str(_GUARD_ROOT / "data")
 os.environ["FIN_CACHE_DIR"]    = str(_GUARD_ROOT / "cache")
 os.environ["FIN_EXPORT_DIR"]   = str(_GUARD_ROOT / "exports")
+
+
+# Install before collection-time imports, including yfinance's native transport.
+from tests._offline import child_command, install_guard
+
+_NETWORK_ATTEMPTS: list[str] = []
+install_guard(_NETWORK_ATTEMPTS)
+
+
+@pytest.fixture(autouse=True)
+def _reject_network_attempts():
+    """A caught transport exception must not turn a test falsely green."""
+    yield
+    attempts = list(_NETWORK_ATTEMPTS)
+    _NETWORK_ATTEMPTS.clear()
+    if attempts:
+        pytest.fail("offline test attempted network access: " + ", ".join(sorted(set(attempts))))
+
+
+@pytest.fixture
+def offline_python(tmp_path):
+    """Wrap [sys.executable, '-m'/'-c', target, ...] for an offline child.
+
+    Pass the returned command to subprocess.run with explicit isolated FIN
+    paths. Socket and curl_cffi attempts fail the child and this fixture's
+    teardown even when application code catches the transport exception.
+    This does not cover arbitrary native executables or unwrapped children.
+    """
+    marker = tmp_path / "offline-child-attempts.txt"
+    yield lambda command: child_command(command, marker)
+    if marker.exists():
+        pytest.fail("offline child attempted network access: " +
+                    ", ".join(sorted(set(marker.read_text().splitlines()))))
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +249,12 @@ def stub_prices(monkeypatch, isolated_workdir):
     monkeypatch.setattr(_prices_mod, "_fetch_splits", fake_fetch_splits)
     monkeypatch.setattr(_prices_mod, "_fetch_dividends", fake_fetch_dividends)
     monkeypatch.setattr(_prices_mod, "_batch_fetch_ranges", fake_batch_fetch_ranges)
+    # Latest-close refresh has a separate provider entry point. Default to an
+    # explicitly empty fictional download while retaining its real cache logic;
+    # tests can still replace _lazy_yf with a provider carrying their own marks.
+    from types import SimpleNamespace
+    provider = SimpleNamespace(download=lambda **kwargs: SimpleNamespace(empty=True))
+    monkeypatch.setattr(_prices_mod, "_lazy_yf", lambda: provider)
     monkeypatch.setattr(_sectors_mod, "get_sector", fake_get_sector)
 
     class _StubAPI:

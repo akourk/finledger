@@ -54,8 +54,16 @@ against root `data/` or let it mutate the checked-in cache. The demo builder doe
 this isolation automatically and refuses network access.
 
 The test suite uses Node for Python/JavaScript parity. Do not accept a green run
-that skipped required JavaScript checks because Node was missing. The local
-metadata-dependent savings test may skip in a clean checkout; report that skip.
+that skipped required JavaScript checks because Node was missing. Account metadata
+regressions use temporary fictional files; private metadata is not required.
+
+Python socket and curl_cffi transport attempts are blocked during pytest, and
+caught attempts still fail the test. Use `stub_prices` for deterministic market
+data. For Python CLI subprocesses, wrap the command with the `offline_python`
+fixture and pass all four isolated paths, or use an explicit deny-only provider
+and socket guard. The demo builder keeps its independent offline guard. This
+protection is test-only: it does not cover arbitrary native executables,
+unwrapped subprocesses, or other native network transports.
 
 ## Find the right surface
 

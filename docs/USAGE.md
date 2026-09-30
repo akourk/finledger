@@ -82,6 +82,13 @@ python -m src.main --import-snapshot snap.json   # restore data/ from a snapshot
 Open `exports/dashboard.html` in any browser. It's a single file with the
 full dataset inlined — no network calls at view time.
 
+Overlapping exports are merged while preserving repeated transactions within a
+single file. If matching rows carry incompatible fees across files, ingestion
+stops and keeps the previous dashboard, JSON export, and activity baseline.
+The error reports the conflict without printing financial values.
+Review the original exports locally and obtain consistent broker records before
+retrying; changing file order does not resolve conflicting fee evidence.
+
 `--refresh-prices` reuses the imported transactions and rebuilds lot-method
 comparisons after refreshing prices and split evidence. Split revalidation
 keeps its usual weekly throttle; if split records changed, refresh backfills

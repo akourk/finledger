@@ -195,6 +195,13 @@ Three copies in one file and one copy in another means the user really made
 three trades and the second export overlaps. One copy in each of four files
 means one trade, exported four times.
 
+Fee evidence must also agree. The source retained for an identity must contain
+all the other sources' reported fees, with their multiplicities. A shorter
+export may contain a compatible subset; different fees within a single export
+remain legitimate separate rows. If no source covers the combined fee evidence,
+import stops instead of letting file order choose the fee totals. Fees compare
+at parsed numeric precision, without adding a cent-rounding tolerance.
+
 This is the honest reading of what the data can support. There is no
 transaction ID to key on — most of these exports do not carry one, and the ones
 that do are not stable across re-downloads — so intra-file multiplicity is the
@@ -613,10 +620,11 @@ underreported in most activity exports, so a reconstructed cash balance would be
 confidently wrong. The reconstructed-cash allow-list is small and each entry is
 a validated claim about that broker's data completeness.
 
-**Weekend crypto marks lag by a day.** The fetch window clamps to the last
-trading day for every asset class, so Saturday's crypto bar is not fetched until
-the next weekday run. Nothing is lost permanently — the gap is filled — but the
-weekend displays Friday's mark.
+**Market calendars model settlement cutoffs, not exchange holidays.** Crypto
+uses UTC calendar days, including weekends; equity and fund windows skip
+weekends. Holiday calendars are not modelled, so a requested day can have no
+bar and valuation uses the available prior mark. Calendar regressions live in
+`tests/test_price_calendars.py`.
 
 ---
 

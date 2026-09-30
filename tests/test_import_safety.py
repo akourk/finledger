@@ -25,8 +25,8 @@ def _environment(root):
     return environment
 
 
-def _cli(root, *arguments):
-    return subprocess.run([sys.executable, "-m", "src.main", *arguments],
+def _cli(root, offline_python, *arguments):
+    return subprocess.run(offline_python([sys.executable, "-m", "src.main", *arguments]),
                           cwd=ROOT, env=_environment(root),
                           capture_output=True, text=True)
 
@@ -51,14 +51,14 @@ def test_valid_numeric_formats_and_optional_blanks():
                                        ["--export-snapshot", "unused.json"],
                                        ["--import-snapshot", "unused.json", "--force"],
                                        ["--init-account-mappings"]])
-def test_dry_run_has_no_side_effects_even_with_other_modes(tmp_path, arguments):
+def test_dry_run_has_no_side_effects_even_with_other_modes(tmp_path, arguments, offline_python):
     _environment(tmp_path)
     (tmp_path / "data/manual-adjustments.csv").write_text(MANUAL + GOOD)
     (tmp_path / "exports/transactions.json").write_text("previous JSON")
     (tmp_path / "exports/dashboard.html").write_text("previous dashboard")
     before = {str(path.relative_to(tmp_path)): path.read_bytes()
               for path in tmp_path.rglob("*") if path.is_file()}
-    result = _cli(tmp_path, "--dry-run", *arguments)
+    result = _cli(tmp_path, offline_python, "--dry-run", *arguments)
     assert result.returncode == 0, result.stderr
     assert before == {str(path.relative_to(tmp_path)): path.read_bytes()
                       for path in tmp_path.rglob("*") if path.is_file()}
@@ -69,12 +69,12 @@ def test_dry_run_has_no_side_effects_even_with_other_modes(tmp_path, arguments):
     "Activity Date,Trans Code,Instrument,Quantity,Price,Amount\n01/01/2024,Buy,AAA,2,50,100\nwrong,Buy,AAA,2,50,100\n",
     "Activity Date,Trans Code,Instrument,Quantity,Price,Amount\n",
 ])
-def test_bad_or_empty_import_preserves_both_exports(tmp_path, bad_csv):
+def test_bad_or_empty_import_preserves_both_exports(tmp_path, bad_csv, offline_python):
     _environment(tmp_path)
     (tmp_path / "data/robinhood.csv").write_text(bad_csv)
     (tmp_path / "exports/transactions.json").write_text("previous JSON")
     (tmp_path / "exports/dashboard.html").write_text("previous dashboard")
-    result = _cli(tmp_path, "--skip-rename")
+    result = _cli(tmp_path, offline_python, "--skip-rename")
     assert result.returncode != 0
     assert (tmp_path / "exports/transactions.json").read_text() == "previous JSON"
     assert (tmp_path / "exports/dashboard.html").read_text() == "previous dashboard"
@@ -83,12 +83,12 @@ def test_bad_or_empty_import_preserves_both_exports(tmp_path, bad_csv):
 
 @pytest.mark.parametrize("data", [{}, {"transactions": []}, {"transactions": [dict(date="wrong")]},
     {"analytics": {"data_health": [{"kind": "parser_dropped_rows"}]}}])
-def test_refresh_rejects_invalid_or_previously_partial_export(tmp_path, data):
+def test_refresh_rejects_invalid_or_previously_partial_export(tmp_path, data, offline_python):
     _environment(tmp_path)
     original = json.dumps(data)
     (tmp_path / "exports/transactions.json").write_text(original)
     (tmp_path / "exports/dashboard.html").write_text("previous dashboard")
-    result = _cli(tmp_path, "--refresh-prices")
+    result = _cli(tmp_path, offline_python, "--refresh-prices")
     assert result.returncode != 0
     assert (tmp_path / "exports/transactions.json").read_text() == original
     assert (tmp_path / "exports/dashboard.html").read_text() == "previous dashboard"

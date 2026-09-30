@@ -17,8 +17,11 @@ external services.
 
 - For a Python change, run its focused regression modules, then the complete
   suite for application changes. Reuse `isolated_workdir` and `stub_prices` from
-  `tests/conftest.py`. A new test must explicitly use the fixtures it needs;
-  session path isolation alone does not stub every possible network call.
+  `tests/conftest.py`. A new test must explicitly use the fixtures it needs.
+  The default Python socket/curl_cffi guard rejects real transport attempts;
+  it does not supply market fixtures. Python CLI children need `offline_python`
+  or an explicit deny-only provider/socket guard as well as isolated paths.
+  See [Contributing](../../../CONTRIBUTING.md#development-loop) for guard limits.
 - For rendered output, use the dedicated fictional builder:
 
   ```bash
