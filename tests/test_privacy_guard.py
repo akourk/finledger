@@ -547,3 +547,87 @@ def test_receipts_are_private_and_do_not_override_other_content_rules(repo):
     assert any(f.rule == 'local-denylist' for f in found)
     git('add', '-f', G.RECEIPT_PATH)
     assert any(f.rule == 'private-file' for f in G.scan_scope(root, 'staged', []))
+
+
+# Independently constructed payloads establish that privacy follows the runtime
+# path, including empty or ordinary market-shaped content, rather than values.
+RUNTIME_CACHES = [
+    ('cache/dividends_cache.json', {'FICT': [['2024-01-02', 0.5]]}),
+    ('cache/sector_cache.json', {'FICT': 'Other'}),
+    ('cache/splits_cache.json', {'FICT': [['2024-01-02', 2.0]]}),
+    ('cache/symbol_proxy_map.json', {'Fictional Fund': {'proxy': 'FICT', 'method': 'scaled'}}),
+]
+
+
+@pytest.mark.parametrize('path,market', RUNTIME_CACHES)
+@pytest.mark.parametrize('empty', [True, False], ids=['empty', 'market-shaped'])
+def test_private_runtime_cache_is_rejected_by_direct_inspection(path, market, empty):
+    payload = json.dumps({} if empty else market).encode()
+    assert G.protected(path)
+    findings = G.inspect_file(path, payload, '100644', [])
+    assert any(f.rule == 'private-file' for f in findings)
+    assert all(f.path == '<private-path>' for f in findings)
+
+
+@pytest.mark.parametrize('path,market', RUNTIME_CACHES)
+@pytest.mark.parametrize('empty', [True, False], ids=['empty', 'market-shaped'])
+def test_complete_staged_scan_rejects_preexisting_force_added_runtime_cache(repo, path, market, empty):
+    root, git = repo
+    with (root / '.gitignore').open('a') as stream:
+        stream.write(path + '\n')
+    target = root / path
+    target.parent.mkdir(exist_ok=True)
+    target.write_text(json.dumps({} if empty else market))
+    git('add', '.gitignore')
+    git('add', '-f', path)
+    git('commit', '-m', 'Synthetic preexisting cache for guard regression')
+    (root / 'other.md').write_text('Unrelated fictional change')
+    git('add', 'other.md')
+    assert git('diff', '--cached', '--name-only') == 'other.md'
+    findings = G.scan_scope(root, 'staged', [])
+    assert any(f.rule == 'private-file' for f in findings)
+
+
+@pytest.mark.parametrize('path,market', RUNTIME_CACHES)
+@pytest.mark.parametrize('empty', [True, False], ids=['empty', 'market-shaped'])
+def test_removed_runtime_cache_still_blocks_intermediate_outgoing_commit(repo, path, market, empty):
+    root, git = repo
+    base = git('rev-parse', 'HEAD')
+    target = root / path
+    target.parent.mkdir(exist_ok=True)
+    target.write_text(json.dumps({} if empty else market))
+    git('add', '-f', path)
+    git('commit', '-m', 'Synthetic outgoing cache for guard regression')
+    intermediate = git('rev-parse', 'HEAD')
+    git('rm', path)
+    git('commit', '-m', 'Remove synthetic cache fixture')
+    head = git('rev-parse', 'HEAD')
+    assert not G.scan_scope(root, 'staged', [])
+    findings = G.scan_push(root, f'local {head} remote {base}\n', [])
+    assert any(f.rule == 'private-file' and f.revision == intermediate[:12] for f in findings)
+
+
+@pytest.mark.parametrize('path', [
+    'samples/symbol_proxy_map.example.json',
+    'tests/fixtures/dividends_cache.json', 'tests/fixtures/sector_cache.json',
+    'tests/fixtures/splits_cache.json', 'tests/fixtures/symbol_proxy_map.json',
+    'cache/ticker_renames.json',
+])
+def test_fictional_examples_fixtures_and_ticker_renames_remain_publishable(repo, path):
+    root, git = repo
+    payload = json.dumps({'FICTIONAL_OLD': 'FICTIONAL_NEW'}).encode()
+    assert not G.protected(path)
+    assert not G.inspect_file(path, payload, '100644', [])
+    target = root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(payload)
+    git('add', path)
+    assert not G.scan_scope(root, 'staged', [])
+
+
+def test_proxy_anchor_structure_remains_a_separate_defense():
+    payload = json.dumps({'Fictional Fund': {'anchor_date': '2024-01-02', 'anchor_price': 10}}).encode()
+    assert any(f.rule == 'personal-cache-anchor'
+               for f in G.cache_findings('cache/symbol_proxy_map.json', payload))
+    assert any(f.rule == 'private-file'
+               for f in G.inspect_file('cache/symbol_proxy_map.json', payload, '100644', []))

@@ -1,0 +1,7 @@
+{
+  "_comment": "Format example only; the fund label is fictional. Copy and edit deliberately to configure a local mapping. This file is never loaded automatically.",
+  "Fictional Example Fund": {
+    "proxy": "SPY",
+    "method": "scaled"
+  }
+}

@@ -552,9 +552,13 @@ Three layers, deliberately overlapping.
 **Nothing sensitive is tracked.** All of `data/` and `exports/` are gitignored
 at any extension, so a stray `.bak` or `.xlsx` dropped next to the CSVs cannot
 leak. Generated price shards, the legacy price cache, price coverage metadata,
-and `cache/last_run.json` stay local. Shared cache/config files remain tracked
-and subject to privacy review. Price files and their coverage metadata must
-travel together when privately migrating an installation.
+and `cache/last_run.json` stay local. Dividend, sector, split, and proxy-map
+runtime files are also private, ignored, and blocked by the publication guard.
+Only reviewed static configuration such as `cache/ticker_renames.json` stays
+tracked. The fictional proxy-map example under `samples/` is never auto-loaded.
+Missing runtime files use empty caches/maps; existing local paths and valuation
+semantics are unchanged. Preserve the complete cache directory when privately
+migrating an installation, including proxy mappings and transaction anchors.
 
 **A mechanical backstop.** A tracked pre-commit hook blocks any commit whose
 staged additions contain a token from a gitignored local denylist of real

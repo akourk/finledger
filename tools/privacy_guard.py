@@ -205,7 +205,11 @@ def verify_public_assets(root: Path, files: dict[str, tuple[str, bytes]], cache:
 
 PRIVATE_PREFIXES = ("data/", "exports/", "audit/", "_site/", ".venv/", "node_modules/",
                     "cache/.fin-", "cache/prices/.fin-")
-PRIVATE_NAMES = {".pii-denylist.txt", RECEIPT_PATH, "cache/last_run.json", "snap.json", "sample-dashboard.html"}
+PRIVATE_NAMES = {
+    ".pii-denylist.txt", RECEIPT_PATH, "cache/last_run.json", "snap.json", "sample-dashboard.html",
+    "cache/dividends_cache.json", "cache/sector_cache.json", "cache/splits_cache.json",
+    "cache/symbol_proxy_map.json",
+}
 SAFE_MAIL_DOMAINS = {"example.com", "example.org", "example.net", "example.test", "test.invalid", "users.noreply.github.com"}
 EMAIL = re.compile(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
 RULES = (

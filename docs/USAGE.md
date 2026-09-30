@@ -133,15 +133,25 @@ side.  Use this to move your portfolio between machines without copying
 30+ files individually.  Existing files are preserved unless you pass
 `--force`.
 
-Generated price history and its coverage metadata stay local and are not part
-of the CSV snapshot or a fresh checkout. The next normal run fetches missing
-prices. To preserve cached history when moving machines, privately copy
-`cache/prices/` and `cache/price_cache_meta.json` together (and
-`cache/price_cache.json` if using the legacy format). Keep these files out of
-Git; historical prices for delisted instruments may be difficult to fetch again.
-Before pulling the change that removes tracked price caches into an older
-clone, back up those files privately and restore them after the update. Git
-can remove unchanged tracked copies when applying that change.
+Runtime caches and proxy mappings stay local and are not part of the CSV
+snapshot or a fresh checkout. The next normal run fetches missing market data;
+custom proxy mappings and sector overrides must be preserved separately.
+When moving machines, privately copy the complete cache directory, including
+prices and coverage metadata, split/dividend events, sector overrides, and
+`symbol_proxy_map.json` with its saved anchors. Historical prices for delisted
+instruments may be difficult to fetch again. Keep the copy out of Git.
+
+Before pulling a change that removes tracked caches into an older clone, back
+up these files privately and verify the copy before changing the checkout.
+Git can delete unchanged tracked files or refuse an update over modified ones.
+If modified caches block the update, first verify that every affected file is
+in the private backup, then restore only those tracked cache paths to the
+current Git revision. Apply the update and restore the private copies. Verify
+their bytes against the backup before running the pipeline; keep the backup
+until that verification succeeds. Never discard the only copy of a local edit.
+Preserve any pending recovery files and follow [cache recovery](#cache-save-recovery)
+before use; restoring a backup does not clear a pending recovery state.
+See [Privacy](PRIVACY.md#local-boundaries) for the exact private paths.
 
 Snapshots transport raw CSV text; export and import do not parse its transaction
 rows. Import validates the snapshot bundle before restoring files, while a
@@ -156,6 +166,19 @@ one extra column. It still rejects oversized transaction rows, unrecognized
 extra cells, and other malformed transaction data. This footer needs no manual
 CSV or snapshot edits; other validation errors require correcting the source
 format while preserving transaction records.
+
+### Local proxy mappings
+
+`cache/symbol_proxy_map.json` remains the local configuration path. Existing
+maps, custom entries, and saved anchors continue to work unchanged. A missing
+map means no custom proxies; there are no automatic public defaults.
+
+The [fictional proxy-map example](../samples/symbol_proxy_map.example.json)
+shows the JSON format. Its fund name and mapping are invented, not a usable
+configuration for an actual holding. To create a map, start with an empty JSON
+object and add mappings you have verified for your own instruments. Review and
+edit an existing map rather than replacing it with the example. The pipeline
+can add private transaction-derived anchors, so keep the whole map local.
 
 ## Supported brokers
 

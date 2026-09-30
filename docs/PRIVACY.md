@@ -14,15 +14,31 @@ private email addresses, financial values, tax documents, and screenshots of a
 personal dashboard must not appear in source, tests, docs, commit messages,
 issue/PR text, or external tools.
 
-Generated price shards, the legacy price cache, and price coverage metadata
-also stay local (`cache/prices/`, `cache/price_cache.json`, and
-`cache/price_cache_meta.json`). Removing them from version control does not
-require deleting local files: use `git rm --cached` for that migration.
-Before updating another clone that still tracks these files, privately back up
-its prices and coverage metadata together; pulling their removal can delete
-unchanged tracked copies. Restore the backup afterward under the ignored paths.
-Keep the local denylist intact; moving caches out of publication avoids
-weakening protection for matching private values.
+Mutable runtime caches stay local, including: `cache/prices/`, `cache/price_cache.json`,
+`cache/price_cache_meta.json`, `cache/dividends_cache.json`,
+`cache/sector_cache.json`, `cache/splits_cache.json`, and
+`cache/symbol_proxy_map.json`. The proxy map can contain transaction-derived
+anchor dates and prices. Market-looking values do not establish public provenance;
+the selection of cached symbols can reflect private holdings. The dividend,
+sector, split, and proxy-map paths are blocked from publication even when empty
+or force-added. The reviewed static
+`cache/ticker_renames.json` configuration remains public.
+
+Removing a file from version control does not require deleting local bytes: use
+`git rm --cached` when preparing that change. Before updating another clone that
+still tracks these files, privately back up the complete cache directory. Keep
+prices, coverage, split/dividend events, sector overrides, and proxy mappings
+with their anchors together; pulling tracked removals can delete unchanged files
+or refuse locally modified ones. Follow the [cache migration steps](USAGE.md#portable-snapshots)
+for a blocked update. Restore the private backup afterward and verify its bytes
+before running the pipeline; never discard the only copy of local modifications.
+Recovery markers and backups need the separate
+[recovery procedure](USAGE.md#cache-save-recovery), not an automatic replay.
+Keep the local denylist intact; ignored files still require publication guards.
+
+The independently fictional [proxy-map example](../samples/symbol_proxy_map.example.json)
+is a format guide only. It is never loaded or copied automatically. Do not derive
+public examples from a personal map or publish a scrubbed runtime cache.
 
 Cache recovery files also stay local: `cache/.fin-recovery.json` and `.fin-*`
 staging or backup files within cache directories. Backups contain exact prior

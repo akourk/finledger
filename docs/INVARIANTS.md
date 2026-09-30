@@ -2020,6 +2020,15 @@ process.
 
 ## Invariants the price cache relies on
 
+- **Runtime state is private, including proxy configuration.** Dividend, sector,
+  split, and proxy-map files retain their existing `FIN_CACHE_DIR` paths, but
+  are not tracked or publishable, even when empty or market-shaped. Missing
+  files use empty caches/maps; the fictional example under `samples/` is never
+  loaded, merged, or copied automatically. Existing local entries and persisted
+  anchor fallback keep their valuation semantics. Preserve this boundary with
+  `tests/test_local_cache_boundary.py`, the existing anchor/persistence tests,
+  and the complete-index/outgoing-commit privacy regressions. The reviewed static
+  ticker-rename map remains public. See [local-file migration](USAGE.md#portable-snapshots).
 - **Persist the complete dirty set or preserve recovery evidence.**
   `prices.save_caches` serializes all changed shards and dirty sidecars with
   `allow_nan=False` before changing live files. `io_safe.replace_files` stages
@@ -2247,8 +2256,8 @@ process.
   symbols (benchmarks + scaled-proxy targets); auto-refreshed, safe to
   delete.
 - `cache/symbol_proxy_map.json` `anchor_date` / `anchor_price` are
-  auto-populated from the user's earliest txn price.  When publishing
-  a fork, scrub them — they get repopulated on next run.  At runtime,
+  auto-populated from the user's earliest txn price. The entire runtime map
+  stays local; removing anchors does not make a personal map publishable. At runtime,
   scaled proxies actually anchor each lookup to the NEAREST observed
   txn price (`prices._proxy_anchor_series`, built in-memory by
   `ensure_proxy_anchors` from ALL priced txns and never persisted —
@@ -2299,20 +2308,21 @@ transactions can't explain.
 The bundle includes **every** top-level `*.csv` unconditionally —
 `metadata.csv`, `manual-adjustments.csv`, and scanner-`skip`ped
 reference reports (the Coinbase RAWTX / gain-loss files) all travel
-with it. Generated price shards and coverage metadata stay local; privately
-copy `cache/prices/` and `cache/price_cache_meta.json` together when migrating
-to preserve cached history. Otherwise the next run fetches missing prices.
-The legacy `cache/price_cache.json` is also local. The gitignored
-`cache/last_run.json` resets, so the first run on a new machine reports
-`first_run` in What's Changed.
+with it. Runtime caches and proxy mappings are excluded; privately copy the
+complete cache directory when migrating to preserve history, coverage, custom
+mappings, and saved anchors. Otherwise the next run fetches missing market data,
+but it cannot reconstruct custom proxy mappings. The legacy `cache/price_cache.json`
+is also local. If the private `cache/last_run.json` is not copied, the first
+run on a new machine reports `first_run` in What's Changed.
 
 ## Data is sensitive
 
 The WHOLE `data/` directory and `exports/` are gitignored (any
 extension). Ignore rules are a local convenience, not a publication guard. Generated price
-shards, the legacy price cache, coverage metadata, and `cache/last_run.json`
-(which carries portfolio totals) stay local. Other shared cache/config files
-still require privacy review. Treat CSV contents as private financial data — don't paste
+shards, the legacy price cache, coverage metadata, dividend/sector/split caches,
+proxy mappings and anchors, and `cache/last_run.json` (which carries portfolio
+totals) stay local. Static configuration such as `cache/ticker_renames.json`
+still requires privacy review. Treat CSV contents as private financial data — don't paste
 them into external services, issue bodies, or anywhere public.
 
 **This repo is public.**  NEVER put the user's actual portfolio figures

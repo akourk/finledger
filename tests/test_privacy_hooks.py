@@ -1,6 +1,7 @@
 """Hooks use the environment created by uv even without shell activation."""
 from pathlib import Path
 import os
+import json
 import shlex
 import shutil
 import subprocess
@@ -23,7 +24,7 @@ def hook_repo(tmp_path):
                  ('config', 'core.autocrlf', 'false')]:
         subprocess.run([git, '-C', str(repo), *args], check=True, capture_output=True)
     for relative in ['tools/privacy_guard.py', 'tools/run-privacy-guard.sh',
-                     'tools/install-hooks.sh', 'githooks/pre-commit']:
+                     'tools/install-hooks.sh', 'githooks/pre-commit', 'githooks/pre-push']:
         target = repo / relative
         target.parent.mkdir(exist_ok=True)
         target.write_bytes((ROOT / relative).read_text(encoding='utf-8').encode('utf-8'))
@@ -54,9 +55,9 @@ def hook_repo(tmp_path):
         path.write_bytes(script.encode('utf-8'))
         path.chmod(0o755)
 
-    def run(*args):
+    def run(*args, input=None):
         return subprocess.run([shell, *args], cwd=repo, env=env,
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, input=input, timeout=30)
 
     return repo, binaries, marker, install_runtime, run
 
@@ -94,3 +95,61 @@ def test_runner_fails_closed_when_only_unsupported_interpreters_exist(hook_repo)
     assert 'uv sync --locked --all-groups' in result.stderr
     assert 'PASS' not in result.stdout
     assert marker.exists()
+
+
+@pytest.mark.parametrize('path,market', [
+    ('cache/dividends_cache.json', {'FICT': [['2024-01-02', 0.5]]}),
+    ('cache/sector_cache.json', {'FICT': 'Other'}),
+    ('cache/splits_cache.json', {'FICT': [['2024-01-02', 2.0]]}),
+    ('cache/symbol_proxy_map.json', {'Fictional Fund': {'proxy': 'FICT', 'method': 'scaled'}}),
+])
+@pytest.mark.parametrize('empty', [True, False], ids=['empty', 'market-shaped'])
+def test_precommit_blocks_force_added_private_runtime_cache(hook_repo, path, market, empty):
+    repo, binaries, _, install_runtime, run = hook_repo
+    install_runtime(binaries / 'python3', supported=True)
+    assert run('tools/install-hooks.sh').returncode == 0
+    with (repo / '.gitignore').open('a') as stream:
+        stream.write(path + '\n')
+    target = repo / path
+    target.parent.mkdir(exist_ok=True)
+    target.write_text(json.dumps({} if empty else market))
+    subprocess.run(['git', '-C', str(repo), 'add', '-f', path], check=True, capture_output=True)
+    result = run('githooks/pre-commit')
+    assert result.returncode == 1
+    assert 'private-file: <private-path>' in result.stderr
+    assert path not in result.stderr
+    assert 'FICT' not in result.stderr
+    assert 'PASS' not in result.stdout
+
+
+@pytest.mark.parametrize('path', [
+    'cache/dividends_cache.json', 'cache/sector_cache.json',
+    'cache/splits_cache.json', 'cache/symbol_proxy_map.json',
+])
+def test_prepush_rejects_intermediate_cache_even_after_removal(hook_repo, path):
+    repo, binaries, _, install_runtime, run = hook_repo
+    def git(*args):
+        return subprocess.check_output(['git', '-C', str(repo), *args], stderr=subprocess.DEVNULL).decode().strip()
+    # Construct the hypothetical outgoing history before installing hooks in
+    # this disposable repository. Never disable a real repository's hooks.
+    git('commit', '-m', 'Initial fictional hook fixture')
+    base = git('rev-parse', 'HEAD')
+    target = repo / path
+    target.parent.mkdir(exist_ok=True)
+    target.write_text('{}')
+    git('add', '-f', path)
+    git('commit', '-m', 'Synthetic outgoing cache fixture')
+    intermediate = git('rev-parse', 'HEAD')
+    git('rm', path)
+    git('commit', '-m', 'Remove fictional cache fixture')
+    head = git('rev-parse', 'HEAD')
+    install_runtime(binaries / 'python3', supported=True)
+    assert run('tools/install-hooks.sh').returncode == 0
+    # A known nonzero base requires no destination advertisement/network lookup.
+    result = run('githooks/pre-push', 'example', 'unused-local-destination',
+                 input=f'local {head} remote {base}\n')
+    assert result.returncode == 1
+    assert 'private-file: <private-path>' in result.stderr
+    assert intermediate[:12] in result.stderr
+    assert path not in result.stderr
+    assert 'PASS' not in result.stdout
