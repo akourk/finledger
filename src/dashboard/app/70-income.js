@@ -276,10 +276,12 @@ function _buildPaycheckSection() {
     </div>
     ${_renderStatCards(cards)}
     <div class="panel">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Paycheck deductions, scrollable table">
       <table class="mini-table"><caption class="sr-only">Paycheck: gross pay through each deduction to estimated take-home</caption>
         <thead><tr><th scope="col">Line</th><th scope="col" class="num">Per Paycheck</th><th scope="col" class="num">Annual</th></tr></thead>
         <tbody>${rows.join('')}</tbody>
       </table>
+      </div>
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
         Wage-only view: bonuses, dividends, and realized gains are excluded here (the Tax tab covers the full picture).
         Federal tax is the estimated <b>liability</b> on wages${p.is_projection ? ' (current-year projection)' : ''}, not your actual withholding — compare it against your W-4 withholding to spot over/under-withholding.${(p.withholding && p.withholding.length) ? '  The extra-withholding line is a voluntary prepayment of the year-end bill — the Tax tab credits it against the estimated tax on realized gains.' : ''}
@@ -531,6 +533,7 @@ function renderIncome() {
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">By Source</span></h2></div>
     <div class="panel">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Investment income by source, scrollable table">
       <table class="mini-table"><caption class="sr-only">Investment income by source and account</caption>
         <thead><tr>
           <th scope="col">Source</th>
@@ -543,9 +546,9 @@ function renderIncome() {
         </tr></thead>
         <tbody>${sourceRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody>
       </table>
+      </div>
     </div>
   `;
 }
 
 registerTabRenderer('income', renderIncome);
-

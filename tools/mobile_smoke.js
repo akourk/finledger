@@ -21,6 +21,20 @@ async function noOverflow(surface, state) {
     document.documentElement.scrollWidth <= innerWidth + 1), true, state + ' horizontal overflow');
 }
 
+async function checkFontFallback(surface, state) {
+  // Linux can reach the dashboard's generic font fallback. Its wider glyphs
+  // must stay within table scroll regions at the desktop/mobile boundary.
+  const style = await surface.addStyleTag({content:'body { font-family: monospace; }'});
+  try {
+    for (const section of SECTIONS) {
+      await selectSection(surface, section);
+      await noOverflow(surface, state + ' monospace ' + section);
+    }
+  } finally {
+    await style.evaluate(element => element.remove());
+  }
+}
+
 async function currentSection(surface, name, state) {
   const result = await surface.evaluate(() => ({
     panels: [...document.querySelectorAll('.tab-panel.active')].map(el => el.id),
@@ -198,6 +212,8 @@ async function main() {
         await deepScrollSwitch(surface, state);
       }
     }
+    await page.setViewport({width:721, height:1000});
+    await checkFontFallback(surface, 'demo 721x1000');
     await page.setViewport({width:720, height:390});
     await surface.click('#mobile-more');
     await page.setViewport({width:721, height:390});
@@ -253,6 +269,8 @@ async function main() {
         await deepScrollSwitch(frame, state);
       }
     }
+    await page.setViewport({width:721, height:1000});
+    await checkFontFallback(frame, 'private 721x1000');
     await page.setViewport({width:390, height:844});
     await frame.click('#mobile-more');
     await page.setViewport({width:721, height:844});

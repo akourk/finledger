@@ -6,7 +6,7 @@
   "source_sha256": "c278a355c22d54abecf024326e9517bb162dcb43d03f57c5a63e8bd6d079bd93",
   "snapshot_sha256": "deb05041d83b5f43882b518af0d9db95084ce1be4bb7f9c714afbfcc8dc0321b",
   "prices_sha256": "e4e33498981ac1905fe2e0d823320d48f3ca3734c09982fc69e4251168a11b38",
-  "artifact_sha256": "739093be63c1a737d7236cd8e67e64bc88e6956dd625d7a44fdf9a363a93fc65",
+  "artifact_sha256": "7f7c3ec006b9f87f6fb9d629ab5583e2d4e1c25c74c0fb52c8afb35d673588fd",
   "visually_reviewed": true,
   "tool": "tools/capture_demo_screenshots.js",
   "viewport": {

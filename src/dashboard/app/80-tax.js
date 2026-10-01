@@ -1011,6 +1011,7 @@ function renderTax() {
       <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">taxable positions with &gt; $10 of loss lots — click a row for the specific lots</span>
     </div>
     <div class="panel">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Tax-loss harvest candidates, scrollable table">
       <table class="mini-table"><caption class="sr-only">Tax-loss harvest candidates across taxable accounts</caption>
         <thead><tr>
           <th scope="col">Symbol</th><th scope="col">Account</th>
@@ -1020,6 +1021,7 @@ function renderTax() {
         </tr></thead>
         <tbody>${harvestRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">No taxable positions with loss lots &gt; $10.</td></tr>'}</tbody>
       </table>
+      </div>
       <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">
         Per-LOT candidates from taxable accounts only (retirement losses are never deductible).
         Qty / Value / Loss cover the LOSS lots — a "net +" position is up overall but holds
