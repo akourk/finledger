@@ -282,4 +282,12 @@ async function main() {
     await fs.rm(directory, {recursive:true, force:true});
   }
 }
-main().catch(error => {console.error(error); process.exitCode = 1;});
+main().catch(error => {
+  console.error(error);
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    // Keep the failed behavioral assertion visible in public check annotations.
+    const message = String(error.message).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+    console.error('::error title=Mobile browser check::' + message);
+  }
+  process.exitCode = 1;
+});
