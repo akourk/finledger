@@ -853,8 +853,15 @@ Normal local output lives in `exports/transactions.json` and
     identity cells are sticky in Holdings/Board; exclude spanning lot-detail
     cells and nested lot tables. Positions puts symbol before account so
     the ticker remains visible while scrolling. Touch targets and compact
-    mobile controls supplement the existing keyboard tab order and horizontal
-    navigation. The demo banner keeps its fictional designation visible while
+    mobile controls use the same router and financial state. At phone widths,
+    a persistent bottom bar exposes Overview/Holdings/Performance and a native
+    dialog lists all available sections. Build that list after empty-tab hiding;
+    do not create a second financial renderer or expose empty activity sections.
+    Keep active state, hash routing, focus, and section-top scrolling consistent.
+    The desktop tablist retains its keyboard order. Reserve space for the bottom
+    bar and device safe areas. `tools/mobile_smoke.js` checks demo and opaque
+    viewer navigation, viewport boundaries, focus, and empty-tab behavior.
+    The demo banner keeps its fictional designation visible while
     collapsing project details; it is not part of personal dashboard output.
 
 ## Invariants the code relies on
@@ -2326,6 +2333,10 @@ The public loader must keep local snapshot contents out of requests, URLs,
 storage, and public provenance. Each loaded portfolio uses a fresh rendering
 context; replacing it or returning to the demo must discard prior view state.
 Late asynchronous reads must not resurrect a cleared or superseded snapshot.
+The loaded viewer uses a compact file toolbar and a viewport-filling frame;
+the dashboard owns scrolling while the outer page stays fixed. Reset restores
+the demo's navigation and normal document layout. Mobile layout must not weaken
+the sandbox or send financial fields to the parent window to measure content.
 Reload starts with the demo. Invalid imports preserve the current view and show
 a generic error without echoing financial fields. `tools/viewer_smoke.js`
 exercises local import, interactions, reset, and request/storage boundaries.

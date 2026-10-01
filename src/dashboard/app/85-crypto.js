@@ -125,6 +125,7 @@ function renderCrypto() {
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Per-Coin</span></h2></div>
     <div class="panel">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Crypto holdings per coin, scrollable table">
       <table class="mini-table"><caption class="sr-only">Crypto holdings, realized gain and income per coin</caption>
         <thead><tr>
           <th scope="col">Coin</th>
@@ -139,10 +140,12 @@ function renderCrypto() {
         </tr></thead>
         <tbody>${coinRows || '<tr><td colspan="9" style="color:var(--text-dim);padding:12px;">No crypto activity.</td></tr>'}</tbody>
       </table>
+      </div>
     </div>
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Recent Crypto Activity</span></h2></div>
     <div class="panel">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Recent crypto activity, scrollable table">
       <table class="mini-table"><caption class="sr-only">Recent crypto transactions</caption>
         <thead><tr>
           <th scope="col">Date</th><th scope="col">Coin</th><th scope="col">Action</th>
@@ -150,19 +153,21 @@ function renderCrypto() {
         </tr></thead>
         <tbody>${recentRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody>
       </table>
+      </div>
     </div>
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Conversions / Wraps</span></h2></div>
     <div class="panel">
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Crypto conversions and wraps, scrollable table">
       <table class="mini-table"><caption class="sr-only">Crypto conversions and wraps</caption>
         <thead><tr>
           <th scope="col">Date</th><th scope="col">Coin</th><th scope="col">Action</th><th scope="col" class="num">Quantity</th><th scope="col">Note</th>
         </tr></thead>
         <tbody>${convRows || '<tr><td colspan="5" style="color:var(--text-dim);padding:12px;">No conversion/wrap events recorded.</td></tr>'}</tbody>
       </table>
+      </div>
     </div>
   `;
 }
 
 registerTabRenderer('crypto', renderCrypto);
-

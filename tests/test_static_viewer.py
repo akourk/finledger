@@ -104,3 +104,66 @@ catch (_) {process.stdout.write('rejected');}
     result = subprocess.run(['node', '-e', script, str(ROOT / 'src/dashboard/viewer/viewer.js')],
         input=json.dumps(boundary_case(name)), capture_output=True, text=True, check=True)
     assert result.stdout == ('accepted' if accepted else 'rejected')
+
+
+def test_controller_mobile_shell_and_reset_keep_accessible_controls(tmp_path):
+    """Drive actual controller events without a DOM renderer or network APIs."""
+    source, output = tmp_path / 'fictional.json', tmp_path / 'fictional.html'
+    source.write_text(json.dumps(fictional_snapshot()['data']), encoding='utf8')
+    generate_dashboard(source, output)
+    html = inject(output.read_text(encoding='utf8'))
+    config = json.loads(html.split('<script id="snapshot-config" type="application/json">')[1].split('</script>')[0])
+    assert 'viewer-active' not in config['template']
+    assert 'snapshot-controls' not in config['template']
+    assert 'Portfolio Dashboard' not in config['template']
+    script = r'''
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const input=JSON.parse(fs.readFileSync(0,'utf8'));
+const elements=new Map(), messages=[], listeners=new Map();let focused=null;
+function element(id) {
+  const names=new Set(),events=new Map();
+  return {id,textContent:'',hidden:false,open:false,files:[],value:'',href:'',dataset:{},
+    classList:{add:n=>names.add(n),remove:n=>names.delete(n),contains:n=>names.has(n)},
+    addEventListener:(name,callback)=>events.set(name,callback),emit:name=>events.get(name)?.(),
+    focus(){focused=this.id;},click(){this.clicks=(this.clicks||0)+1;this.emit('click');},
+    setAttribute(){},append(child){this.child=child;},remove(){this.removed=true;},
+    contentWindow:{postMessage:(data,target)=>messages.push({data,target})}};
+}
+for (const id of ['snapshot-open','snapshot-help','snapshot-file','snapshot-reset','snapshot-host',
+ 'snapshot-status','snapshot-error','snapshot-controls','demo-intro','tabnav','main-content',
+ 'mobile-navigation','mobile-sections','body','skip','topbar','snapshot-config','finledger-renderer']) elements.set(id,element(id));
+elements.get('snapshot-config').textContent=JSON.stringify(input.config);
+elements.get('finledger-renderer').textContent='const DATA = {};';
+const document={getElementById:id=>elements.get(id),body:elements.get('body'),
+ querySelector:selector=>elements.get(selector==='.skip-link'?'skip':'topbar'),createElement:()=>element('iframe')};
+const sandbox={document,window:{addEventListener:(name,fn)=>listeners.set(name,fn)},
+ crypto:{getRandomValues:bytes=>bytes.fill(1)},setTimeout:()=>1,clearTimeout:()=>{}};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),sandbox);
+async function select(value) {
+ elements.get('snapshot-file').files=[{size:100,text:async()=>JSON.stringify(value)}];
+ elements.get('snapshot-file').emit('change');await new Promise(resolve=>setImmediate(resolve));
+}
+(async()=>{
+ elements.get('snapshot-open').click();assert.equal(elements.get('snapshot-file').clicks,1);
+ await select(input.snapshot);
+ const frame=elements.get('snapshot-host').child;
+ listeners.get('message')({source:{},data:{type:'finledger-viewer-ready'}});
+ assert.equal(document.body.classList.contains('viewer-active'),false,'untrusted message ignored');
+ listeners.get('message')({source:frame.contentWindow,data:{type:'finledger-viewer-ready'}});
+ assert.equal(document.body.classList.contains('viewer-active'),true);
+ assert.equal(elements.get('snapshot-open').textContent,'Change file');
+ for(const id of ['mobile-navigation','mobile-sections','main-content']) assert.equal(elements.get(id).classList.contains('viewer-demo-hidden'),true);
+ assert.equal(elements.get('skip').href,'#snapshot-host');
+ assert.deepEqual(JSON.parse(JSON.stringify(messages)),[{data:{type:'finledger-viewer-visible'},target:'*'}],'only fixed lifecycle message, no financial fields');
+ await select({format:'unsupported'});assert.equal(frame.removed,undefined,'invalid file keeps current view');
+ elements.get('snapshot-reset').click();assert.equal(frame.removed,true);
+ assert.equal(document.body.classList.contains('viewer-active'),false);
+ assert.equal(elements.get('snapshot-open').textContent,'Open snapshot');assert.equal(focused,'snapshot-open');
+ assert.equal(elements.get('snapshot-file').value,'');assert.equal(elements.get('skip').href,'#main-content');
+ for(const id of ['mobile-navigation','mobile-sections','main-content']) assert.equal(elements.get(id).classList.contains('viewer-demo-hidden'),false);
+ process.stdout.write('passed');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    result = subprocess.run(['node', '-e', script, str(ROOT / 'src/dashboard/viewer/viewer.js')],
+        input=json.dumps({'config': config, 'snapshot': fictional_snapshot()}), capture_output=True, text=True, check=True)
+    assert result.stdout == 'passed'

@@ -130,12 +130,17 @@ an unavailable quote does not automatically replace the security.
 ### Open your snapshot on the demo site
 
 The [Pages demo](https://akourk.github.io/finledger/) opens with fictional data.
-Choose **Open your snapshot** and select a viewing snapshot, or drag the file
+Choose **Open snapshot** and select a viewing snapshot, or drag the file
 onto the page. On a phone, use the file picker to select a file available in
 Files. The browser reads the selected JSON locally; it does not upload the
 financial contents or fetch market prices. **Return to demo** clears the local
 view, and reloading the page opens the fictional demo again. The viewer does
 not save the imported snapshot to browser storage.
+
+On a phone, the bottom navigation keeps **Overview**, **Holdings**, and
+**Performance** within reach. **More** opens the full section list. The compact
+file toolbar stays above your snapshot, with **Change file**, **Return to demo**,
+and **Help**. The dashboard fills the remaining screen and scrolls as one view.
 
 Create the viewing file on the computer where you normally run FinLedger:
 
@@ -184,7 +189,7 @@ side.  Use this to move your portfolio between machines without copying
 `--force`.
 
 This raw-CSV backup is different from a viewing snapshot. Use
-`--export-viewer-snapshot` for the demo site's **Open your snapshot** button;
+`--export-viewer-snapshot` for the demo site's **Open snapshot** button;
 renaming a raw backup to another `.json` filename does not convert it.
 
 Runtime caches and proxy mappings stay local and are not part of the CSV

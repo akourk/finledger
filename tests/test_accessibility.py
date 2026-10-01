@@ -249,6 +249,8 @@ def test_every_chart_svg_has_a_label(bundle):
     itself is announced as 'graphic' with no name without this."""
     src = _strip_json_payload(bundle)
     svgs = re.findall(r"<svg(?![A-Za-z])[^>]*>", src)
+    # Decorative navigation icons use the adjacent button text as their name.
+    svgs = [s for s in svgs if 'aria-hidden="true"' not in s]
     assert len(svgs) >= 8, f"only found {len(svgs)} svg elements"
     unnamed = [s[:110] for s in svgs if "aria-label" not in s]
     assert not unnamed, f"{len(unnamed)} unnamed chart(s): {unnamed}"

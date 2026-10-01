@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
 const puppeteer = require('puppeteer');
+const {selectSection} = require('./mobile_navigation');
 
 async function main() {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'finledger-viewer-check-'));
@@ -52,12 +53,12 @@ async function main() {
     assert.equal(await frame.evaluate(() => {try {localStorage.setItem('probe','fictional');return false;} catch (_) {return true;}}),true,'storage denied');
     assert.equal(await frame.evaluate(() => {try {return !!parent.document;} catch (_) {return false;}}),false,'parent DOM denied');
     for (const tab of ['overview','holdings','performance','transactions','options','retirement','planning','income','tax','crypto']) {
-      await frame.click('#tabbtn-'+tab);
+      await selectSection(frame, tab);
       assert.equal(await frame.$eval('#tab-'+tab, element => element.classList.contains('active')),true,tab);
       assert.equal(await frame.$('[data-render-error]'),null,tab+' renders');
       if (['overview','holdings','tax'].includes(tab)) await checkPrivateAccessibility(frame,'desktop '+tab);
     }
-    await frame.click('#tabbtn-tax');
+    await selectSection(frame, 'tax');
     const download = await browser.target().createCDPSession();
     await download.send('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:directory,eventsEnabled:true});
     const taxButton = await frame.$('button[onclick*="export"],button[onclick*="download"]');
@@ -86,19 +87,19 @@ async function main() {
     await page.evaluate(s=>{const transfer=new DataTransfer();transfer.items.add(new File([JSON.stringify(s)],'second.json'));document.getElementById('snapshot-controls').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer}));},second);
     await page.waitForFunction(()=>document.getElementById('snapshot-status').textContent.includes('2026-07-01'));
     frame=active();assert.notEqual(frame,original);assert.equal(page.frames().length,2);
-    await frame.click('#tabbtn-transactions');
+    await selectSection(frame, 'transactions');
     assert.equal(await frame.evaluate(()=>DATA.transactions[0].description),'Fictional O\'Brien "quoted" & Ω');
     await page.setViewport({width:375,height:812});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'outer mobile viewport');
     assert.equal(await frame.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'private mobile viewport');
     await checkPrivateAccessibility(frame,'mobile transactions');
-    await frame.click('#tabbtn-performance');
+    await selectSection(frame, 'performance');
     await frame.evaluate(()=>setPerfView('risk'));
     await checkPrivateAccessibility(frame,'mobile performance risk');
     // Delay a file read, reset, then resolve it: private state must stay destroyed.
     await page.evaluate(s=>{window.finishViewerRead=null;const file=new File(['{}'],'late.json');file.text=()=>new Promise(resolve=>{window.finishViewerRead=()=>resolve(JSON.stringify(s));});const transfer=new DataTransfer();transfer.items.add(file);const input=document.getElementById('snapshot-file');input.files=transfer.files;input.dispatchEvent(new Event('change'));},snapshot);
     await page.click('#snapshot-reset');
-    assert.equal(await page.evaluate(()=>document.activeElement.id),'snapshot-file');
+    assert.equal(await page.evaluate(()=>document.activeElement.id),'snapshot-open');
     await page.evaluate(()=>{window.finishViewerRead();delete window.finishViewerRead;});
     await new Promise(resolve=>setTimeout(resolve,100));
     assert.equal(page.frames().length,1);

@@ -85,8 +85,11 @@ the **P&L board** toggle describes the alternate view's purpose.
 
 ### 5. Reduce the effort of using the dashboard on a phone
 
-Navigation already scrolled horizontally before this batch. The implementation
-retains that behavior and adds measured horizontal-overflow cues to wide tables.
+Phones now have persistent bottom navigation for Overview, Holdings, and
+Performance. **More** opens a touch-friendly sheet containing all available
+sections, with the current section highlighted. Desktop retains the tablist.
+Section changes reveal the new heading, and empty Options/Crypto sections stay
+out of the menu. Wide tables retain measured horizontal-overflow cues.
 The first identifying column stays visible in Holdings and Board; Positions
 puts the symbol first. Expanded lot detail and nested lot-table cells remain
 outside the sticky-column rule. The same overflow measurement maintains
@@ -97,6 +100,13 @@ Lifetime/1y/YTD/3mo shortcuts, and a More ranges menu on phones; desktop keeps
 its full controls. The public demo introduction is shorter, with its fictional
 designation always visible and project details under **About this demo**. The
 banner change affects the public demo, not generated personal dashboards.
+
+Local snapshot viewing uses a compact file toolbar above a full-height dashboard,
+removing the two nested page scroll areas. One Open snapshot button replaces the
+duplicated file controls; instructions remain under Help. Phone cards, typography,
+spacing, and contrast are tuned for the narrower view, with room for the bottom
+navigation and device safe areas. The mobile browser gate covers both the public
+demo and loaded fictional snapshots; actual device testing remains useful.
 
 ### 6. Make common destinations and chart choices easier to find
 

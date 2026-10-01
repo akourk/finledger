@@ -40,7 +40,7 @@ BANNER = f"""<header id="demo-intro" class="demo-intro" aria-label="About this d
 STYLE = """<style id="demo-styles">
 .demo-intro{font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#141429;color:#dddde9;border:1px solid #373753;border-radius:8px;padding:12px 20px;margin-bottom:18px}
 .demo-intro p{margin:7px 0;max-width:1000px}.demo-heading{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:#eeeef8;font-size:16px}.demo-heading strong{color:#c4b5fd}.demo-badge{font-size:12px;color:#dddde9;border:1px solid #595975;border-radius:20px;padding:2px 9px}.demo-links{display:flex;flex-wrap:wrap;gap:8px 22px}.demo-intro a{color:#c4b5fd;text-underline-offset:3px}.demo-intro summary{cursor:pointer;color:#dddde9;font-weight:600;padding:8px 0}.demo-intro details{margin-top:5px;max-width:1100px}.demo-intro :focus-visible{outline:2px solid #c4b5fd;outline-offset:4px}
-@media(max-width:600px){.demo-intro{padding:10px 12px;margin-bottom:14px}.demo-heading{font-size:14px;gap:5px 8px}.demo-intro summary{padding:6px 0;min-height:32px}}
+@media(max-width:720px){.demo-intro{padding:12px 14px;margin-bottom:12px;border-radius:14px;background:var(--surface);border-color:var(--border)}.demo-heading{font-size:14px;gap:5px 8px}.demo-badge{font-size:11px}.demo-intro summary{padding:8px 0;min-height:40px}.demo-intro details{margin-top:0}}
 </style>"""
 HEAD = f"""<meta name="description" content="{DESCRIPTION}">
 <meta property="og:title" content="finledger — Interactive financial ledger demo">

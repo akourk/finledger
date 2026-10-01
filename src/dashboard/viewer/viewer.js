@@ -3,13 +3,16 @@
   'use strict';
   const config = JSON.parse(document.getElementById('snapshot-config').textContent);
   const renderer = document.getElementById('finledger-renderer').textContent.trimStart();
+  const openButton = document.getElementById('snapshot-open');
+  const help = document.getElementById('snapshot-help');
+  const skip = document.querySelector('.skip-link');
   const input = document.getElementById('snapshot-file');
   const reset = document.getElementById('snapshot-reset');
   const host = document.getElementById('snapshot-host');
   const status = document.getElementById('snapshot-status');
   const error = document.getElementById('snapshot-error');
   const controls = document.getElementById('snapshot-controls');
-  const demo = [document.getElementById('demo-intro'), document.querySelector('.top-bar'), document.getElementById('tabnav'), document.getElementById('main-content')];
+  const demo = [document.getElementById('demo-intro'), document.querySelector('.top-bar'), document.getElementById('tabnav'), document.getElementById('main-content'), document.getElementById('mobile-navigation'), document.getElementById('mobile-sections')].filter(Boolean);
   let generation = 0;
   let pending = null;
   let current = null;
@@ -109,19 +112,30 @@
     clearTimeout(pendingTimer); pendingTimer = null;
     current = pending; pending = null;
     current.className = '';
+    document.body.classList.add('viewer-active');
+    help.open = false;
+    openButton.textContent = 'Change file';
+    if (skip) { skip.href = '#snapshot-host'; skip.textContent = 'Skip to snapshot dashboard'; }
     current.contentWindow.postMessage({type:'finledger-viewer-visible'}, '*');
-    demo.forEach(element => { element.classList.add('viewer-demo-hidden'); });
+    demo.forEach(element => {
+      if (element.open && typeof element.close === 'function') element.close();
+      element.classList.add('viewer-demo-hidden');
+    });
     reset.hidden = false;
-    status.textContent = 'Loaded locally · As of ' + current.dataset.asOf + '. Nothing is uploaded or saved.';
+    status.textContent = 'Loaded locally · As of ' + current.dataset.asOf;
   });
+  openButton.addEventListener('click', () => input.click());
   input.addEventListener('change', () => { if (input.files.length) open(input.files[0]); });
   reset.addEventListener('click', () => {
     ++generation; discardPending();
     if (current) current.remove(); current = null;
+    document.body.classList.remove('viewer-active');
+    help.open = false; openButton.textContent = 'Open snapshot';
+    if (skip) { skip.href = '#main-content'; skip.textContent = 'Skip to dashboard content'; }
     input.value = ''; reset.hidden = true; error.hidden = true;
     demo.forEach(element => { element.classList.remove('viewer-demo-hidden'); });
     status.textContent = 'Showing the fictional demo.';
-    input.focus();
+    openButton.focus();
   });
   controls.addEventListener('dragover', event => { event.preventDefault(); controls.classList.add('dragging'); });
   controls.addEventListener('dragleave', () => controls.classList.remove('dragging'));

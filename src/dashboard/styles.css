@@ -3297,3 +3297,81 @@ h2 > .scope-label, h3 > .scope-label { margin-left: 8px; }
   th[tabindex="0"] { height: 40px; }
   summary { min-height: 40px; }
 }
+
+/* Phone navigation is always within reach; the desktop tablist is unchanged. */
+.mobile-navigation, .mobile-section-heading { display: none; }
+.mobile-sections {
+  color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 22px 22px 0 0; width: 100%; max-width: 560px;
+  max-height: calc(100dvh - 32px); margin: auto auto 0; padding: 20px;
+  padding-bottom: max(24px, env(safe-area-inset-bottom)); overflow-y: auto;
+  box-shadow: 0 -12px 50px #0006;
+}
+.mobile-sections::backdrop { background: #0009; }
+.mobile-sections-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+.mobile-sections-header h2 { font-size: 1.2rem; color: var(--text); }
+.mobile-sections-header button {
+  width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 50%;
+  background: var(--bg); color: var(--text); font: inherit; cursor: pointer;
+}
+.mobile-section-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.mobile-section-list button {
+  min-height: 54px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg); color: var(--text); padding: 14px; font: inherit;
+  font-size: 0.9rem; text-align: left; cursor: pointer;
+}
+.mobile-section-list [aria-current="page"] { color: var(--on-accent); background: var(--accent); font-weight: 650; }
+@media (max-width: 720px) {
+  :root {
+    --bg: #10121a; --surface: #191d29; --border: #303647;
+    --text: #edf0f7; --text-dim: #adb5c7; --accent: #bba7ff;
+  }
+  html { scroll-padding-bottom: 92px; }
+  body {
+    padding: 16px 14px calc(90px + env(safe-area-inset-bottom));
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+  }
+  #tabnav { display: none; }
+  .mobile-navigation {
+    position: fixed; z-index: 100; bottom: 0; left: 0; right: 0;
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
+    padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    background: var(--surface); border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 20px #0003;
+  }
+  .mobile-navigation button {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 5px; min-height: 56px; padding: 7px 2px; border: 0; border-radius: 12px;
+    background: transparent; color: var(--text-dim); font: inherit; font-size: 0.68rem;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-navigation svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .mobile-navigation [aria-current="page"] { color: var(--accent); background: #bba7ff14; font-weight: 650; }
+  .mobile-section-heading { display: block; color: var(--text); font-size: 1.25rem; letter-spacing: -0.025em; margin: 0 0 14px; }
+  .top-bar { gap: 12px; margin-bottom: 24px; }
+  .top-bar h1 { font-size: 1.15rem; letter-spacing: -0.02em; }
+  .top-bar-summary { border-radius: 16px; padding: 18px; gap: 18px 12px; }
+  .top-bar-summary .tb-value.tb-portfolio-value { font-size: 2.2rem; margin: 4px 0 0; }
+  .top-bar-summary .tb-value .sub { margin-left: 3px; }
+  .top-bar-title .scope-context { font-size: 0.73rem; }
+  .panel, .stat-card, .chart-wrap { border-radius: 12px; }
+  #stats { gap: 10px; }
+  #stats .stat-card { padding: 13px 12px; }
+  #stats .label { font-size: 0.75rem; line-height: 1.4; margin-bottom: 5px; }
+  #stats .value { font-size: 1.1rem; letter-spacing: -0.02em; }
+  #stats .value .sub { display: block; font-size: 0.73rem; margin: 4px 0 0; }
+  .as-of-bar { border-radius: 10px; padding: 10px; gap: 8px; }
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: 16px !important; }
+  .tbtn, .fbtn, .top-bar-refresh, .as-of-picker { min-height: 44px; }
+  .as-of-bar label { font-size: 0.72rem; }
+  .as-of-picker { min-width: 0; max-width: 100%; flex: 1; }
+  .section-header { margin-top: 22px; }
+  .metric-guide { margin: 10px 0 18px; }
+  .chart-view-controls, .chart-range-controls { gap: 6px; }
+  .chart-range-controls select { flex: 1; min-width: 0; }
+  .chart-view-controls .tbtn { padding: 8px 10px; }
+  .perf-mobile-account { gap: 10px; }
+  .perf-mobile-ranges { flex-wrap: wrap; }
+  .perf-mobile-ranges select { max-width: none; flex: 1; }
+}

@@ -339,6 +339,7 @@ function activateTab(name, opts) {
     el.tabIndex = on ? 0 : -1;
   });
   panel.classList.add('active');
+  syncMobileNavigation(name);
   // Lazy render on first activation
   if ((!TAB_RENDERED.has(name) && TAB_RENDERERS[name]) || name === 'overview') {
     panel.querySelector('[data-render-error]')?.remove();
@@ -411,6 +412,64 @@ function initTabA11y() {
 }
 initTabA11y();
 
+function syncMobileNavigation(name) {
+  document.querySelectorAll('[data-mobile-tab]').forEach(button => {
+    if (button.dataset.mobileTab === name) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+  const label = document.getElementById('tabbtn-' + name)?.textContent.trim() || name;
+  const heading = document.getElementById('mobile-section-heading');
+  if (heading) heading.textContent = label;
+  const more = document.getElementById('mobile-more');
+  if (more) {
+    const secondary = !['overview', 'holdings', 'performance'].includes(name);
+    if (secondary) more.setAttribute('aria-current', 'page');
+    else more.removeAttribute('aria-current');
+    more.setAttribute('aria-label', secondary ? 'More sections, current: ' + label : 'More sections');
+    document.getElementById('mobile-more-label').textContent = secondary ? label : 'More';
+  }
+}
+
+function initMobileNavigation() {
+  const navigation = document.getElementById('mobile-navigation');
+  const sheet = document.getElementById('mobile-sections');
+  if (!navigation || !sheet) return;
+  const more = document.getElementById('mobile-more');
+  const list = document.getElementById('mobile-section-list');
+  document.querySelectorAll('#tabnav .tab-btn').forEach(tab => {
+    if (tab.style.display === 'none') return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.mobileTab = tab.dataset.tab;
+    button.setAttribute('aria-controls', tab.getAttribute('aria-controls'));
+    button.textContent = tab.textContent.trim();
+    list.append(button);
+  });
+  const close = () => { if (sheet.open) sheet.close(); };
+  more.addEventListener('click', () => {
+    sheet.showModal();
+    more.setAttribute('aria-expanded', 'true');
+    (list.querySelector('[aria-current="page"]') || list.querySelector('button'))?.focus();
+  });
+  document.getElementById('mobile-sections-close').addEventListener('click', close);
+  sheet.addEventListener('click', event => { if (event.target === sheet) close(); });
+  sheet.addEventListener('close', () => { more.setAttribute('aria-expanded', 'false'); });
+  document.querySelectorAll('[data-mobile-tab]').forEach(button => {
+    button.addEventListener('click', () => {
+      close();
+      activateTab(button.dataset.mobileTab);
+      const panel = document.getElementById('tab-' + button.dataset.mobileTab);
+      panel.focus({preventScroll: true});
+      const main = document.getElementById('main-content');
+      window.scrollTo({top: main.getBoundingClientRect().top + window.scrollY - 16, behavior: 'instant'});
+    });
+  });
+  window.matchMedia('(max-width: 720px)').addEventListener('change', event => {
+    if (!event.matches) close();
+  });
+  syncMobileNavigation(document.querySelector('.tab-btn.active')?.dataset.tab || 'overview');
+}
+
 // A container that scrolls must be reachable from the keyboard, or the
 // content past its edge is mouse-only (SC 2.1.1).  Whether a given wrap
 // actually scrolls depends on the viewport and on how many columns are
@@ -473,6 +532,7 @@ document.addEventListener('keydown', (e) => {
   const cryptoStats = ((ANALYTICS.crypto || {}).stats) || {};
   if (!cryptoStats.txn_count) hide('crypto');
 })();
+initMobileNavigation();
 // Hash routing — deep links and back/forward button
 window.addEventListener('hashchange', () => {
   const name = location.hash.slice(1);

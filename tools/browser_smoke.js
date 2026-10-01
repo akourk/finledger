@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const puppeteer = require('puppeteer');
+const {selectSection} = require('./mobile_navigation');
 
 async function checkAllocationGeometry(page) {
   // DOM/string probes cannot tell whether SVG arcs actually fill an annulus.
@@ -82,7 +83,7 @@ async function checkAllocationGeometry(page) {
 }
 
 async function checkHistoryControls(page) {
-  await page.click('#tabbtn-overview');
+  await selectSection(page, 'overview');
   await page.select('#asOfPickerOverview', '2023-12-31');
   const snapshot = await page.$eval('#stats', el => el.textContent);
   const latest = await page.$eval('#historyLatestValue', el => el.textContent);
@@ -131,7 +132,7 @@ async function checkHistoryControls(page) {
 }
 
 async function checkHoldingsLayouts(page) {
-  await page.click('#tabbtn-holdings');
+  await selectSection(page, 'holdings');
   // Choose a fixture account sharing a symbol, so account membership and
   // account-specific amounts demonstrably differ without recreating any math.
   const fixture = await page.evaluate(() => {
@@ -208,7 +209,7 @@ async function checkStickyIdentity(page, selector) {
 }
 
 async function checkMobilePerformance(page) {
-  await page.click('#tabbtn-performance');
+  await selectSection(page, 'performance');
   const account = await page.$eval('#perfAccountSelect', el => [...el.options].find(option => option.value && !option.value.startsWith('__')).value);
   await page.focus('#perfAccountSelect');
   await page.select('#perfAccountSelect', account);
@@ -389,7 +390,7 @@ async function checkPerformanceChartPresentation(page, mobile = false) {
   };
   const selectWindow = value => clickControl(
     `${mobile ? '.perf-mobile-ranges' : '#perfControls .desktop-only'} [data-perf-window="${value}"]`);
-  await page.click('#tabbtn-performance');
+  await selectSection(page, 'performance');
   await selectView('returns');
   await checkBenchmarkGeometry(page, kind + ' initial Returns', true);
   await selectView('risk');
@@ -406,15 +407,15 @@ async function checkPerformanceChartPresentation(page, mobile = false) {
   await checkBenchmarkGeometry(page, kind + ' visible Returns resize', true);
   await selectView('risk');
   await checkDrawdownGeometry(page, kind + ' hidden Risk resize');
-  await page.click('#tabbtn-overview');
+  await selectSection(page, 'overview');
   await resize(initialViewport.width);
-  await page.click('#tabbtn-performance');
+  await selectSection(page, 'performance');
   await checkDrawdownGeometry(page, kind + ' hidden Performance resize and return');
   await selectView('returns');
   await checkBenchmarkGeometry(page, kind + ' hidden Performance resize and return', true);
-  await page.click('#tabbtn-overview');
+  await selectSection(page, 'overview');
   await resize(mobile ? 320 : 1024);
-  await page.click('#tabbtn-performance');
+  await selectSection(page, 'performance');
   await checkBenchmarkGeometry(page, kind + ' active Returns tab resize and return', true);
   await resize(initialViewport.width);
   await selectView('risk');
@@ -471,7 +472,7 @@ async function main() {
 
     const tabs = ['overview', 'holdings', 'transactions', 'options', 'retirement', 'planning', 'income', 'tax', 'crypto', 'performance'];
     for (const tab of tabs) {
-      await page.click('#tabbtn-' + tab);
+      await selectSection(page, tab);
       assert.equal(await page.$eval('#tab-' + tab, el => el.classList.contains('active')), true, tab);
       assert.ok(await page.$eval('#tab-' + tab, el => el.innerText.trim().length > 80), tab + ' must render content');
       assert.equal(await page.$$eval('[data-render-error]', els => els.length), 0, tab + ' render error');
@@ -493,11 +494,11 @@ async function main() {
       }
       assert.equal(await page.$eval(selector, el => el.value), value, selector + ' changed typed text');
     }
-    await page.click('#tabbtn-planning');
+    await selectSection(page, 'planning');
     await typeEach('#retAnnualContrib', '12345');
     await typeEach('#retProjectionAge', '68');
     assert.equal(await page.evaluate(() => retirementAnnualContrib), 12345);
-    await page.click('#tabbtn-tax');
+    await selectSection(page, 'tax');
     await typeEach('#taxShortRate', '25.5');
     await typeEach('#taxLongRate', '15.5');
     assert.equal(await page.evaluate(() => taxShortRate), 0.255);
@@ -524,7 +525,7 @@ async function main() {
     assert.ok(csv.split('\n').length > 3, 'CSV must contain actual sample disposals');
     assert.ok(csv.includes('AAPL') || csv.includes('ADA'), 'CSV contains known fictional transactions');
 
-    await page.click('#tabbtn-holdings');
+    await selectSection(page, 'holdings');
     await page.select('#asOfPickerHoldings', '2023-12-31');
     assert.equal(await page.evaluate(() => {
       const table = document.querySelector('#byAssetBody table');
@@ -562,11 +563,11 @@ async function main() {
       assert.equal(await page.$eval('#' + id, el => el.open), false);
     }
     for (const tab of tabs) {
-      await page.click('#tabbtn-' + tab);
+      await selectSection(page, tab);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert.ok(overflow <= 1, `${tab} overflows mobile viewport by ${overflow}px`);
     }
-    await page.click('#tabbtn-holdings');
+    await selectSection(page, 'holdings');
     await checkStickyIdentity(page, '#byAssetBody .sticky-identity');
     await page.click('#btnBoardBoard');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 1), 'Board must fit the mobile page');

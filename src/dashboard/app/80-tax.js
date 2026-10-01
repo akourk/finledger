@@ -1036,10 +1036,12 @@ function renderTax() {
     </div>
     <div class="panel">
       ${ltAcctChips}
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Long-term eligibility by asset, scrollable table">
       <table class="mini-table lt-asset-table"><caption class="sr-only">Long-term eligibility by asset</caption>
         <thead>${ltHeadHtml}</thead>
         <tbody>${ltAssetRows || '<tr><td colspan="7" style="color:var(--text-dim);padding:12px;">No open taxable positions with at least $10 in value or basis.</td></tr>'}${ltMoreNote}</tbody>
       </table>
+      </div>
       <div style="color:var(--text-dim);font-size:0.75rem;margin-top:8px;">
         One row per <em>(account, symbol)</em> with at least $10 in value or basis.
         Small fractional lots count toward quantities and eligibility timing.

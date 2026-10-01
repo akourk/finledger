@@ -24,15 +24,15 @@ def inject_viewer(html):
     program_start = html.index('const DATA = ', match.start())
     template = html[:match.start()] + '__VIEWER_SCRIPT__' + html[close + len('</script>'):]
     template = re.sub(r'<button\b[^>]*\bid="topBarRefresh"[^>]*>.*?</button>', '', template, count=1, flags=re.S)
-    template = template.replace('Portfolio Dashboard', 'Local snapshot dashboard')
+    template = template.replace('Portfolio Dashboard', 'Portfolio')
     config = {'template': template, 'start': start - program_start, 'end': end - program_start}
     html = html[:match.start()] + html[match.start():].replace('<script>', '<script id="finledger-renderer">', 1)
     control = '''<section id="snapshot-controls" aria-label="Local snapshot viewer">
-<p>Open an exported FinLedger viewer snapshot. It stays in this page’s memory; nothing is uploaded or saved. Reloading returns to the fictional demo.</p>
-<div class="snapshot-actions"><label class="tbtn" for="snapshot-file">Open your snapshot</label><input id="snapshot-file" type="file" accept=".json,application/json"><button id="snapshot-reset" class="tbtn" type="button" hidden>Return to demo</button></div>
-<p id="snapshot-drop">Or drop one viewer JSON file here (up to 25 MiB). Raw broker CSVs and backup snapshots are not supported.</p>
-<p id="snapshot-status" role="status" aria-live="polite">Showing the fictional demo.</p><p id="snapshot-error" role="alert" hidden></p>
-</section><div id="snapshot-host"></div>'''
+<div class="snapshot-toolbar"><div class="snapshot-intro"><p id="snapshot-status" role="status" aria-live="polite">Showing the fictional demo.</p><p class="snapshot-privacy">Your snapshot stays on this device. No upload or browser storage.</p></div>
+<div class="snapshot-actions"><button id="snapshot-open" class="tbtn" type="button">Open snapshot</button><input id="snapshot-file" class="snapshot-file-input" type="file" accept=".json,application/json" aria-label="Choose a FinLedger viewer snapshot" tabindex="-1"><button id="snapshot-reset" class="tbtn" type="button" hidden>Return to demo</button>
+<details id="snapshot-help"><summary>Help</summary><div class="snapshot-help-content" tabindex="0" role="region" aria-label="Snapshot help"><p>Choose a FinLedger viewer JSON exported from FinLedger on your computer (version 1, up to 25 MiB).</p><p id="snapshot-drop">You can also drop one snapshot here. Broker CSVs and backup snapshots are not supported.</p><p>Nothing is uploaded or kept in browser storage. Change files or return to the demo to close this view. Reloading restores the fictional demo. CSV downloads save only when you request them.</p></div></details></div></div>
+<p id="snapshot-error" role="alert" hidden></p>
+</section><div id="snapshot-host" tabindex="-1"></div>'''
     style = (ASSETS / 'viewer.css').read_text(encoding='utf-8')
     controller = (ASSETS / 'viewer.js').read_text(encoding='utf-8')
     html = html.replace('</head>', '<style id="snapshot-styles">' + style + '</style></head>', 1)
