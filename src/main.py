@@ -596,6 +596,11 @@ def main():
              "full pipeline refreshes prices just as thoroughly.",
     )
     parser.add_argument(
+        "--export-viewer-snapshot", metavar="PATH", default=None,
+        help="Package the already computed --output JSON for a read-only "
+             "viewer at PATH and exit; never import CSVs or fetch prices.",
+    )
+    parser.add_argument(
         "--export-snapshot", metavar="PATH", default=None,
         help="Bundle every CSV in data/ into a single JSON snapshot at "
              "PATH and exit.  Useful for moving your portfolio data to a "
@@ -621,7 +626,9 @@ def main():
     # refresh mode. Return before even creating a missing data directory.
     if args.dry_run:
         print("Dry run: no files, caches, snapshots, or exports will be changed.")
-        if args.import_snapshot:
+        if args.export_viewer_snapshot:
+            print("Would package the already computed dashboard JSON for a viewer.")
+        elif args.import_snapshot:
             print("Would validate and import the requested snapshot.")
         elif args.export_snapshot:
             print("Would export a private CSV snapshot.")
@@ -631,6 +638,14 @@ def main():
             print("Would refresh prices and rebuild the dashboard.")
         elif DATA_DIR.exists() and not args.skip_rename:
             rename_data_files(DATA_DIR, dry_run=True)
+        return
+
+    if args.export_viewer_snapshot:
+        from pathlib import Path
+        from .viewer_snapshot import export_viewer_snapshot
+        source = Path(args.output) if args.output else EXPORT_DIR / "transactions.json"
+        export_viewer_snapshot(source, Path(args.export_viewer_snapshot))
+        print("Exported a private viewer snapshot.")
         return
 
     if args.init_account_mappings:

@@ -55,6 +55,8 @@ jobs:
         run: uv run --frozen python -m tools.privacy_guard scan --artifact _site
       - name: Validate ordinary browser interactions
         run: npm run test:browser
+      - name: Validate local snapshot viewing and isolation
+        run: npm run test:viewer
       - name: Validate accessibility of the final bannered page
         run: npm run test:a11y
       - name: Verify reproducibility

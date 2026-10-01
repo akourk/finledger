@@ -9,7 +9,8 @@
   "scripts": {
     "test:browser": "node tools/browser_smoke.js _site/index.html",
     "test:a11y": "node tools/a11y_check.js _site/index.html",
-    "test": "npm run test:browser && npm run test:a11y"
+    "test": "npm run test:browser && npm run test:a11y && npm run test:viewer",
+    "test:viewer": "node tools/viewer_smoke.js _site/index.html"
   },
   "devDependencies": {
     "@axe-core/puppeteer": "4.13.0",

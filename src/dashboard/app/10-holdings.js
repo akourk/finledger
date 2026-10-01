@@ -268,7 +268,9 @@ function fmtPct(v, digits = 1) {
 // the vocabulary stays single-source.  ACTION_COLORS and the TWR
 // membership sets are built from the catalog rather than duplicated.
 const _ACTION_CATALOG = (DATA.action_catalog && DATA.action_catalog.actions) || [];
-const ACTION_COLORS = Object.fromEntries(_ACTION_CATALOG.map(a => [a.name, a.color]));
+// Imported catalogs supply colors as data, never CSS or HTML attributes.
+const ACTION_COLORS = Object.fromEntries(_ACTION_CATALOG.map(a => [a.name,
+  typeof a.color === 'string' && /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : '']));
 function _actionsWith(field, value) {
   return new Set(_ACTION_CATALOG.filter(a => a[field] === value).map(a => a.name));
 }

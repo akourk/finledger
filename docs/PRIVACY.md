@@ -7,6 +7,19 @@ column is hidden. Hiding a field does not remove it from the file.
 
 ## Local boundaries
 
+The public demo can read a user-selected viewing snapshot inside the browser.
+The selected file is never a deployment input. The viewer has no upload or
+price-fetching service and does not persist imported data in browser storage.
+Changing files, returning to the demo, and reloading must not mix portfolios.
+Keep all financial fields out of URLs, telemetry, errors, and network requests.
+Test these boundaries with independently fictional files and monitor requests.
+
+The `finledger-viewer` envelope is a private runtime artifact, including empty
+files or ones labeled synthetic. Publication scans reject its format marker
+and nested ledger shape even under a renamed extension or fixture directory.
+Construct test snapshots temporarily; do not commit generated viewing files.
+This structural check supplements, rather than replaces, provenance review.
+
 Keep raw exports and metadata in `data/`, generated dashboards in `exports/`,
 and investigation notes/logs in `audit/` or a temporary directory. These paths
 are ignored by Git. Never force-add them. Personal snapshots, account identifiers,

@@ -1375,16 +1375,16 @@ function renderPerformance() {
   const _perfWindowMax = history.length ? history[history.length - 1].date : '';
   const _customInputsHtml = _customActive ? `
     <span class="hist-label" style="margin-left:10px;">From</span>
-    <input type="date" id="perfCustomStart" class="hist-date" min="${_perfWindowMin}" max="${_perfWindowMax}"
+    <input type="date" id="perfCustomStart" class="hist-date" min="${_htmlEsc(_perfWindowMin)}" max="${_htmlEsc(_perfWindowMax)}"
            aria-label="Performance window: from date"
-           value="${perfTwrStart || ''}" onchange="setPerfTwrStart(this.value)">
+           value="${_htmlEsc(perfTwrStart || '')}" onchange="setPerfTwrStart(this.value)">
     <span class="hist-label">To</span>
-    <input type="date" id="perfCustomEnd" class="hist-date" min="${_perfWindowMin}" max="${_perfWindowMax}"
+    <input type="date" id="perfCustomEnd" class="hist-date" min="${_htmlEsc(_perfWindowMin)}" max="${_htmlEsc(_perfWindowMax)}"
            aria-label="Performance window: to date"
-           value="${perfTwrEnd || ''}" onchange="setPerfTwrEnd(this.value)">
+           value="${_htmlEsc(perfTwrEnd || '')}" onchange="setPerfTwrEnd(this.value)">
     <span class="hist-label" style="margin-left:10px;opacity:.7;"
           title="History is sampled on the 15th and the last day of each month (plus today).  A date between samples resolves BACKWARD to the last one at or before it, and every figure in this row — value, flows, realized — is then measured to that same date, so they describe one span.">
-      measured ${_winAnchorIso || 'inception'} → ${_winUpperIso}</span>` : '';
+      measured ${_htmlEsc(_winAnchorIso || 'inception')} → ${_htmlEsc(_winUpperIso)}</span>` : '';
 
   const _totalReturnTitle = 'Current portfolio value minus net contributed (deposits − withdrawals).  Same formula as the Top bar and the Overview tab — the "did I make money?" answer.\n\nIt is NOT Realized + Unrealized, and no simple sum reaches it. Sale proceeds get redeployed into new positions, so a dollar of gain can end up inside the cost basis of something you still hold rather than in either figure. Income arrives as cash without being a realized gain on any lot, and cash outside Savings accounts is not in the holdings value.\n\nTreat Realized and Unrealized as two views of the portfolio, not two halves of this number.';
 
@@ -1577,7 +1577,7 @@ ${_rowSpan}`
       spyCell = `<td class="num"><span class="${cls}">${r.spy_pct >= 0 ? '+' : ''}${r.spy_pct.toFixed(2)}%</span></td>`;
     }
     return `<tr>
-      <td><b>${r.year}</b></td>
+      <td><b>${_htmlEsc(r.year)}</b></td>
       <td class="num">${fmtMoney(r.start)}</td>
       <td class="num">${fmtMoney(r.end)}</td>
       <td class="num">${fmtMoney(r.net)}</td>
@@ -1874,7 +1874,7 @@ ${_rowSpan}`
     </div>`;
   const benchChartParts = [];
   if (_rebaseActive) {
-    benchChartParts.push(`All comparison lines rebased to portfolio's value on ${windowedHistory[0].date} (Schwab-style) — read window-relative deltas directly off the chart.`);
+    benchChartParts.push(`All comparison lines rebased to portfolio's value on ${_htmlEsc(windowedHistory[0].date)} (Schwab-style) — read window-relative deltas directly off the chart.`);
   }
   if (benchFilterActive) {
     benchChartParts.push(`<b>SPY/BND/VXUS lines</b> simulate the same cash flows (deposits + withdrawals) on the chosen ${performanceAccountFilter === '__retirement__' ? 'retirement accounts' : performanceAccountFilter === '__investments__' ? 'investment accounts' : performanceAccountFilter === '__taxable__' ? 'taxable accounts' : _htmlEsc(performanceAccountFilter)} but invested in the benchmark instead.  Apples-to-apples: deposits buy benchmark shares, withdrawals sell shares.  Anchored at the portfolio's value on the window-start date.`);
@@ -2043,7 +2043,7 @@ ${spanNote}`
     <div class="section-header" style="margin-top:24px;">
       <h2><span style="color:var(--accent);">Your Portfolio vs SPY Benchmark</span></h2>
     </div>
-    <div class="scope-context">Chart: ${windowedHistory[0]?.date || '—'} → ${windowedHistory[windowedHistory.length - 1]?.date || '—'} · ${_htmlEsc(selectedAccountLabel)}. Return comparison: ${returnSpan}.</div>
+    <div class="scope-context">Chart: ${_htmlEsc(windowedHistory[0]?.date || '—')} → ${_htmlEsc(windowedHistory[windowedHistory.length - 1]?.date || '—')} · ${_htmlEsc(selectedAccountLabel)}. Return comparison: ${returnSpan}.</div>
     ${benchToggleHtml}
     ${benchChart}
     <details class="perf-benchmark-details" id="perfBenchmarkDetails"${openDetails.has('perfBenchmarkDetails') ? ' open' : ''}>
@@ -2167,6 +2167,7 @@ function setPerfView(v) {
   if (bK) bK.classList.toggle('active', _perfView === 'risk');
   if (bR) bR.setAttribute('aria-pressed', String(_perfView === 'returns'));
   if (bK) bK.setAttribute('aria-pressed', String(_perfView === 'risk'));
+  applyScrollRegionFocus();
 }
 
 registerTabRenderer('performance', renderPerformance);

@@ -77,6 +77,8 @@ python -m src.main --refresh-caches      # force-refresh splits cache and
 python -m src.main --export-snapshot snap.json   # bundle data/ → 1 JSON file
 python -m src.main --import-snapshot snap.json   # restore data/ from a snapshot
                                                  #   (--force to overwrite)
+python -m src.main --export-viewer-snapshot exports/viewer.snapshot.json
+                                                 # package the existing dashboard data
 ```
 
 Open `exports/dashboard.html` in any browser. It's a single file with the
@@ -125,6 +127,54 @@ the latest closing date among its consumers. Ordinary ticker renames and
 fund reorganizations still require correct transaction and mapping evidence;
 an unavailable quote does not automatically replace the security.
 
+### Open your snapshot on the demo site
+
+The [Pages demo](https://akourk.github.io/finledger/) opens with fictional data.
+Choose **Open your snapshot** and select a viewing snapshot, or drag the file
+onto the page. On a phone, use the file picker to select a file available in
+Files. The browser reads the selected JSON locally; it does not upload the
+financial contents or fetch market prices. **Return to demo** clears the local
+view, and reloading the page opens the fictional demo again. The viewer does
+not save the imported snapshot to browser storage.
+
+Create the viewing file on the computer where you normally run FinLedger:
+
+```bash
+python -m src.main --export-viewer-snapshot exports/viewer.snapshot.json
+```
+
+This command reads the already computed `exports/transactions.json`. It does
+not import CSVs, refresh prices, run analytics, or change caches. If the prior
+pipeline used a custom output path, select that source with `-o`:
+
+```bash
+python -m src.main -o exports/custom.json --export-viewer-snapshot exports/viewer.snapshot.json
+```
+
+Move the file privately to the device where you want to view it. Once the file
+is available there, the publishing computer can be asleep or off. Loading the
+website still needs an internet connection; this feature does not install an
+offline application or synchronize files automatically.
+
+The file contains the complete calculated dashboard data, including historical
+values and analytics. It stays pinned to its exported **As of** date. Filters
+and interactive charts use those existing observations. For new transactions
+or prices, run the appropriate normal update on the computer and export a new
+viewing file. Missing information stays missing; the website never substitutes
+live quotes.
+
+Viewing snapshots are private, unencrypted JSON with format `finledger-viewer`,
+version `1`. The viewer accepts files up to 25 MiB and validates their structure
+before replacing the current view. An invalid file leaves the current view
+available. Keep viewing files out of Git, public hosting, and public sharing.
+The site publishes only its code and independently generated fictional data.
+
+Version 1 conservatively rejects text containing `<` or `>` and reserved
+object keys, as well as malformed dates or financial field types. Ordinary
+quotes, apostrophes, ampersands, and Unicode names are supported. A rejected
+export leaves the original computed JSON and any previous viewing file intact;
+do not alter financial records merely to work around a validation error.
+
 ### Portable snapshots
 
 `--export-snapshot` bundles every CSV in `data/` into a single JSON file
@@ -132,6 +182,10 @@ an unavailable quote does not automatically replace the security.
 side.  Use this to move your portfolio between machines without copying
 30+ files individually.  Existing files are preserved unless you pass
 `--force`.
+
+This raw-CSV backup is different from a viewing snapshot. Use
+`--export-viewer-snapshot` for the demo site's **Open your snapshot** button;
+renaming a raw backup to another `.json` filename does not convert it.
 
 Runtime caches and proxy mappings stay local and are not part of the CSV
 snapshot or a fresh checkout. The next normal run fetches missing market data;

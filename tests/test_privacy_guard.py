@@ -75,6 +75,42 @@ def test_force_added_private_file_cannot_hide_behind_gitignore(repo):
     assert all('statement' not in f.path for f in findings)
 
 
+@pytest.mark.parametrize('name', ['viewer.json', 'viewer.JSON', 'report.txt',
+                                  'samples/viewer.json', 'tests/fixtures/viewer.json'])
+@pytest.mark.parametrize('bundle', [
+    {'format': 'finledger-viewer', 'version': 1, 'data': {}},
+    {'format': 'finledger-viewer', 'version': 999, 'data': {}},
+    {'data': {'transactions': [], 'holdings': []}},
+])
+def test_viewer_snapshot_cannot_be_published_under_another_name(repo, name, bundle):
+    root, git = repo
+    target = root / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(bundle))
+    git('add', '-f', name)
+    assert any(f.rule == 'unapproved-viewer-snapshot'
+               for f in G.scan_scope(root, 'staged', []))
+    assert any(f.rule == 'unapproved-viewer-snapshot'
+               for f in G.inspect_file(name, target.read_bytes(), '100644', [], artifact=True))
+
+
+def test_intermediate_viewer_snapshot_commit_is_rejected(repo):
+    root, git = repo
+    base = git('rev-parse', 'HEAD')
+    target = root / 'viewer.json'
+    target.write_text(json.dumps({'format': 'finledger-viewer', 'version': 1,
+                                 'data': {'transactions': [], 'holdings': []}}))
+    git('add', 'viewer.json')
+    git('commit', '-m', 'Add fictional runtime export')
+    bad = git('rev-parse', 'HEAD')
+    git('rm', 'viewer.json')
+    git('commit', '-m', 'Remove runtime export')
+    head = git('rev-parse', 'HEAD')
+    commits = G.outgoing(root, f'refs/heads/main {head} refs/heads/main {base}\n')
+    assert any(f.rule == 'unapproved-viewer-snapshot' and f.revision == bad[:12]
+               for f in G.scan_commits(root, commits, []))
+
+
 def test_intermediate_outgoing_commit_is_scanned(repo):
     root, git = repo
     base = git('rev-parse', 'HEAD')

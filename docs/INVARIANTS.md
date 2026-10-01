@@ -2297,6 +2297,41 @@ gets fetched.  Reach for this tool again after any change to fetch
 gating, or whenever a historical figure looks off in a way basis and
 transactions can't explain.
 
+## Local viewing snapshots
+
+Viewing snapshots package already calculated dashboard data; they do not
+recompute accounting, import transactions, fetch prices, or update caches.
+`--export-viewer-snapshot` reads the existing JSON export selected by `-o` and
+returns before market-data preflight. Its finite JSON envelope uses format
+`finledger-viewer`, version `1`, an authoritative `as_of` date, and `data`.
+The cutoff follows the dashboard's existing date precedence. Financial payload
+values are preserved rather than rounded again. The existing raw-CSV backup
+format below remains separate.
+
+Validate the complete bounded file before replacing a destination or live
+view. Source aliases and destinations within input/cache directories must not
+overwrite ledger state. Export and browser validators share format, size, date,
+and structural rules; new failure boundaries belong in
+`tests/test_viewer_snapshot.py` and `tests/test_static_viewer.py`.
+Version 1 rejects angle brackets in string values and keys, prototype-related
+keys, and non-hex action colors. The conservative text boundary is intentional:
+the legacy renderer contains numeric HTML interpolations and inline handlers.
+Ordinary punctuation and Unicode labels remain valid. Do not relax the boundary
+without reviewing output contexts and extending hostile-input browser tests.
+The isolated frame and its content security policy supplement validation; they
+do not make arbitrary executable input safe.
+
+The Pages artifact still contains only independently generated fictional data.
+The public loader must keep local snapshot contents out of requests, URLs,
+storage, and public provenance. Each loaded portfolio uses a fresh rendering
+context; replacing it or returning to the demo must discard prior view state.
+Late asynchronous reads must not resurrect a cleared or superseded snapshot.
+Reload starts with the demo. Invalid imports preserve the current view and show
+a generic error without echoing financial fields. `tools/viewer_smoke.js`
+exercises local import, interactions, reset, and request/storage boundaries.
+The publication scanner rejects viewer-envelope files regardless of claimed
+fictional provenance; its staged and outgoing checks include renamed exports.
+
 ## Snapshot feature
 
 `src/snapshot.py` bundles every CSV in `data/` into a single JSON file

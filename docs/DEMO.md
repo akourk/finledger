@@ -17,6 +17,14 @@ Open `_site/index.html`. The page needs no server, account, API key, external
 script, or live market connection. `npm test` runs ordinary keyboard/browser
 interactions and axe accessibility scans against the final bannered page.
 
+**Open your snapshot** also accepts a locally selected viewing JSON, produced
+with `--export-viewer-snapshot`. It replaces the displayed fictional data with
+that file's computed portfolio inside an isolated browser view. No personal
+file is uploaded or added to the published artifact. The label changes to a
+local snapshot and its as-of date. **Return to demo** clears that view; a page
+reload returns to the fictional sample. See the [viewing workflow](USAGE.md#open-your-snapshot-on-the-demo-site)
+for export commands and the distinction from raw-CSV backup snapshots.
+
 The favicon lives in `src/dashboard/template.html` as an embedded SVG. Local
 exports and the public demo share it, with no separate icon file or network
 request needed when opening a saved dashboard.

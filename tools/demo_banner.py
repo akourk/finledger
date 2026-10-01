@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from tools.build_sample_snapshot import AS_OF_DATE
+from src.dashboard.viewer import inject_viewer
 
 REPO = "https://github.com/akourk/finledger"
 PREVIEW_IMAGE = "https://raw.githubusercontent.com/akourk/finledger/main/docs/img/dashboard.png"
@@ -65,6 +66,7 @@ def inject(html: str) -> str:
         raise ValueError("demo dashboard is missing its keyboard skip link")
     if "</head>" not in html:
         raise ValueError("demo dashboard is missing its document head")
+    html = inject_viewer(html)
     html = html.replace(_SKIP_LINK_END, _SKIP_LINK_END + "\n" + BANNER, 1)
     html = html.replace("</head>", HEAD + "</head>", 1)
     html = html.replace(

@@ -342,7 +342,9 @@ def inspect_file(path: str, data: bytes, mode: str, tokens: list[str], *, artifa
     out.extend(cache_findings(path, data))
     if not artifact and len(data) > 50000 and "const DATA = {" in text and "<html" in text.lower():
         out.append(Finding(path, "generated-dashboard"))
-    if path.endswith(".json"):
+    # Inspect JSON-shaped content even when a private export was renamed to a
+    # different extension. A filename is not a publication boundary.
+    if path.lower().endswith(".json") or text.lstrip().startswith("{"):
         try:
             obj = json.loads(text)
         except ValueError:
@@ -350,6 +352,14 @@ def inspect_file(path: str, data: bytes, mode: str, tokens: list[str], *, artifa
         if isinstance(obj, dict) and isinstance(obj.get("files"), dict) and "version" in obj:
             if path != "samples/portfolio.snapshot.json":
                 out.append(Finding(path, "unapproved-portfolio-snapshot"))
+        if isinstance(obj, dict) and (obj.get("format") == "finledger-viewer"
+                or (isinstance(obj.get("data"), dict)
+                    and "transactions" in obj["data"]
+                    and any(k in obj["data"] for k in ("holdings", "retirement_meta", "basis_totals")))):
+            # Viewer exports are private runtime artifacts, including empty or
+            # purportedly synthetic files. Tests construct them temporarily;
+            # the public demo embeds only independently verified sample data.
+            out.append(Finding(path, "unapproved-viewer-snapshot"))
         if not artifact and isinstance(obj, dict) and not path.startswith(("samples/", "tests/fixtures/")):
             if ("transactions" in obj and any(k in obj for k in ("holdings", "retirement_meta", "basis_totals"))):
                 out.append(Finding(path, "private-ledger-export"))
