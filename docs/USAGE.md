@@ -140,8 +140,10 @@ not save the imported snapshot to browser storage.
 On a phone, the bottom navigation keeps **Overview**, **Holdings**, and
 **Performance** within reach in portrait and short landscape windows. **More**
 opens the full section list. The compact
-file toolbar stays above your snapshot, with **Change file**, **Return to demo**,
-and **Help**. The dashboard fills the remaining screen and scrolls as one view.
+file toolbar keeps the local snapshot date and a **File** button in one row.
+Open **File** for **Change file**, **Return to demo**, and **Help**; these controls
+appear over the dashboard. The dashboard fills the remaining screen and scrolls
+as one view.
 
 Create the viewing file on the computer where you normally run FinLedger:
 

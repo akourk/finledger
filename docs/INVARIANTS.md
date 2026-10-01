@@ -867,7 +867,11 @@ Normal local output lives in `exports/transactions.json` and
     rerenders. Active filters remain visible in their summaries; benchmark
     buttons restore keyboard focus. Overview primary and supporting cards
     consume the same calculations. The viewer controls and iframe host remain
-    direct body children, outside the collapsible portfolio header. The mobile
+    direct body children, outside the collapsible portfolio header. The loaded
+    viewer toolbar reserves one touch-height row; its File disclosure overlays
+    the child and is bounded by the space below the actual toolbar (including
+    validation errors). Canceling file selection preserves the snapshot and
+    returns focus to the visible File trigger; reset restores Open snapshot. The mobile
     regression checks this geometry, filter reset, disclosure state, selected
     dates, and primary-result visibility in both the demo and private viewer.
     The demo banner keeps its fictional designation visible while

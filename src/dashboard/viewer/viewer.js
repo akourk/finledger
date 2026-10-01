@@ -5,6 +5,8 @@
   const renderer = document.getElementById('finledger-renderer').textContent.trimStart();
   const openButton = document.getElementById('snapshot-open');
   const help = document.getElementById('snapshot-help');
+  const menu = document.getElementById('snapshot-menu');
+  const menuToggle = document.getElementById('snapshot-menu-toggle');
   const skip = document.querySelector('.skip-link');
   const input = document.getElementById('snapshot-file');
   const reset = document.getElementById('snapshot-reset');
@@ -67,9 +69,37 @@
     return snapshot;
   }
   function discardPending() { clearTimeout(pendingTimer); pendingTimer = null; if (pending) { pending.remove(); pending = null; } }
+  function sizeMenu() {
+    if (!current || !menu.open) return;
+    const available = window.innerHeight - controls.getBoundingClientRect().bottom - 12;
+    menu.style.setProperty('--snapshot-menu-height', Math.max(0, available) + 'px');
+  }
+  menu.addEventListener('toggle', sizeMenu);
+  window.addEventListener('resize', sizeMenu);
+  function closeMenu(restoreFocus = false) {
+    if (!current) return;
+    menu.open = false;
+    help.open = false;
+    if (restoreFocus) menuToggle.focus();
+  }
+  menu.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && current && menu.open) {
+      event.preventDefault();
+      closeMenu(true);
+    }
+  });
+  document.addEventListener('click', event => {
+    if (current && menu.open && !menu.contains(event.target)) closeMenu();
+  });
+  // The opaque child cannot bubble pointer events to the toolbar. Losing
+  // parent focus to that frame dismisses File without reading child data.
+  window.addEventListener('blur', () => {
+    setTimeout(() => { if (current && document.activeElement === current) closeMenu(); }, 0);
+  });
   function showError() {
     error.textContent = 'Could not open this file. Choose a supported FinLedger viewer JSON snapshot (version 1, up to 25 MiB), with valid dates, numbers and plain-text labels. Your previous view is unchanged.';
     error.hidden = false;
+    sizeMenu();
   }
   function frameDocument(snapshot) {
     const nonceBytes = crypto.getRandomValues(new Uint8Array(16));
@@ -113,7 +143,7 @@
     current = pending; pending = null;
     current.className = '';
     document.body.classList.add('viewer-active');
-    help.open = false;
+    closeMenu(menu.contains(document.activeElement));
     openButton.textContent = 'Change file';
     if (skip) { skip.href = '#snapshot-host'; skip.textContent = 'Skip to snapshot dashboard'; }
     current.contentWindow.postMessage({type:'finledger-viewer-visible'}, '*');
@@ -122,15 +152,15 @@
       element.classList.add('viewer-demo-hidden');
     });
     reset.hidden = false;
-    status.textContent = 'Loaded locally · As of ' + current.dataset.asOf;
+    status.textContent = 'Local snapshot · ' + current.dataset.asOf;
   });
-  openButton.addEventListener('click', () => input.click());
+  openButton.addEventListener('click', () => { closeMenu(true); input.click(); });
   input.addEventListener('change', () => { if (input.files.length) open(input.files[0]); });
   reset.addEventListener('click', () => {
     ++generation; discardPending();
     if (current) current.remove(); current = null;
     document.body.classList.remove('viewer-active');
-    help.open = false; openButton.textContent = 'Open snapshot';
+    menu.open = true; help.open = false; openButton.textContent = 'Open snapshot';
     if (skip) { skip.href = '#main-content'; skip.textContent = 'Skip to dashboard content'; }
     input.value = ''; reset.hidden = true; error.hidden = true;
     demo.forEach(element => { element.classList.remove('viewer-demo-hidden'); });

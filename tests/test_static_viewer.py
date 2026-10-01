@@ -126,15 +126,15 @@ function element(id) {
     classList:{add:n=>names.add(n),remove:n=>names.delete(n),contains:n=>names.has(n)},
     addEventListener:(name,callback)=>events.set(name,callback),emit:name=>events.get(name)?.(),
     focus(){focused=this.id;},click(){this.clicks=(this.clicks||0)+1;this.emit('click');},
-    setAttribute(){},append(child){this.child=child;},remove(){this.removed=true;},
+    contains(){return false;},setAttribute(){},append(child){this.child=child;},remove(){this.removed=true;},
     contentWindow:{postMessage:(data,target)=>messages.push({data,target})}};
 }
-for (const id of ['snapshot-open','snapshot-help','snapshot-file','snapshot-reset','snapshot-host',
+for (const id of ['snapshot-open','snapshot-help','snapshot-menu','snapshot-menu-toggle','snapshot-file','snapshot-reset','snapshot-host',
  'snapshot-status','snapshot-error','snapshot-controls','demo-intro','tabnav','main-content',
  'mobile-navigation','mobile-sections','portfolioContext','body','skip','topbar','snapshot-config','finledger-renderer']) elements.set(id,element(id));
 elements.get('snapshot-config').textContent=JSON.stringify(input.config);
 elements.get('finledger-renderer').textContent='const DATA = {};';
-const document={getElementById:id=>elements.get(id),body:elements.get('body'),
+const document={addEventListener(){},getElementById:id=>elements.get(id),body:elements.get('body'),
  querySelector:selector=>elements.get(selector==='.skip-link'?'skip':'topbar'),createElement:()=>element('iframe')};
 const sandbox={document,window:{addEventListener:(name,fn)=>listeners.set(name,fn)},
  crypto:{getRandomValues:bytes=>bytes.fill(1)},setTimeout:()=>1,clearTimeout:()=>{}};
@@ -152,12 +152,15 @@ async function select(value) {
  listeners.get('message')({source:frame.contentWindow,data:{type:'finledger-viewer-ready'}});
  assert.equal(document.body.classList.contains('viewer-active'),true);
  assert.equal(elements.get('snapshot-open').textContent,'Change file');
+ assert.equal(elements.get('snapshot-menu').open,false);
+ elements.get('snapshot-open').click();assert.equal(focused,'snapshot-menu-toggle');
  for(const id of ['mobile-navigation','mobile-sections','main-content','portfolioContext']) assert.equal(elements.get(id).classList.contains('viewer-demo-hidden'),true);
  assert.equal(elements.get('skip').href,'#snapshot-host');
  assert.deepEqual(JSON.parse(JSON.stringify(messages)),[{data:{type:'finledger-viewer-visible'},target:'*'}],'only fixed lifecycle message, no financial fields');
  await select({format:'unsupported'});assert.equal(frame.removed,undefined,'invalid file keeps current view');
  elements.get('snapshot-reset').click();assert.equal(frame.removed,true);
  assert.equal(document.body.classList.contains('viewer-active'),false);
+ assert.equal(elements.get('snapshot-menu').open,true);
  assert.equal(elements.get('snapshot-open').textContent,'Open snapshot');assert.equal(focused,'snapshot-open');
  assert.equal(elements.get('snapshot-file').value,'');assert.equal(elements.get('skip').href,'#main-content');
  for(const id of ['mobile-navigation','mobile-sections','main-content','portfolioContext']) assert.equal(elements.get(id).classList.contains('viewer-demo-hidden'),false);

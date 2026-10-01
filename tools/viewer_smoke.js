@@ -37,7 +37,7 @@ async function main() {
     await (await page.$('#snapshot-file')).uploadFile(file);
   };
   const active = () => page.frames().find(frame => frame.parentFrame());
-  const loaded = () => page.waitForFunction(() => document.getElementById('snapshot-status').textContent.startsWith('Loaded locally'));
+  const loaded = () => page.waitForFunction(() => document.getElementById('snapshot-status').textContent.startsWith('Local snapshot'));
   const rejected = () => page.waitForFunction(() => !document.getElementById('snapshot-error').hidden);
   try {
     await page.setViewport({width:1440,height:1000});
@@ -46,6 +46,20 @@ async function main() {
     const demoSummary = await page.$eval('#stats', element => element.textContent);
     await choose(snapshot); await loaded();
     let frame = active();
+    assert.equal(await page.$eval('#snapshot-menu', el => el.open), false);
+    assert.equal(await page.$eval('#snapshot-open', el => el.checkVisibility()), false, 'closed File hides infrequent actions');
+    await page.click('#snapshot-menu-toggle');
+    const chooserPromise = page.waitForFileChooser();
+    await page.focus('#snapshot-open');
+    await page.keyboard.press('Enter');
+    await (await chooserPromise).cancel();
+    assert.equal(await page.$eval('#snapshot-menu', el => el.open), false, 'file picker closes the menu');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'snapshot-menu-toggle', 'cancel leaves visible File focus');
+    assert.equal(active(), frame, 'cancel retains the current snapshot');
+    await page.click('#snapshot-menu-toggle');
+    await frame.click('.tb-portfolio-value');
+    await page.waitForFunction(() => !document.getElementById('snapshot-menu').open);
+
     assert.equal(await frame.$eval('#stats', element => element.textContent), demoSummary, 'same exported values yield same summary');
     assert.equal(await frame.$('#demo-intro'),null);
     assert.equal(await frame.$('#topBarRefresh'),null);
@@ -75,6 +89,18 @@ async function main() {
     for (const mutate of [s=>s.version=2,s=>s.data.history[0].date='2026-02-30',s=>s.data.history[0].date='<img src=x>',s=>s.data.analytics.reconciliation.summary.off='<svg onload=alert(1)>',s=>s.data.action_catalog.actions[0].color='red" onpointerover="window.injected=true',s=>s.data.transactions[0].amount='123']) {
       const bad=structuredClone(snapshot);mutate(bad);await choose(bad);await rejected();assert.equal(active(),original,'invalid file preserves current view');
     }
+    // An error raises the toolbar; File must use the actual remaining height.
+    await page.setViewport({width:720,height:390});
+    await page.click('#snapshot-menu-toggle');
+    await page.click('#snapshot-help summary');
+    await page.waitForFunction(() => {
+      const panel=document.querySelector('.snapshot-actions').getBoundingClientRect();
+      return panel.bottom <= innerHeight && panel.right <= innerWidth && panel.left >= 0;
+    });
+    assert.equal(await page.$eval('#snapshot-error', el => el.checkVisibility()), true);
+    assert.equal(await page.$eval('#snapshot-status', el => el.textContent), 'Local snapshot · 2026-06-30');
+    await page.focus('#snapshot-help summary'); await page.keyboard.press('Escape');
+    await page.setViewport({width:1440,height:1000});
     await choose('Date,Amount\n2026-01-01,3\n','fictional.csv');await rejected();
     await choose({format:'finledger-snapshot',files:{}});await rejected();
     await page.evaluate(() => {
@@ -98,6 +124,7 @@ async function main() {
     await checkPrivateAccessibility(frame,'mobile performance risk');
     // Delay a file read, reset, then resolve it: private state must stay destroyed.
     await page.evaluate(s=>{window.finishViewerRead=null;const file=new File(['{}'],'late.json');file.text=()=>new Promise(resolve=>{window.finishViewerRead=()=>resolve(JSON.stringify(s));});const transfer=new DataTransfer();transfer.items.add(file);const input=document.getElementById('snapshot-file');input.files=transfer.files;input.dispatchEvent(new Event('change'));},snapshot);
+    await page.click('#snapshot-menu-toggle');
     await page.click('#snapshot-reset');
     assert.equal(await page.evaluate(()=>document.activeElement.id),'snapshot-open');
     await page.evaluate(()=>{window.finishViewerRead();delete window.finishViewerRead;});

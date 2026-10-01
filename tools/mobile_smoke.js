@@ -105,7 +105,7 @@ async function checkSheet(surface, state, axeSource) {
       const parentFocus = await surface.page().evaluate(() => {
         const active = document.activeElement;
         return active === document.body && document.body.tabIndex < 0
-          || active.matches('#snapshot-open, #snapshot-reset, #snapshot-help summary, .skip-link[href="#snapshot-host"], #snapshot-host iframe:not(.snapshot-pending)');
+          || active.matches('#snapshot-open, #snapshot-reset, #snapshot-help summary, #snapshot-menu-toggle, .skip-link[href="#snapshot-host"], #snapshot-host iframe:not(.snapshot-pending)');
       });
       assert.equal(parentFocus, true, state + ' traversal reaches only intentional parent viewer controls');
     }
@@ -239,9 +239,23 @@ async function privateViewport(page, frame, state) {
   assert.ok(Math.abs(geometry.frame.left) <= 1 && Math.abs(geometry.frame.right - geometry.width) <= 1,
     state + ' iframe spans viewport width');
   assert.ok(Math.abs(geometry.frame.bottom - geometry.height) <= 1, state + ' iframe fills remaining viewport');
-  assert.ok(geometry.frame.top >= 44 && geometry.frame.top < geometry.height / 2,
-    state + ' compact loader leaves room for dashboard');
-  const controls = await page.$$eval('#snapshot-open, #snapshot-reset, #snapshot-help summary', elements => elements.map(element => {
+  assert.ok(geometry.frame.top >= 44 && geometry.frame.top <= 48,
+    state + ' loaded toolbar uses only one touch-height row');
+  const iframeHeight = await frame.evaluate(() => innerHeight);
+  await page.click('#snapshot-menu-toggle');
+  const menuBox = await page.$eval('.snapshot-actions', el => {
+    const box=el.getBoundingClientRect();
+    return {bottom:box.bottom,right:box.right,height:innerHeight,width:innerWidth};
+  });
+  assert.ok(menuBox.bottom <= menuBox.height && menuBox.right <= menuBox.width, state + ' File fits the viewport');
+  assert.equal(await frame.evaluate(() => innerHeight), iframeHeight, state + ' File does not resize dashboard');
+  const actions = await page.$$eval('#snapshot-open, #snapshot-reset, #snapshot-help summary', els => els.map(el => {
+    const box=el.getBoundingClientRect();return {width:box.width,height:box.height};
+  }));
+  assert.ok(actions.every(box => box.width >= 44 && box.height >= 44), state + ' File actions remain touch sized');
+  await page.click('#snapshot-status');
+  assert.equal(await page.$eval('#snapshot-menu', el => el.open), false, state + ' outside click closes File');
+  const controls = await page.$$eval('#snapshot-menu-toggle', elements => elements.map(element => {
     const box = element.getBoundingClientRect();
     return {width:box.width, height:box.height};
   }));
@@ -335,6 +349,7 @@ async function main() {
       const state = 'private ' + viewport.width + 'x' + viewport.height;
       await privateViewport(page, frame, state);
       if ([320, 390, 430].includes(viewport.width)) {
+        await page.click('#snapshot-menu-toggle');
         await page.click('#snapshot-help summary');
         const help = await page.$eval('.snapshot-help-content', element => {
           const box = element.getBoundingClientRect();
@@ -342,7 +357,10 @@ async function main() {
         });
         assert.ok(help.left >= 0 && help.right <= help.width && help.bottom <= help.height,
           state + ' loaded Help popover fits viewport');
-        await page.click('#snapshot-help summary');
+        await page.focus('#snapshot-help summary');
+        await page.keyboard.press('Escape');
+        assert.equal(await page.$eval('#snapshot-menu', el => el.open), false);
+        assert.equal(await page.evaluate(() => document.activeElement.id), 'snapshot-menu-toggle');
       }
       for (const section of SECTIONS) {
         await selectSection(frame, section);
@@ -373,6 +391,7 @@ async function main() {
     const available = await frame.$$eval('#mobile-section-list button', elements => elements.map(element => element.dataset.mobileTab));
     assert.deepEqual(available, SECTIONS.filter(section => !['options', 'crypto'].includes(section)), 'empty optional sections omitted');
     await page.keyboard.press('Escape');
+    await page.click('#snapshot-menu-toggle');
     await page.click('#snapshot-reset');
     assert.equal(page.frames().length, 1, 'reset destroys private iframe');
     assert.equal(await page.evaluate(() => document.activeElement.id), 'snapshot-open', 'reset restores loader focus');
