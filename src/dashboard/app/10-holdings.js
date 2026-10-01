@@ -240,6 +240,8 @@ function renderTopBarSummary() {
        </div>`);
   }
   el.innerHTML = parts.join('');
+  const compactValue = document.getElementById('portfolioContextValue');
+  if (compactValue) compactValue.textContent = fmtMoney(value);
 }
 renderTopBarSummary();
 
@@ -412,7 +414,30 @@ function initTabA11y() {
 }
 initTabA11y();
 
+// Width alone misses phones in landscape. Keep this predicate aligned with
+// styles.css and the browser navigation helper.
+const COMPACT_NAV_QUERY = '(max-width: 720px), (max-width: 1100px) and (max-height: 500px)';
+const portfolioContextOpen = new Map();
+function syncPortfolioContext(name) {
+  const context = document.getElementById('portfolioContext');
+  if (!context) return;
+  document.body.dataset.section = name;
+  context.open = !matchMedia(COMPACT_NAV_QUERY).matches
+    || (portfolioContextOpen.has(name) ? portfolioContextOpen.get(name) : name === 'overview');
+}
+document.querySelector('#portfolioContext > summary')?.addEventListener('click', () => {
+  portfolioContextOpen.set(document.body.dataset.section || 'overview',
+    !document.getElementById('portfolioContext').open);
+});
+// Hidden table geometry must be remeasured when its disclosure is revealed.
+document.addEventListener('toggle', event => {
+  if (event.target.matches?.('details') && event.target.open) {
+    requestAnimationFrame(() => applyScrollRegionFocus());
+  }
+}, true);
+
 function syncMobileNavigation(name) {
+  syncPortfolioContext(name);
   document.querySelectorAll('[data-mobile-tab]').forEach(button => {
     if (button.dataset.mobileTab === name) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
@@ -464,8 +489,9 @@ function initMobileNavigation() {
       window.scrollTo({top: main.getBoundingClientRect().top + window.scrollY - 16, behavior: 'instant'});
     });
   });
-  window.matchMedia('(max-width: 720px)').addEventListener('change', event => {
+  window.matchMedia(COMPACT_NAV_QUERY).addEventListener('change', event => {
     if (!event.matches) close();
+    syncPortfolioContext(document.querySelector('.tab-btn.active')?.dataset.tab || 'overview');
   });
   syncMobileNavigation(document.querySelector('.tab-btn.active')?.dataset.tab || 'overview');
 }
@@ -788,6 +814,9 @@ function renderHoldings() {
     }).join('') + '</tr>';
   }).join('');
 
+  const breakdownScope = document.getElementById('holdingsBreakdownScope');
+  if (breakdownScope) breakdownScope.textContent =
+    document.getElementById(HOLDINGS_VIEW_BTNS[holdingsView]).textContent + ' · ' + asOfDate;
   // Total value
   const total = data.reduce((s, r) => s + (typeof r.value === 'number' ? r.value : 0), 0);
   document.getElementById('holdingsTotalValue').textContent =
@@ -1130,6 +1159,10 @@ function renderByAssetTable() {
     renderPositionsTotal(totalValue, 'Market value of the filtered Table positions');
   }
   byAssetCountPill.textContent = `${filtered.length} / ${rows.length}`;
+  const filterSummary = document.getElementById('holdingsFilterSummary');
+  if (filterSummary) filterSummary.textContent =
+    (document.getElementById('byAssetAccountGroupFilter').value || 'All account groups') + ' · ' +
+    (document.getElementById('byAssetSectorFilter').value || 'All sectors');
   applyScrollRegionFocus();
 }
 

@@ -213,7 +213,7 @@ def test_historical_holdings_overview_and_composition_reconcile_transit(tmp_path
         holdings: asOfHoldingsByAccount(), assets: asOfHoldingsByAsset(),
         groups: withPerformance(groupByBasisAware(asOfHoldingsByAccount(), 'account_group')),
         table: nodeFor('holdingsTbody').innerHTML, byAsset: nodeFor('byAssetTbody').innerHTML,
-        total: nodeFor('holdingsTotalValue').textContent, stats: nodeFor('stats').innerHTML,
+        total: nodeFor('holdingsTotalValue').textContent, stats: (nodeFor('stats').innerHTML + nodeFor('snapshotSecondary').innerHTML),
         allocation: ['Group', 'Type', 'Sector'].map(s => ({svg: nodeFor('allocationSvg' + s).innerHTML,
           legend: nodeFor('allocationLegend' + s).innerHTML})),
         accountOptions: ACCOUNT_OPTIONS, assetOptions: nodeFor('byAssetAccountGroupFilter').innerHTML,
@@ -271,7 +271,7 @@ def test_later_prices_do_not_change_a_selected_transit_snapshot(tmp_path):
     driver = """
       asOfDate = '2024-01-20'; renderStats();
       process.stdout.write(JSON.stringify({holdings: asOfHoldingsByAccount(),
-        stats: nodeFor('stats').innerHTML,
+        stats: (nodeFor('stats').innerHTML + nodeFor('snapshotSecondary').innerHTML),
         returns: historicalGroupPerformance(new Set(['Alpha', 'Beta']), asOfDate)}));
     """
     assert run_js(tmp_path, original, driver) == run_js(tmp_path, changed, driver)

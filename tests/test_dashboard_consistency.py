@@ -140,6 +140,15 @@ def find_cards(view: dict, pattern: str) -> list[dict]:
     return [c for c in view["cards"] if rx.search(c["label"])]
 
 
+def selected_card(view: dict, metric: str) -> dict:
+    # The whole-portfolio reference and selected summary may move independently.
+    # Select the explicitly scoped card, never the first/last duplicate label.
+    cards = [c for c in find_cards(view, rf"^{re.escape(metric)}(?:\s|$)")
+             if c["label"].strip() != metric]
+    assert len(cards) == 1, f"expected one selected {metric} card, got {cards}"
+    return cards[0]
+
+
 _MONEY = re.compile(r"([-+]?)\$([\d,]+(?:\.\d+)?)")
 
 
@@ -409,13 +418,8 @@ class TestAWindowLongerThanHistoryEqualsLifetime:
             wv = wide.get(filt)
             if wv is None:
                 continue
-            lcards = find_cards(lv, r"^Total Return")
-            wcards = find_cards(wv, r"^Total Return")
-            if not (lcards and wcards):
-                continue
-            # The last match is the windowed card; the first is the
-            # always-lifetime anchor card above the toggles.
-            a, b = self._money(lcards[-1]["value"]), self._money(wcards[-1]["value"])
+            a = self._money(selected_card(lv, "Total Return")["value"])
+            b = self._money(selected_card(wv, "Total Return")["value"])
             if a is None or b is None:
                 continue
             assert b == pytest.approx(a, abs=1.0), (
@@ -427,7 +431,7 @@ class TestAWindowLongerThanHistoryEqualsLifetime:
         assert checked >= 3, f"only {checked} filters compared"
 
     # Every dollar card in the windowed row has a twin in the
-    # always-lifetime anchor row above the toggles.  At filter=Total /
+    # always-lifetime reference.  At filter=Total /
     # window=lifetime each pair is one quantity, so the two must agree
     # to the displayed cent.
     ANCHOR_TWINS = ["Total Return", "Realized", "Unrealized",
@@ -487,7 +491,7 @@ class TestAWindowLongerThanHistoryEqualsLifetime:
         assert views, "no Total views rendered"
         seen = set()
         for v in views:
-            windowed = find_cards(v, r"^Unrealized")[-1]
+            windowed = selected_card(v, "Unrealized")
             assert "as of" in windowed["label"], (
                 f"[{v['window']}] windowed Unrealized is labelled "
                 f"{windowed['label']!r} — a level must not carry a window "
@@ -900,7 +904,7 @@ class TestACustomWindowEndsWhereItSaysItDoes:
     def test_the_card_reports_the_resolved_date_not_the_requested_one(self, custom):
         """Resolution is backward — the last snapshot at or before the
         request — and the card says which date it actually used."""
-        card = find_cards(custom, r"^Unrealized")[-1]
+        card = selected_card(custom, "Unrealized")
         assert custom["expected_end"] in card["label"], (
             f"Unrealized is labelled {card['label']!r}; expected it to "
             f"name the resolved snapshot {custom['expected_end']}"
@@ -917,8 +921,8 @@ class TestACustomWindowEndsWhereItSaysItDoes:
                      if x["filter"] == "Total" and x["window"] == "lifetime"), None)
         assert life is not None
         for metric in ("Unrealized", "Total Return"):
-            cur = money(find_cards(custom, rf"^{metric}(?:\s|$)")[-1]["value"])
-            latest = money(find_cards(life, rf"^{metric}(?:\s|$)")[-1]["value"])
+            cur = money(selected_card(custom, metric)["value"])
+            latest = money(selected_card(life, metric)["value"])
             assert cur is not None and latest is not None
             assert cur != pytest.approx(latest, abs=0.01), (
                 f"custom {metric} equals the latest-snapshot figure "

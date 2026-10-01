@@ -18,6 +18,8 @@
      page; visible only while focused. -->
 <a class="skip-link" href="#main-content">Skip to dashboard content</a>
 
+<details id="portfolioContext" class="portfolio-context" open>
+<summary><span>Portfolio <span class="latest-scope-label scope-label"></span></span><span id="portfolioContextValue"></span></summary>
 <div class="top-bar">
   <div class="top-bar-title">
     <h1>Portfolio Dashboard</h1>
@@ -29,6 +31,7 @@
           title="Reload the generated dashboard. Import or refresh your data first to see updated figures."
           onclick="window.location.reload()">↻ Reload page</button>
 </div>
+</details>
 
 <!-- Tabs follow the WAI-ARIA authoring-practices tabs pattern: the nav is
      a tablist, each button is a tab that owns its panel, and only the
@@ -62,18 +65,8 @@
     <button class="tbtn as-of-reset" onclick="setAsOfDate(null)">Latest</button>
   </div>
 
-  <!-- Main stat cards — moved up to be the first thing visible after
-       the as-of selector.  Six cards (down from twelve): redundant
-       Top-bar duplicates and inventory-style metadata trimmed. -->
+  <!-- Primary snapshot figures; supporting cards follow the history chart. -->
   <div class="stats" id="stats"></div>
-  <details class="metric-guide">
-    <summary>About these figures</summary>
-    <p>These cards, holdings, allocation, and recent transactions follow the selected snapshot.
-      The portfolio summary at the top always shows the latest export; the history chart has its own date range.</p>
-    <p>Unrealized P&amp;L compares open positions with their cost basis. Realized P&amp;L comes from closed lots.
-      Total Return compares portfolio value with net contributions; realized and unrealized P&amp;L do not simply add up to it.</p>
-  </details>
-
   <!-- Combined Status card (Attention + Data Health) and What's
        Changed card.  Side-by-side when both have content; either can
        be hidden when empty.  All collapsed by default. -->
@@ -86,6 +79,13 @@
   </div>
   <div id="historyBody">
     <div class="chart-quick-controls" id="historyQuickControls" aria-label="History chart controls"></div>
+    <div class="chart-wrap" id="chartWrap">
+      <svg class="chart-svg" id="chartSvg" preserveAspectRatio="none"
+           role="img"
+           aria-label="Line chart of total portfolio value over time, with optional cost-basis, net-contributed and benchmark overlays. The Year by Year table on the Planning tab carries the same history as text."></svg>
+      <div class="chart-tooltip" id="chartTooltip"></div>
+      <div class="chart-legend" id="chartLegend"></div>
+    </div>
     <details class="hist-options-collapsible" id="histControlsWrap">
       <summary class="hist-options-summary">
         <span class="dh-label">More chart options</span>
@@ -94,13 +94,6 @@
       </summary>
       <div class="controls hist-controls" id="histControls"></div>
     </details>
-    <div class="chart-wrap" id="chartWrap">
-      <svg class="chart-svg" id="chartSvg" preserveAspectRatio="none"
-           role="img"
-           aria-label="Line chart of total portfolio value over time, with optional cost-basis, net-contributed and benchmark overlays. The Year by Year table on the Planning tab carries the same history as text."></svg>
-      <div class="chart-tooltip" id="chartTooltip"></div>
-      <div class="chart-legend" id="chartLegend"></div>
-    </div>
     <details class="metric-guide chart-guide">
       <summary>How to read this chart</summary>
       <p>Portfolio value shows the balance over time. Net Contributed shows whole-portfolio deposits less withdrawals.
@@ -108,6 +101,19 @@
         Account mix shows where the balance is held. Changing this chart's range does not change the selected snapshot above.</p>
     </details>
   </div>
+
+  <details class="section-disclosure" id="snapshotBreakdown">
+    <summary>Snapshot breakdown <span class="scope-label" id="snapshotBreakdownDate"></span></summary>
+    <div class="stats snapshot-secondary" id="snapshotSecondary"></div>
+  <details class="metric-guide">
+    <summary>About these figures</summary>
+    <p>These cards, holdings, allocation, and recent transactions follow the selected snapshot.
+      The portfolio summary at the top always shows the latest export; the history chart has its own date range.</p>
+    <p>Unrealized P&amp;L compares open positions with their cost basis. Realized P&amp;L comes from closed lots.
+      Total Return compares portfolio value with net contributions; realized and unrealized P&amp;L do not simply add up to it.</p>
+  </details>
+
+  </details>
 
   <div class="overview-split">
     <div class="panel" id="topHoldingsPanel">
@@ -171,12 +177,14 @@
 <!-- ============================ HOLDINGS ============================ -->
 <div id="tab-holdings" class="tab-panel" role="tabpanel" aria-labelledby="tabbtn-holdings" tabindex="0">
   <div class="as-of-bar">
-    <label for="asOfPickerHoldings">View holdings as of</label>
+    <label for="asOfPickerHoldings">As of</label>
     <select id="asOfPickerHoldings" class="as-of-picker"
             onchange="setAsOfDate(this.value)"></select>
     <button class="tbtn as-of-reset" onclick="setAsOfDate(null)">Latest</button>
-    <span class="as-of-hint">Holdings and returns reflect the selected snapshot; open lots appear at the latest date.  Lot Method Comparison below is always lifetime.</span>
+    <span class="as-of-hint">Selected snapshot · open lots and P&amp;L board at latest date only</span>
   </div>
+  <details class="section-disclosure" id="holdingsBreakdown">
+    <summary>Holdings breakdown <span id="holdingsBreakdownScope" class="scope-label"></span></summary>
   <div class="section-header" id="holdingsHeader">
     <h2>Holdings summary <span class="as-of-label scope-label"></span></h2>
     <div class="toggle-group" role="group" aria-label="Group holdings by">
@@ -203,7 +211,9 @@
     </div>
   </div>
 
-  <div class="section-header" style="margin-top:32px;" id="byAssetHeader">
+  </details>
+
+  <div class="section-header" id="byAssetHeader">
     <h2>Positions &amp; lots <span class="as-of-label scope-label"></span></h2>
     <!-- Both layouts consume the exported positions. Board can combine
          a symbol across accounts; each layout retains its own filters. -->
@@ -215,17 +225,22 @@
   </div>
   <div id="boardBody" style="display:none;"></div>
   <div id="byAssetBody">
-    <p class="scope-context">Table filters apply only to this table. P&amp;L board keeps its own selection.</p>
     <div class="controls" id="byAssetControls">
       <input type="text" id="byAssetSearch" aria-label="Search holdings by symbol or sector" placeholder="Search symbol or sector..." />
+      <span class="pill" id="byAssetCountPill"></span>
+    </div>
+    <details class="section-disclosure filter-disclosure" id="holdingsFilters">
+      <summary>Table filters <span class="scope-label" id="holdingsFilterSummary">All account groups · All sectors</span></summary>
+      <p class="scope-context">Table filters apply only to this table. P&amp;L board keeps its own selection.</p>
+      <div class="controls">
       <select id="byAssetAccountGroupFilter" aria-label="Filter holdings by account group">
         <option value="">All account groups</option>
       </select>
       <select id="byAssetSectorFilter" aria-label="Filter holdings by sector">
         <option value="">All sectors</option>
       </select>
-      <span class="pill" id="byAssetCountPill"></span>
-    </div>
+      </div>
+    </details>
     <div class="table-wrap mini-scroll tall sticky-identity">
       <table>
         <caption class="sr-only">Positions by symbol and account. Activate a symbol's lot button to expand its tax lots.</caption>
@@ -288,9 +303,15 @@
   <div class="section-header">
     <h2><span style="color:var(--accent);">Transactions</span></h2>
   </div>
-  <div class="filter-bar" id="filterBar"></div>
   <div class="controls">
     <input type="text" id="search" aria-label="Search transactions across all columns" placeholder="Search all columns..." />
+    <span class="pill" id="countPill"></span>
+  </div>
+  <details class="section-disclosure filter-disclosure" id="transactionFilters">
+    <summary>Filters &amp; columns <span class="scope-label" id="transactionFilterSummary">All transactions · all dates</span></summary>
+    <button class="tbtn" id="resetTransactionFilters" onclick="resetTransactionFilters()">Clear filters</button>
+    <div class="filter-bar" id="filterBar"></div>
+    <div class="controls">
     <input type="text" id="symbolFilter" aria-label="Filter transactions by symbol" placeholder="Filter symbol (e.g. ETH-USD)" />
     <span class="date-range-group">
       <label class="sr-only" for="dateFrom">Transactions from date, inclusive</label>
@@ -305,8 +326,8 @@
       <button class="tbtn date-quick" data-range="all" title="All time (clear filter)">All</button>
     </span>
     <div class="col-toggle-wrap" id="colToggleWrap"></div>
-    <span class="pill" id="countPill"></span>
-  </div>
+    </div>
+  </details>
   <div class="table-wrap">
     <table>
       <caption class="sr-only">Full transaction ledger</caption>

@@ -141,6 +141,10 @@ def test_filtered_benchmark_and_type_membership_include_account_capital(tmp_path
 
 
 def _card(html, label):
+    # Performance has a separate whole-portfolio reference. Read the selected
+    # scope explicitly rather than depending on which repeated label comes last.
+    if 'id="perfSelectedSummary"' in html:
+        html = html.split('id="perfSelectedSummary"', 1)[1].split('</section>', 1)[0]
     matches = re.findall(
         r'<div class="label">' + label + r'.*?</div>\s*<div class="value">(.*?)</div>',
         html, re.DOTALL)

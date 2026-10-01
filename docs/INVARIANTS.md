@@ -861,6 +861,15 @@ Normal local output lives in `exports/transactions.json` and
     The desktop tablist retains its keyboard order. Reserve space for the bottom
     bar and device safe areas. `tools/mobile_smoke.js` checks demo and opaque
     viewer navigation, viewport boundaries, focus, and empty-tab behavior.
+    Compact navigation includes short landscape windows; CSS, router media
+    checks, and the browser selection helper must use the same predicate.
+    Secondary disclosures retain explicit financial scope and open state across
+    rerenders. Active filters remain visible in their summaries; benchmark
+    buttons restore keyboard focus. Overview primary and supporting cards
+    consume the same calculations. The viewer controls and iframe host remain
+    direct body children, outside the collapsible portfolio header. The mobile
+    regression checks this geometry, filter reset, disclosure state, selected
+    dates, and primary-result visibility in both the demo and private viewer.
     The demo banner keeps its fictional designation visible while
     collapsing project details; it is not part of personal dashboard output.
 

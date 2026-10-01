@@ -138,7 +138,8 @@ view, and reloading the page opens the fictional demo again. The viewer does
 not save the imported snapshot to browser storage.
 
 On a phone, the bottom navigation keeps **Overview**, **Holdings**, and
-**Performance** within reach. **More** opens the full section list. The compact
+**Performance** within reach in portrait and short landscape windows. **More**
+opens the full section list. The compact
 file toolbar stays above your snapshot, with **Change file**, **Return to demo**,
 and **Help**. The dashboard fills the remaining screen and scrolls as one view.
 
@@ -410,13 +411,24 @@ losers describe latest positions and lifetime gains across all accounts.
 Use the skip link to reach dashboard content by keyboard. When a navigation tab
 has focus, Left/Right switch tabs and Home/End select the first/last visible tab.
 Tab moves into the page controls. Sortable table headings support Enter/Space;
-lot disclosures are buttons. On narrow screens, the navigation and wide tables
+lot disclosures are buttons. On phones, section navigation stays at the bottom and wide tables
 scroll horizontally; overflowing table regions can also receive keyboard focus.
 An overflow cue appears only when horizontal scrolling is needed. Holdings and
 Board keep the identifying first column visible while scrolling; expanded lot
 details scroll normally. Touch controls have larger targets. Performance uses
 an account selector, common range buttons, and a More ranges menu on phones,
 with the full desktop controls retained on wider screens.
+
+Each section starts with its main information. On phones, the latest portfolio
+summary is expandable outside Overview. **Snapshot breakdown** holds the
+supporting Overview figures and definitions. Holdings starts with positions;
+**Holdings breakdown** opens the grouped summary, and **Table filters** shows
+account and sector choices. Performance keeps selected accounts, dates, and
+primary figures visible; chart options, annual returns, and position rankings
+are expandable. Transactions keeps search visible, with **Filters & columns**
+for additional controls and **Clear filters** to reset the search and filters.
+Collapsed filter summaries show the active choices. Expanded sections stay open
+when their data or selections change.
 
 Table and Board keep separate filters. In Board's **By Symbol** mode, choosing
 an account selects symbols held there, while their figures remain combined

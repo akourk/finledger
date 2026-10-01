@@ -12,7 +12,7 @@
   const status = document.getElementById('snapshot-status');
   const error = document.getElementById('snapshot-error');
   const controls = document.getElementById('snapshot-controls');
-  const demo = [document.getElementById('demo-intro'), document.querySelector('.top-bar'), document.getElementById('tabnav'), document.getElementById('main-content'), document.getElementById('mobile-navigation'), document.getElementById('mobile-sections')].filter(Boolean);
+  const demo = [document.getElementById('demo-intro'), document.getElementById('portfolioContext'), document.getElementById('tabnav'), document.getElementById('main-content'), document.getElementById('mobile-navigation'), document.getElementById('mobile-sections')].filter(Boolean);
   let generation = 0;
   let pending = null;
   let current = null;

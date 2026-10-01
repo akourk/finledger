@@ -905,7 +905,9 @@ function renderOverviewStatus() {
     <summary class="dh-summary dh-${dominant}">
       <span class="dh-label">Status</span>
       ${chips.join(' ')}
-      <span class="dh-hint">click to expand</span>
+      <span class="status-preview">${_htmlEsc([...alerts, ...issues]
+        .filter(item => ['warn', 'high'].includes(item.severity))
+        .sort((a, b) => sevRank[b.severity] - sevRank[a.severity])[0]?.message || '')}</span>
     </summary>
     <div class="dh-body">${body}</div>
   </details>`;

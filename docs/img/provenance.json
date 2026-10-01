@@ -6,7 +6,7 @@
   "source_sha256": "c278a355c22d54abecf024326e9517bb162dcb43d03f57c5a63e8bd6d079bd93",
   "snapshot_sha256": "deb05041d83b5f43882b518af0d9db95084ce1be4bb7f9c714afbfcc8dc0321b",
   "prices_sha256": "e4e33498981ac1905fe2e0d823320d48f3ca3734c09982fc69e4251168a11b38",
-  "artifact_sha256": "7f7c3ec006b9f87f6fb9d629ab5583e2d4e1c25c74c0fb52c8afb35d673588fd",
+  "artifact_sha256": "504e0fe590760d4a5ec7b6fa87b35439f9f13163f97bd8662c20748cb466586d",
   "visually_reviewed": true,
   "tool": "tools/capture_demo_screenshots.js",
   "viewport": {
@@ -14,9 +14,9 @@
     "height": 1100
   },
   "files": {
-    "dashboard.png": "553dabfac1bccd170866d7ff5aa16016ef17973ad64e0ff382e932b7dcde1733",
-    "holdings.png": "bba617243c421d9d938cf52bd305f98e2309c357c64f0427ae5ebbd62b324138",
-    "performance.png": "0ceddbfceb67da160c46646865906e3a240bf8b88d83cf7cd5b2f3fcef7086de",
-    "tax.png": "4aa1eb8bece500ffd3ace8aa45c0738a65735122aa7af8447f5d62ee09ed1c30"
+    "dashboard.png": "1083e7bb9d683b5bec5b706534a5933df0fc6e299cd2aefb96b0cdc96e698b57",
+    "holdings.png": "8a01e12c6853926ef83a8725f162bf0e29e70dfd4ea567065ed2067b20975bea",
+    "performance.png": "5fe0856b3c0008286faf7028f1439771071f71b39f4e7c0317bcd1347c0403f7",
+    "tax.png": "ab3cb144d291e642ada26b734be74d731d60fcb740f606d5340c85380e72564f"
   }
 }

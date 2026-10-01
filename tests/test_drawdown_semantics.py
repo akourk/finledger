@@ -100,10 +100,10 @@ def test_all_rendered_drawdowns_name_balance_and_calmar_is_absent(tmp_path):
     actual = run_js(tmp_path, data, """
       renderPerformance(); renderStats();
       const performance = NODES.get('performanceContent').innerHTML;
-      const current = NODES.get('stats').innerHTML;
+      const current = (NODES.get('stats').innerHTML + NODES.get('snapshotSecondary').innerHTML);
       asOfDate = '2024-02-29'; renderStats();
       process.stdout.write(JSON.stringify({performance, current,
-        historical: NODES.get('stats').innerHTML,
+        historical: (NODES.get('stats').innerHTML + NODES.get('snapshotSecondary').innerHTML),
         metrics: computeWindowedMetrics(null, 'lifetime'), errors}));
     """)
     assert not actual["errors"]
@@ -194,7 +194,7 @@ def test_historical_balance_drawdown_excludes_future_recovery(tmp_path):
     data["analytics"]["drawdown"] = compute_drawdown(history)
     actual = run_js(tmp_path, data, """
       asOfDate = '2024-02-29'; renderStats();
-      process.stdout.write(JSON.stringify(NODES.get('stats').innerHTML));
+      process.stdout.write(JSON.stringify((NODES.get('stats').innerHTML + NODES.get('snapshotSecondary').innerHTML)));
     """)
     assert "-40.00%" in actual
     assert any("balance drawdown" in label.lower() for label in _labels(actual))

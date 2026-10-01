@@ -141,6 +141,7 @@ async function checkHoldingsLayouts(page) {
     return {group: account.account_group, symbol: shared.symbol,
       symbolValue: fmtMoney(shared.value), accountValue: fmtMoney(account.value)};
   });
+  await page.click('#holdingsFilters > summary');
   await page.select('#byAssetAccountGroupFilter', fixture.group);
   const tableTotal = await page.$eval('#byAssetTotalValue', el => el.textContent);
   const tableRows = await page.$eval('#byAssetTbody', el => el.textContent);

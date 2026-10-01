@@ -131,7 +131,7 @@ function element(id) {
 }
 for (const id of ['snapshot-open','snapshot-help','snapshot-file','snapshot-reset','snapshot-host',
  'snapshot-status','snapshot-error','snapshot-controls','demo-intro','tabnav','main-content',
- 'mobile-navigation','mobile-sections','body','skip','topbar','snapshot-config','finledger-renderer']) elements.set(id,element(id));
+ 'mobile-navigation','mobile-sections','portfolioContext','body','skip','topbar','snapshot-config','finledger-renderer']) elements.set(id,element(id));
 elements.get('snapshot-config').textContent=JSON.stringify(input.config);
 elements.get('finledger-renderer').textContent='const DATA = {};';
 const document={getElementById:id=>elements.get(id),body:elements.get('body'),
@@ -152,7 +152,7 @@ async function select(value) {
  listeners.get('message')({source:frame.contentWindow,data:{type:'finledger-viewer-ready'}});
  assert.equal(document.body.classList.contains('viewer-active'),true);
  assert.equal(elements.get('snapshot-open').textContent,'Change file');
- for(const id of ['mobile-navigation','mobile-sections','main-content']) assert.equal(elements.get(id).classList.contains('viewer-demo-hidden'),true);
+ for(const id of ['mobile-navigation','mobile-sections','main-content','portfolioContext']) assert.equal(elements.get(id).classList.contains('viewer-demo-hidden'),true);
  assert.equal(elements.get('skip').href,'#snapshot-host');
  assert.deepEqual(JSON.parse(JSON.stringify(messages)),[{data:{type:'finledger-viewer-visible'},target:'*'}],'only fixed lifecycle message, no financial fields');
  await select({format:'unsupported'});assert.equal(frame.removed,undefined,'invalid file keeps current view');
@@ -160,7 +160,7 @@ async function select(value) {
  assert.equal(document.body.classList.contains('viewer-active'),false);
  assert.equal(elements.get('snapshot-open').textContent,'Open snapshot');assert.equal(focused,'snapshot-open');
  assert.equal(elements.get('snapshot-file').value,'');assert.equal(elements.get('skip').href,'#main-content');
- for(const id of ['mobile-navigation','mobile-sections','main-content']) assert.equal(elements.get(id).classList.contains('viewer-demo-hidden'),false);
+ for(const id of ['mobile-navigation','mobile-sections','main-content','portfolioContext']) assert.equal(elements.get(id).classList.contains('viewer-demo-hidden'),false);
  process.stdout.write('passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''

@@ -3321,7 +3321,7 @@ h2 > .scope-label, h3 > .scope-label { margin-left: 8px; }
   font-size: 0.9rem; text-align: left; cursor: pointer;
 }
 .mobile-section-list [aria-current="page"] { color: var(--on-accent); background: var(--accent); font-weight: 650; }
-@media (max-width: 720px) {
+@media (max-width: 720px), (max-width: 1100px) and (max-height: 500px) {
   :root {
     --bg: #10121a; --surface: #191d29; --border: #303647;
     --text: #edf0f7; --text-dim: #adb5c7; --accent: #bba7ff;
@@ -3374,4 +3374,105 @@ h2 > .scope-label, h3 > .scope-label { margin-left: 8px; }
   .perf-mobile-account { gap: 10px; }
   .perf-mobile-ranges { flex-wrap: wrap; }
   .perf-mobile-ranges select { max-width: none; flex: 1; }
+}
+
+/* Secondary information uses one predictable disclosure pattern. */
+.section-disclosure {
+  margin: 10px 0 16px; padding: 0 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--surface); min-width: 0;
+}
+.section-disclosure > summary {
+  cursor: pointer; min-height: 44px; padding: 11px 0; line-height: 1.5;
+  font-size: .82rem; color: var(--text); overflow-wrap: anywhere;
+}
+.section-disclosure > summary .scope-label { margin-left: 8px; }
+.section-disclosure[open] { padding-bottom: 12px; }
+.section-disclosure .section-header:first-of-type { margin-top: 12px; }
+.section-disclosure .controls { margin-top: 8px; }
+#stats { display: block; }
+.snapshot-primary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.snapshot-secondary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.status-preview { font-size: .78rem; font-weight: 400; line-height: 1.5; }
+.dh-hint { display: none; }
+.portfolio-context > summary { display: none; }
+.portfolio-context { margin-bottom: 16px; }
+.portfolio-context .top-bar { margin-bottom: 0; }
+.perf-view-guide { margin: 0; }
+.perf-view-guide p { margin: 0 0 8px; }
+#byAssetControls, #tab-transactions > .controls { margin-bottom: 0; }
+.filter-disclosure .controls > select { max-width: 100%; }
+
+@media (max-width: 720px), (max-width: 1100px) and (max-height: 500px) {
+  .portfolio-context {
+    border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface); padding: 0 12px; margin-bottom: 16px;
+  }
+  .portfolio-context > summary {
+    display: list-item; cursor: pointer; padding: 12px 0;
+    font-size: .8rem; line-height: 1.5; min-height: 44px;
+  }
+  .portfolio-context > summary .scope-label { font-size: .7rem; }
+  #portfolioContextValue { font-weight: 650; margin-left: 8px; white-space: nowrap; }
+  .portfolio-context[open] #portfolioContextValue { display: none; }
+  .portfolio-context .top-bar { display: flex; flex-wrap: wrap; padding-bottom: 10px; gap: 6px 10px; }
+  .portfolio-context .top-bar-summary { order: -1; width: 100%; border: 0; padding: 0 0 10px; gap: 10px; border-radius: 0; }
+  .portfolio-context .top-bar-title { flex: 1; }
+  .portfolio-context h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .portfolio-context .top-bar-title .latest-scope-label { display: none; }
+  .portfolio-context .subtitle { font-size: .68rem; margin: 0; }
+  .portfolio-context .top-bar-refresh { margin: 0; }
+  body[data-section="overview"] .mobile-section-heading { display: none; }
+  .as-of-bar { align-items: center; }
+  .as-of-bar label { flex: none; white-space: nowrap; }
+  .as-of-picker { flex: 1 1 160px; min-width: 160px; width: auto; }
+  .as-of-hint { flex-basis: 100%; }
+  #perfSelectedSummary > .section-header { margin-top: 12px; }
+  .perf-selected-details, .perf-reference, .perf-benchmark-details { margin: 10px 0; }
+  .perf-primary-summary .stat-card { padding: 10px; }
+  .metric-guide { margin: 4px 0 10px; }
+  .perf-view-guide { margin: 0; }
+  .section-disclosure { margin: 8px 0 12px; }
+  .section-disclosure > summary .scope-label { display: block; margin-left: 14px; }
+  .snapshot-secondary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .status-preview { flex-basis: 100%; }
+}
+/* Short landscape needs compact navigation, not portrait's stacked layout. */
+@media (min-width: 721px) and (max-width: 1100px) and (max-height: 500px) {
+  body { padding-top: 10px; padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
+  .mobile-navigation { padding-top: 2px; }
+  .mobile-navigation button { flex-direction: row; min-height: 44px; gap: 8px; font-size: .78rem; }
+  .mobile-navigation svg { width: 18px; height: 18px; }
+  .mobile-section-heading { margin-bottom: 10px; font-size: 1.1rem; }
+  .portfolio-context { margin-bottom: 10px; }
+  .portfolio-context .top-bar-summary { display: flex; justify-content: space-between; }
+  .portfolio-context .tb-value.tb-portfolio-value { font-size: 1.5rem; margin: 0; }
+  .desktop-only { display: none !important; }
+  .mobile-only { display: flex !important; }
+  .perf-controls { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 20px; }
+  .perf-controls .toggles-row { margin: 0; }
+  .perf-primary-summary .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .perf-primary-summary .value { font-size: 1.2rem; }
+  .perf-mobile-ranges { flex-wrap: wrap; }
+  .perf-controls select, .tbtn, .fbtn { min-height: 44px; }
+  .section-disclosure > summary .scope-label { display: inline; margin-left: 8px; }
+}
+@media (max-width: 360px) {
+  .as-of-picker { flex: 1 1 180px; min-width: 180px; }
+  .as-of-bar .as-of-reset { margin-left: auto; }
+  .portfolio-context > summary .scope-label { display: block; margin-left: 14px; }
+}
+@media (max-width: 720px) {
+  .snapshot-primary { margin-bottom: 8px; }
+  #historyHeader { margin-top: 16px; }
+  #byAssetControls, #tab-transactions > .controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+  #byAssetControls input, #tab-transactions > .controls input { min-width: 0; width: 100%; }
+  .as-of-bar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }
+  .as-of-picker { width: 100%; min-width: 0; }
+  .as-of-hint { grid-column: 1 / -1; }
+  .dh-summary { gap: 6px; padding: 10px; }
+  .dh-chip { font-size: .66rem; }
+}
+@media (max-width: 360px) {
+  .as-of-bar { grid-template-columns: minmax(0, 1fr) auto; }
+  .as-of-bar label { grid-column: 1 / -1; }
 }

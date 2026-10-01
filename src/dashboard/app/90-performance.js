@@ -1027,7 +1027,7 @@ function renderPerformance() {
   for (const entry of _performanceCharts.values()) entry.observer?.disconnect();
   _performanceCharts.clear();
   const focusedControl = document.activeElement?.id;
-  const openDetails = new Set(['perfLifetimeReference', 'perfDollarDetails', 'perfBenchmarkDetails', 'perfReturnMethods']
+  const openDetails = new Set(['perfLifetimeReference', 'perfDollarDetails', 'perfBenchmarkDetails', 'perfReturnMethods', 'perfChartOptions', 'perfAnnualReturns', 'perfPositionGains', 'perfViewGuide']
     .filter(id => document.getElementById(id)?.open));
 
   // Annual returns table (filtered to the selected account).  The
@@ -1529,7 +1529,7 @@ ${_rowSpan}`
   const _renderCardRow = (cards) => _renderStatCards(cards);
 
   // The selected scope owns the primary summary. The unchanged lifetime
-  // figures remain available in a compact disclosure beside the controls.
+  // figures remain available in a compact disclosure below the chart.
   const primaryCards = [
     {htmlLabel: true, label: `Portfolio Value <span class="sub">as of ${_winUpperIso}</span>`, value: fmtMoney(totalValue)},
     filteredCards[0], filteredCards[4], filteredCards[5],
@@ -1537,6 +1537,13 @@ ${_rowSpan}`
   const dollarDetails = [filteredCards[1], filteredCards[2], filteredCards[3]];
   const returnSpan = win.cum != null && win.startDate && win.endDate
     ? `${win.startDate} → ${win.endDate}` : 'Not enough observations';
+  const referenceHtml =
+    `<details class="perf-reference" id="perfLifetimeReference"${openDetails.has('perfLifetimeReference') ? ' open' : ''}>` +
+    `<summary>Whole portfolio · all-time reference <span class="scope-context">${fmtSigned(_whole_totalReturn)} total return</span></summary>` +
+    _renderCardRow(anchorHeadline) +
+    `<div class="stats-caption">The figures below are separate views of the portfolio — they do <strong>not</strong> add up to Total Return. Proceeds from a sale get redeployed, so a gain can end up inside the cost basis of a position you still hold rather than in either one.</div>` +
+    _renderCardRow(anchorCards) +
+    `</details>`;
   const statsHtml =
     `<div class="toggles-card perf-controls" id="perfControls">` +
     `<div class="toggles-row desktop-only"><span class="toggles-label">Account:</span>` +
@@ -1547,12 +1554,6 @@ ${_rowSpan}`
     `<div class="toggles-row mobile-only perf-mobile-ranges" role="group" aria-label="Performance window">${mobileWindows}</div>` +
     (_customInputsHtml ? `<div class="toggles-row perf-custom-dates">${_customInputsHtml}</div>` : '') +
     `</div>` +
-    `<details class="perf-reference" id="perfLifetimeReference"${openDetails.has('perfLifetimeReference') ? ' open' : ''}>` +
-    `<summary>Whole portfolio · all-time reference <span class="scope-context">${fmtSigned(_whole_totalReturn)} total return</span></summary>` +
-    _renderCardRow(anchorHeadline) +
-    `<div class="stats-caption">The figures below are separate views of the portfolio — they do <strong>not</strong> add up to Total Return. Proceeds from a sale get redeployed, so a gain can end up inside the cost basis of a position you still hold rather than in either one.</div>` +
-    _renderCardRow(anchorCards) +
-    `</details>` +
     `<section id="perfSelectedSummary" aria-labelledby="perfSelectedHeading">` +
     `<div class="section-header"><h2 id="perfSelectedHeading">${_htmlEsc(selectedAccountLabel)}</h2><span class="scope-label">${PERF_TWR_PRESET_LABEL[performanceWindow]}</span></div>` +
     `<div class="scope-context" id="perfScopeContext">Dollar figures: ${_winAnchorIso || 'inception'} → ${_winUpperIso}. Time-weighted returns: ${returnSpan}.</div>` +
@@ -1865,11 +1866,11 @@ ${_rowSpan}`
   const benchToggleHtml = `
     <div class="bench-toggle-bar">
       <span class="hist-label">Y-axis:</span>
-      <button class="tbtn-fixed-width tbtn ${benchRebaseOverride === null ? 'active' : ''}" data-bench-rebase="auto"
+      <button class="tbtn-fixed-width tbtn ${benchRebaseOverride === null ? 'active' : ''}" id="perfBenchRebase-auto" data-bench-rebase="auto"
               title="Rebase comparison lines to portfolio start when a window is active; absolute dollars on lifetime view.">${_rebaseLabel.includes('Auto') ? _rebaseLabel : 'Auto'}</button>
-      <button class="tbtn ${benchRebaseOverride === true ? 'active' : ''}" data-bench-rebase="on"
+      <button class="tbtn ${benchRebaseOverride === true ? 'active' : ''}" id="perfBenchRebase-on" data-bench-rebase="on"
               title="Always rebase every comparison line to start at the portfolio's value on the first in-view date.">Rebased</button>
-      <button class="tbtn ${benchRebaseOverride === false ? 'active' : ''}" data-bench-rebase="off"
+      <button class="tbtn ${benchRebaseOverride === false ? 'active' : ''}" id="perfBenchRebase-off" data-bench-rebase="off"
               title="Show absolute dollar values for every line (no rebasing).  Useful when the simulated SPY portfolio's lifetime trajectory is what you want to see.">Absolute</button>
     </div>`;
   const benchChartParts = [];
@@ -2035,7 +2036,7 @@ ${spanNote}`
           <button class="tbtn${_perfView === 'returns' ? ' active' : ''}" id="perfViewBtnReturns" aria-pressed="${_perfView === 'returns'}" onclick="setPerfView('returns')">Returns</button>
           <button class="tbtn${_perfView === 'risk' ? ' active' : ''}" id="perfViewBtnRisk" aria-pressed="${_perfView === 'risk'}" onclick="setPerfView('risk')">Risk</button>
         </div>
-        <span class="toggles-hint">Returns: benchmark comparison, per-account TWR, winners &amp; losers.  Risk: drawdown, monthly P&amp;L, daily moves.</span>
+        <details class="metric-guide perf-view-guide" id="perfViewGuide"${openDetails.has('perfViewGuide') ? ' open' : ''}><summary>About these views</summary><p>Returns: benchmark comparison, per-account TWR, winners &amp; losers. Risk: drawdown, monthly P&amp;L, daily moves.</p></details>
       </div>
     </div>
 
@@ -2044,8 +2045,12 @@ ${spanNote}`
       <h2><span style="color:var(--accent);">Your Portfolio vs SPY Benchmark</span></h2>
     </div>
     <div class="scope-context">Chart: ${_htmlEsc(windowedHistory[0]?.date || '—')} → ${_htmlEsc(windowedHistory[windowedHistory.length - 1]?.date || '—')} · ${_htmlEsc(selectedAccountLabel)}. Return comparison: ${returnSpan}.</div>
-    ${benchToggleHtml}
+    <details class="section-disclosure" id="perfChartOptions"${openDetails.has('perfChartOptions') ? ' open' : ''}>
+      <summary>Chart options <span class="scope-label">${benchRebaseOverride === null ? 'Auto · ' : ''}${_rebaseActive ? 'Rebased to ' + _htmlEsc(windowedHistory[0]?.date || '—') : 'Absolute values'}</span></summary>
+      ${benchToggleHtml}
+    </details>
     ${benchChart}
+    ${referenceHtml}
     <details class="perf-benchmark-details" id="perfBenchmarkDetails"${openDetails.has('perfBenchmarkDetails') ? ' open' : ''}>
     <summary>Benchmark figures and comparison guide</summary>
     ${benchStatsHtml}
@@ -2078,6 +2083,8 @@ ${spanNote}`
       <p class="scope-context">${_htmlEsc(acctLabel)} · ${acctTwr ? acctTwr.start_date + ' → ' + acctTwr.end_date : 'No measured return period'}.</p>
       ${acctSummaryHtml}
     </details>
+    <details class="section-disclosure" id="perfAnnualReturns"${openDetails.has('perfAnnualReturns') ? ' open' : ''}>
+    <summary>Annual returns <span class="scope-label">${_htmlEsc(acctLabel)} · all available years</span></summary>
     <div class="section-header" style="margin-top:24px;">
       <h2><span style="color:var(--accent);">Annual returns</span></h2>
       <span class="scope-label">${_htmlEsc(acctLabel)} · all available years</span>
@@ -2105,6 +2112,9 @@ ${spanNote}`
       </div>
     </div>
 
+    </details>
+    <details class="section-disclosure" id="perfPositionGains"${openDetails.has('perfPositionGains') ? ' open' : ''}>
+    <summary>Position winners &amp; losers <span class="scope-label">Latest · lifetime gains · all accounts</span></summary>
     <div class="overview-split" style="margin-top:24px;">
       <div class="panel">
         <h3>Top 10 Winners</h3>
@@ -2129,6 +2139,7 @@ ${spanNote}`
         </table>
       </div>
     </div>
+    </details>
     </div>
 
     <div id="perfViewRisk" style="${_perfView === 'risk' ? '' : 'display:none;'}">
@@ -2144,6 +2155,7 @@ ${spanNote}`
     </div>
   `;
   if (['perfAccountSelect', 'perfWindowSelect', 'perfCustomStart', 'perfCustomEnd'].includes(focusedControl)
+      || focusedControl?.startsWith('perfBenchRebase-')
       || focusedControl?.startsWith('perfWindowButton-')
       || focusedControl?.startsWith('perfAccountButton-')
       || focusedControl?.startsWith('chip-setPerformanceAccountFilter')) {

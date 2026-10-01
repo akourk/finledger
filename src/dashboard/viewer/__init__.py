@@ -36,5 +36,8 @@ def inject_viewer(html):
     style = (ASSETS / 'viewer.css').read_text(encoding='utf-8')
     controller = (ASSETS / 'viewer.js').read_text(encoding='utf-8')
     html = html.replace('</head>', '<style id="snapshot-styles">' + style + '</style></head>', 1)
-    html = html.replace('<div class="top-bar">', control + '\n<div class="top-bar">', 1)
+    # Controls and host must remain direct body children for the full-height
+    # private viewer; the portfolio header is independently collapsible.
+    shell = '<details id="portfolioContext"'
+    html = html.replace(shell, control + '\n' + shell, 1)
     return html.replace('</body>', '<script id="snapshot-config" type="application/json">' + script_json(config) + '</script>\n<script>' + controller + '</script>\n</body>', 1)

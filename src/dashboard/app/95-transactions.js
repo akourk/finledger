@@ -102,10 +102,13 @@ function renderStats() {
           ? 'Measured against daily balance peaks.' : 'Measured against history snapshot peaks.'),
     },
   ];
-  el.innerHTML = cards.map(c => {
+  const cardHtml = cards.map(c => {
     const cls = c.cls ? `stat-card ${c.cls}` : 'stat-card';
     return `<div class="${cls}"${c.title ? ` title="${_htmlEsc(c.title)}"` : ''}><div class="label">${_htmlEsc(c.label)}</div><div class="value">${c.value}</div></div>`;
-  }).join('');
+  });
+  el.innerHTML = `<div class="stats snapshot-primary">${cardHtml[1]}${cardHtml[3]}</div>`;
+  document.getElementById('snapshotSecondary').innerHTML = [0, 2, 4, 5].map(i => cardHtml[i]).join('');
+  document.getElementById('snapshotBreakdownDate').textContent = selectedDate || '';
 }
 renderStats();
 
@@ -348,6 +351,15 @@ function formatCell(val, col) {
   return _htmlEsc(s);
 }
 
+function resetTransactionFilters() {
+  Object.values(filterState).forEach(values => values.clear());
+  searchInput.value = '';
+  symbolFilterInput.value = '';
+  openPopover = null;
+  renderFilterBar();
+  _setDateRange('', '', 'all');
+}
+
 function renderTable() {
   const query = searchInput.value.toLowerCase();
   const symbolQuery = symbolFilterInput.value.toLowerCase().trim();
@@ -391,6 +403,14 @@ function renderTable() {
   });
 
   countPill.textContent = `${filtered.length} / ${txns.length}`;
+  const filterSummary = document.getElementById('transactionFilterSummary');
+  if (filterSummary) {
+    const selections = activeFilters.map(([field, values]) =>
+      fieldLabel(field) + ': ' + [...values].join(', '));
+    if (symbolQuery) selections.push('Symbol: ' + symbolQuery);
+    selections.push(dateFrom || dateTo ? (dateFrom || 'Start') + ' → ' + (dateTo || 'Latest') : 'All dates');
+    filterSummary.textContent = (selections.length === 1 ? 'All transactions · ' : '') + selections.join(' · ');
+  }
 
   const show = filtered.slice(0, 5000);
   tbody.innerHTML = show.map(t =>

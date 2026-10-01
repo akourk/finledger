@@ -1,7 +1,7 @@
 // Browser tests use the same visible controls as a person on each viewport.
 'use strict';
 async function selectSection(surface, name) {
-  const mobile = await surface.evaluate(() => matchMedia('(max-width: 720px)').matches);
+  const mobile = await surface.evaluate(() => matchMedia('(max-width: 720px), (max-width: 1100px) and (max-height: 500px)').matches);
   if (!mobile) return surface.click('#tabbtn-' + name);
   if (['overview', 'holdings', 'performance'].includes(name)) {
     return surface.click('#mobile-navigation [data-mobile-tab="' + name + '"]');

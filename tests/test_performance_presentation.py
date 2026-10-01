@@ -104,7 +104,7 @@ def test_custom_scope_displays_resolved_dollar_and_return_dates_separately(tmp_p
 
 def test_scope_changes_preserve_open_details_focus_and_risk_selection(tmp_path):
     result = run_js(tmp_path, _data(), """
-      const details = ['perfLifetimeReference', 'perfDollarDetails', 'perfBenchmarkDetails', 'perfReturnMethods'];
+      const details = ['perfLifetimeReference', 'perfDollarDetails', 'perfBenchmarkDetails', 'perfReturnMethods', 'perfChartOptions', 'perfAnnualReturns', 'perfPositionGains', 'perfViewGuide'];
       details.forEach(id => { nodeFor(id).open = true; });
       let focusCount = 0;
       document.activeElement = nodeFor('perfAccountSelect');

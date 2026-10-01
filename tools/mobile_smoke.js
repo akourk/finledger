@@ -13,7 +13,7 @@ const SECTIONS = ['overview', 'holdings', 'performance', 'transactions', 'option
 const PRIMARY = ['overview', 'holdings', 'performance'];
 const VIEWPORTS = [
   {width:320, height:740}, {width:390, height:844}, {width:430, height:932},
-  {width:720, height:1000}, {width:721, height:1000}, {width:720, height:390},
+  {width:720, height:1000}, {width:721, height:1000}, {width:720, height:390}, {width:956, height:440}, {width:874, height:402},
 ];
 
 async function noOverflow(surface, state) {
@@ -140,16 +140,98 @@ async function deepScrollSwitch(surface, state) {
   assert.equal(await surface.evaluate(() => document.activeElement.id), 'tab-performance', state + ' selection focuses panel');
 }
 
+async function checkDisclosures(surface, state) {
+  const keyboard = surface.page().keyboard;
+  // Scroll the target into the iframe's usable center before clicking; a
+  // browser's minimal scroll can leave it underneath the fixed bottom bar.
+  const click = async selector => {
+    await surface.$eval(selector, el => el.scrollIntoView({block:'center'}));
+    await surface.click(selector);
+  };
+  await selectSection(surface, 'holdings');
+  assert.equal(await surface.$eval('#portfolioContext', el => el.open), false, state + ' section owns the first screen');
+  assert.equal(await surface.$eval('#holdingsBreakdown', el => el.open), false);
+  assert.ok(await surface.$eval('#byAssetHeader', el => el.getBoundingClientRect().top) < 300,
+    state + ' positions appear promptly');
+  await click('#holdingsBreakdown > summary');
+  await click('#btnBySector');
+  await surface.select('#asOfPickerHoldings', '2023-12-31');
+  assert.equal(await surface.$eval('#holdingsBreakdown', el => el.open), true, state + ' snapshot change preserves disclosure');
+  assert.match(await surface.$eval('#holdingsBreakdownScope', el => el.textContent), /By Sector.*2023-12-31/);
+  await surface.select('#asOfPickerHoldings', '2026-06-30');
+  await click('#holdingsBreakdown > summary');
+  await click('#holdingsFilters > summary');
+  const group = await surface.$eval('#byAssetAccountGroupFilter', el => el.options[1].value);
+  await surface.select('#byAssetAccountGroupFilter', group);
+  await click('#holdingsFilters > summary');
+  assert.ok((await surface.$eval('#holdingsFilterSummary', el => el.textContent)).includes(group));
+  await click('#holdingsFilters > summary');
+  await surface.select('#byAssetAccountGroupFilter', '');
+  await click('#holdingsFilters > summary');
+
+  await selectSection(surface, 'performance');
+  assert.equal(await surface.$eval('#portfolioContext', el => el.open), false);
+  assert.ok(await surface.$eval('.perf-primary-summary', el => el.getBoundingClientRect().bottom)
+    < await surface.$eval('#mobile-navigation', el => el.getBoundingClientRect().top),
+  state + ' four primary metrics fit above portrait navigation');
+  for (const id of ['perfChartOptions', 'perfAnnualReturns', 'perfPositionGains', 'perfViewGuide']) {
+    assert.equal(await surface.$eval('#' + id, el => el.open), false);
+    await click('#' + id + ' > summary');
+    assert.equal(await surface.$eval('#' + id, el => el.open), true);
+  }
+  await surface.$eval('#perfBenchRebase-on', el => el.scrollIntoView({block:'center'}));
+  await surface.focus('#perfBenchRebase-on');
+  await keyboard.press('Enter');
+  assert.equal(await surface.evaluate(() => document.activeElement.id), 'perfBenchRebase-on', state + ' axis keyboard focus survives render');
+  await surface.select('#perfWindowSelect', 'custom');
+  for (const id of ['perfChartOptions', 'perfAnnualReturns', 'perfPositionGains', 'perfViewGuide']) {
+    assert.equal(await surface.$eval('#' + id, el => el.open), true, state + ' selected window preserves analysis details');
+  }
+  assert.equal(await surface.$eval('#perfCustomStart', el => el.checkVisibility()), true);
+  assert.match(await surface.$eval('#perfChartOptions > summary', el => el.textContent), /Rebased to/);
+  await click('#perfWindowButton-mobile-lifetime');
+  await click('#perfBenchRebase-auto');
+  for (const id of ['perfChartOptions', 'perfAnnualReturns', 'perfPositionGains', 'perfViewGuide']) {
+    await click('#' + id + ' > summary');
+  }
+
+  await selectSection(surface, 'transactions');
+  await click('#transactionFilters > summary');
+  await surface.type('#symbolFilter', 'fictional-empty');
+  await click('.date-quick[data-range="ytd"]');
+  await click('#transactionFilters > summary');
+  assert.match(await surface.$eval('#transactionFilterSummary', el => el.textContent), /Symbol: fictional-empty.*2026-01-01/);
+  assert.match(await surface.$eval('#countPill', el => el.textContent), /^0 \/ /);
+  await click('#transactionFilters > summary');
+  await click('#resetTransactionFilters');
+  assert.equal(await surface.$eval('#transactionFilterSummary', el => el.textContent), 'All transactions · All dates');
+  await click('#transactionFilters > summary');
+
+  await selectSection(surface, 'overview');
+  assert.equal(await surface.$eval('#portfolioContext', el => el.open), true, state + ' overview retains its hero');
+  const allCards = await surface.$$eval('#stats .stat-card, #snapshotSecondary .stat-card', els => els.length);
+  assert.equal(allCards, 6, state + ' all snapshot figures retained');
+  assert.equal(await surface.$eval('#snapshotBreakdown', el => el.open), false);
+  await click('#snapshotBreakdown > summary');
+  await surface.select('#asOfPickerOverview', '2023-12-31');
+  assert.equal(await surface.$eval('#snapshotBreakdown', el => el.open), true);
+  assert.equal(await surface.$eval('#snapshotBreakdownDate', el => el.textContent), '2023-12-31');
+  await surface.select('#asOfPickerOverview', '2026-06-30');
+  await click('#snapshotBreakdown > summary');
+  await noOverflow(surface, state + ' disclosures');
+}
+
 async function privateViewport(page, frame, state) {
   const geometry = await page.evaluate(() => {
     const frame = document.querySelector('#snapshot-host iframe:not(.snapshot-pending)');
     const box = frame.getBoundingClientRect();
-    return {active:document.body.classList.contains('viewer-active'),
+    return {hostParent:frame.parentElement.parentElement.tagName, active:document.body.classList.contains('viewer-active'),
       outerHeight:document.scrollingElement.scrollHeight, height:innerHeight, width:innerWidth,
       frame:{left:box.left, right:box.right, top:box.top, bottom:box.bottom},
       navigation:document.getElementById('mobile-navigation').checkVisibility(),
       dialog:document.getElementById('mobile-sections').open};
   });
+  assert.equal(geometry.hostParent, 'BODY', state + ' viewer host is a body flex child');
   assert.equal(geometry.active, true, state + ' viewer viewport mode');
   assert.equal(geometry.navigation, false, state + ' parent nav hidden');
   assert.equal(geometry.dialog, false, state + ' parent sheet closed');
@@ -198,7 +280,7 @@ async function main() {
     for (const viewport of VIEWPORTS) {
       await page.setViewport(viewport);
       const state = 'demo ' + viewport.width + 'x' + viewport.height;
-      const mobile = viewport.width <= 720;
+      const mobile = await surface.evaluate(() => matchMedia(COMPACT_NAV_QUERY).matches);
       assert.equal(await page.$eval('#mobile-navigation', element => element.checkVisibility()), mobile, state + ' nav breakpoint');
       assert.equal(await page.$eval('#tabnav', element => element.checkVisibility()), !mobile, state + ' desktop nav breakpoint');
       for (const section of SECTIONS) {
@@ -212,11 +294,15 @@ async function main() {
         await deepScrollSwitch(surface, state);
       }
     }
+    await page.setViewport({width:390, height:844});
+    await checkDisclosures(surface, 'demo');
     await page.setViewport({width:721, height:1000});
     await checkFontFallback(surface, 'demo 721x1000');
     await page.setViewport({width:720, height:390});
     await surface.click('#mobile-more');
-    await page.setViewport({width:721, height:390});
+    await page.setViewport({width:956, height:440});
+    assert.equal(await surface.$eval('#mobile-sections', element => element.open), true, 'landscape stays compact with More open');
+    await page.setViewport({width:1200, height:700});
     await surface.waitForFunction(() => !document.getElementById('mobile-sections').open
       && document.getElementById('mobile-more').getAttribute('aria-expanded') === 'false');
     assert.equal(await surface.$eval('#mobile-more', element => element.getAttribute('aria-expanded')), 'false', 'desktop resize closes sheet');
@@ -263,12 +349,14 @@ async function main() {
         await currentSection(frame, section, state + ' ' + section);
         await noOverflow(frame, state + ' ' + section);
       }
-      if (viewport.width <= 720) {
+      if (await frame.evaluate(() => matchMedia(COMPACT_NAV_QUERY).matches)) {
         await targetSizes(frame, state);
         await checkSheet(frame, state, viewport.width === 390 ? axeSource : null);
         await deepScrollSwitch(frame, state);
       }
     }
+    await page.setViewport({width:390, height:844});
+    await checkDisclosures(frame, 'private');
     await page.setViewport({width:721, height:1000});
     await checkFontFallback(frame, 'private 721x1000');
     await page.setViewport({width:390, height:844});

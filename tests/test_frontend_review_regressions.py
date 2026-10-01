@@ -75,7 +75,7 @@ def test_historical_holdings_exclude_future_disposals_and_recompute_group_return
       const groups = withPerformance(groupByBasisAware(asOfHoldingsByAccount(), 'account_group'));
       renderStats();
       process.stdout.write(JSON.stringify({html: NODES.get('byAssetTbody').innerHTML,
-        groups, stats: NODES.get('stats').innerHTML, errors}));
+        groups, stats: (NODES.get('stats').innerHTML + NODES.get('snapshotSecondary').innerHTML), errors}));
     ''')
     assert not result['errors']
     assert '$999.00' not in result['html']
@@ -95,7 +95,7 @@ def test_historical_drawdown_ignores_a_later_peak(tmp_path):
     data['analytics']['drawdown'] = {'current_drawdown_pct': 0}
     result = run_js(tmp_path, data, '''
       asOfDate = '2023-12-31'; renderStats();
-      process.stdout.write(JSON.stringify(NODES.get('stats').innerHTML));
+      process.stdout.write(JSON.stringify((NODES.get('stats').innerHTML + NODES.get('snapshotSecondary').innerHTML)));
     ''')
     assert 'Drawdown at selected date' in result
     assert '-20.00%' in result
