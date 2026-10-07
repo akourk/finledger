@@ -306,9 +306,9 @@ function _buildMonteCarloSection() {
   // Scenario toggle pills
   const togglePills = `
     <div class="toggle-group">
-      <button class="tbtn ${mcScenario === 'all_accounts' ? 'active' : ''}"
+      <button id="mc-all-accounts" class="tbtn ${mcScenario === 'all_accounts' ? 'active' : ''}"
               onclick="setMonteCarloScenario('all_accounts')">All Accounts</button>
-      <button class="tbtn ${mcScenario === 'retirement' ? 'active' : ''}"
+      <button id="mc-retirement" class="tbtn ${mcScenario === 'retirement' ? 'active' : ''}"
               onclick="setMonteCarloScenario('retirement')">Retirement Only</button>
     </div>`;
 
@@ -469,8 +469,8 @@ function _buildFireSection(mcRoot, mc) {
          columns at phone width and the last card hung off the screen.
          auto-fit collapses to as many columns as actually fit. -->
     <div class="mc-stats" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">${statsHtml}</div>
-    ${fire ? `<div class="panel" style="margin-top:14px;">
-      <h3>Year first reaching FI (per percentile)</h3>
+    ${fire ? `<details class="section-disclosure" id="planningFireCrossings">
+      <summary>Year first reaching FI <span class="scope-label">Per percentile · all accounts</span></summary>
       <table class="mini-table"><caption class="sr-only">Year each simulated percentile first reaches financial independence</caption>
         <thead><tr><th scope="col">Outcome</th><th scope="col" class="num">Year offset (age at crossing)</th></tr></thead>
         <tbody>${ageRows}</tbody>
@@ -478,7 +478,7 @@ function _buildFireSection(mcRoot, mc) {
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
         Each row: the first year of the simulation in which that percentile band crosses your FI number.  All-accounts scenario only — the FI number is funded from total resources, not just retirement accounts.  Switch the toggle above to see retirement-only growth without the FIRE overlay.
       </div>
-    </div>` : ''}
+    </details>` : ''}
   `;
 }
 
@@ -507,6 +507,7 @@ function renderRetirement() {
 
   // Stat cards
   const ytdKey = String(today.getFullYear());
+  const currentEligibility = rothEligibilityFor(ytdKey);
   const ytd = (contribs[ytdKey] && contribs[ytdKey].total) || 0;
   const totalContribs = Object.values(contribs).reduce((s, r) => s + r.total, 0);
   const totalGain = summary.value - summary.basis;
@@ -590,17 +591,20 @@ function renderRetirement() {
     : '<div style="color:var(--text-dim);padding:8px 0;">No retirement positions.</div>';
 
   // --- Render ---
-  root.innerHTML = `
+  renderDisclosureContent(root, `
     ${statsHtml}
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Contributions by Year</span></h2></div>
     <div class="panel">
+      ${currentEligibility ? `<p class="scope-context">Roth IRA eligibility · ${ytdKey}: <b>${currentEligibility.status === 'eligible' ? 'Eligible' : currentEligibility.status === 'partial' ? `${currentEligibility.allowedPct}% of the IRS limit allowed` : 'Ineligible'}</b>${currentEligibility.isProjection ? ' (year-end projection)' : ''}. MAGI uses estimated AGI as a proxy; detailed yearly amounts appear below.</p>` : ''}
       ${years.length ? `
         ${renderContribBars(years, contribs, { id: 'contribBars' })}
         <div style="display:flex;gap:24px;font-size:0.85rem;margin:4px 0 14px 10px;flex-wrap:wrap;">
           ${_legendSwatch(ACCOUNT_COLORS['401K'] || '#f59e0b', '401K (incl. Rollover IRA)')}
           ${_legendSwatch(ACCOUNT_COLORS['Roth IRA'] || '#a78bfa', 'Roth IRA')}
         </div>` : ''}
+      <details class="section-disclosure" id="retirementContributionHistory">
+      <summary>Contribution amounts &amp; Roth eligibility <span class="scope-label">${years.length} recorded years</span></summary>
       <table class="mini-table"><caption class="sr-only">Retirement contributions by year and account, with Roth eligibility</caption>
         <thead><tr>
           <th scope="col">Year</th>
@@ -614,6 +618,7 @@ function renderRetirement() {
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
         Hover any contribution amount for the year's IRS limit.  Roth Eligibility bar: green fill = your MAGI; yellow band = the ${_htmlEsc(filingStatus())} phase-out range from <code>data/metadata.csv</code>.  MAGI estimated from salary + bonuses + portfolio income − 401K.  An asterisk means a year-end projection.
       </div>
+      </details>
     </div>
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Retirement Balance Over Time</span></h2></div>
@@ -629,7 +634,7 @@ function renderRetirement() {
       Looking for projections, Monte Carlo, or FIRE?  Those moved to the
       <a onclick="activateTab('planning')" style="color:var(--accent);cursor:pointer;">Planning</a> tab.
     </div>
-  `;
+  `);
 }
 
 // Round a value up to a "nice" axis maximum (1/2/5 × 10ⁿ).

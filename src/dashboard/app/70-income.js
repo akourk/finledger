@@ -204,6 +204,9 @@ function _buildCashFlowForecast(passiveProjected) {
         <div class="item"><span class="label">Net of retirement (proj.)</span><span class="value">${fmtMoney(totalNet)}</span></div>
         ${savingsItem}
       </div>
+      <p class="scope-context">${paycheckOutflows > 0 ? 'Paycheck taxes and deductions are estimated; bonuses are shown pre-tax.' : 'This is pre-tax — federal/state income tax and FICA reduce the net further.'}${budgetAnnual > 0 ? ' Living expenses use the recorded budget.' : ' No living-expense budget is included.'}</p>
+      <details class="section-disclosure" id="incomeCashFlowDetails">
+      <summary>Cash-flow sources &amp; assumptions</summary>
       <table class="mini-table"><caption class="sr-only">Projected cash flow over the next twelve months, by source</caption>
         <thead><tr><th scope="col">Source</th><th scope="col" class="num">Projected (next 12mo)</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -211,6 +214,7 @@ function _buildCashFlowForecast(passiveProjected) {
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
         Salary: most recent rate × 12.  Bonuses: last full year's total (current-year bonuses are lumpy, so the prior year is a better planning estimate).  Retirement contributions: trailing-12-months pace, employee money only (employer match excluded — it never left your paycheck).${paycheckOutflows > 0 ? '  Paycheck taxes &amp; deductions come from your <b>Paycheck Deduction</b> metadata rows + estimated federal income tax on wages (see the Paycheck panel below); bonuses are shown pre-tax.' : '  This is pre-tax — federal/state income tax + FICA reduce the net further.'}${budgetAnnual > 0 ? '  Living expenses come from your <b>Budget</b> metadata rows (see the Budget section below).' : ''}
       </div>
+      </details>
     </div>`;
 }
 
@@ -275,7 +279,9 @@ function _buildPaycheckSection() {
       <span class="as-of-hint" style="margin-left:auto;">Gross → deductions → take-home, ${_htmlEsc(p.frequency_label)} — from the <b>Paycheck Deduction</b> rows in data/metadata.csv.</span>
     </div>
     ${_renderStatCards(cards)}
-    <div class="panel">
+    <p class="scope-context">Wage-only estimate: excludes bonuses, dividends and realized gains. Federal tax is estimated liability, not actual withholding${p.is_projection ? ' (current-year projection)' : ''}.</p>
+    <details class="section-disclosure" id="incomePaycheckDetails">
+      <summary>Paycheck deductions &amp; methodology <span class="scope-label">${_htmlEsc(p.frequency_label)}</span></summary>
       <div class="table-wrap" tabindex="0" role="region" aria-label="Paycheck deductions, scrollable table">
       <table class="mini-table"><caption class="sr-only">Paycheck: gross pay through each deduction to estimated take-home</caption>
         <thead><tr><th scope="col">Line</th><th scope="col" class="num">Per Paycheck</th><th scope="col" class="num">Annual</th></tr></thead>
@@ -289,7 +295,7 @@ function _buildPaycheckSection() {
         Payroll-tax lines are your pay-stub amounts × ${_htmlEsc(p.frequency)} pay periods.
         Pre-tax benefit lines also reduce the AGI / MAGI used for Roth eligibility on the Tax tab.
       </div>
-    </div>`;
+    </details>`;
 }
 
 // Budget section — recurring living expenses from `Budget` metadata
@@ -351,14 +357,15 @@ function _buildBudgetSection() {
       <span class="as-of-hint" style="margin-left:auto;">Recurring living expenses — from the <b>Budget</b> rows in data/metadata.csv.</span>
     </div>
     ${_renderStatCards(cards)}
+    <details class="section-disclosure" id="incomeBudgetDetails">
+      <summary>Budget categories &amp; items <span class="scope-label">${b.count} items</span></summary>
     <div class="panel">
       <table class="mini-table"><caption class="sr-only">Budgeted living expenses by category</caption>
         <thead><tr><th scope="col">Category</th><th scope="col" class="num">Monthly</th><th scope="col" class="num">Annual</th><th scope="col">Share</th></tr></thead>
         <tbody>${catRows}</tbody>
       </table>
     </div>
-    <details style="margin-top:10px;">
-      <summary style="cursor:pointer;color:var(--text-dim);font-size:0.85rem;">All items (${b.count})</summary>
+      <h3>All items (${b.count})</h3>
       <div class="panel" style="margin-top:8px;">
         <table class="mini-table"><caption class="sr-only">Every budgeted item with its cadence and normalised monthly cost</caption>
           <thead><tr><th scope="col">Item</th><th scope="col">Category</th><th scope="col">Cadence</th><th scope="col" class="num">Cost / period</th><th scope="col" class="num">Monthly</th></tr></thead>
@@ -470,6 +477,9 @@ function renderIncome() {
         <div class="item"><span class="label">Trailing 12mo (actual)</span><span class="value">${fmtMoney(ttm)}</span></div>
         <div class="item"><span class="label">Next 12mo (projected)</span><span class="value">${fmtMoney(fcTotal)}</span></div>
       </div>
+      <p class="scope-context">Projection = flat extrapolation of the last 12 months' dividends/interest per currently-held position. Doesn't account for dividend cuts, rate changes, or share-count changes since.</p>
+      <details class="section-disclosure" id="incomeForecastPositions">
+      <summary>Income forecast by position <span class="scope-label">Up to 20 positions</span></summary>
       <table class="mini-table"><caption class="sr-only">Trailing and projected dividend and interest income for each held position</caption>
         <thead><tr>
           <th scope="col">Symbol</th>
@@ -491,9 +501,9 @@ function renderIncome() {
   }).join('')}</tbody>
       </table>
       <div style="color:var(--text-dim);font-size:0.72rem;margin-top:6px;line-height:1.4;">
-        Projection = flat extrapolation of the last 12 months' dividends/interest per currently-held position.  Doesn't account for dividend cuts, rate changes, or share-count changes since.
         <b>YoC</b> uses current cost basis (rises as the company hikes the dividend); <b>Current yield</b> uses current market value (falls when the stock appreciates faster than the payout).
       </div>
+      </details>
     </div>` : '';
 
   // 12-month total cash-flow forecast — combines passive income + W-2
@@ -506,14 +516,15 @@ function renderIncome() {
   const paycheckHtml = _buildPaycheckSection();
   const budgetHtml = _buildBudgetSection();
 
-  root.innerHTML = `
+  renderDisclosureContent(root, `
     ${statsHtml}
     ${flowHtml}
     ${paycheckHtml}
     ${budgetHtml}
     ${forecastHtml ? `<div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Dividend / Interest Forecast (12mo)</span></h2></div>${forecastHtml}` : ''}
 
-    <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Annual Summary</span></h2></div>
+    <details class="section-disclosure" id="incomeAnnualSummary">
+    <summary>Annual Summary <span class="scope-label">${years.length} recorded years</span></summary>
     <div class="panel">
       <table class="mini-table"><caption class="sr-only">Investment income by year and income type</caption>
         <thead><tr>
@@ -527,11 +538,13 @@ function renderIncome() {
         <tbody>${yearRows || '<tr><td colspan="6" style="color:var(--text-dim);padding:12px;">No income events.</td></tr>'}</tbody>
       </table>
     </div>
+    </details>
 
     <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Monthly Income</span></h2></div>
     ${monthChart}
 
-    <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">By Source</span></h2></div>
+    <details class="section-disclosure" id="incomeSources">
+    <summary>By Source <span class="scope-label">All-time · up to 30 sources</span></summary>
     <div class="panel">
       <div class="table-wrap" tabindex="0" role="region" aria-label="Investment income by source, scrollable table">
       <table class="mini-table"><caption class="sr-only">Investment income by source and account</caption>
@@ -548,7 +561,8 @@ function renderIncome() {
       </table>
       </div>
     </div>
-  `;
+    </details>
+  `);
 }
 
 registerTabRenderer('income', renderIncome);

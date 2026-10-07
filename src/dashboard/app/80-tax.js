@@ -915,7 +915,7 @@ function renderTax() {
   </tr>`;
 
   // --- Render ---
-  root.innerHTML = `
+  renderDisclosureContent(root, `
     <div style="margin-bottom:12px;" role="group" aria-label="Realization year">${yearPills}</div>
     ${_taxScope(`Realizations · ${realizationScope}`, 'The year filter applies to these gain cards and the realized-gain tables below.')}
     ${statsHtml}
@@ -935,7 +935,29 @@ function renderTax() {
         ${RETIREMENT_META.state ? ` · State: <b style="color:var(--text);">${_htmlEsc(RETIREMENT_META.state)}</b>` : ''}
         <span style="margin-left:8px;">(edit <code>data/metadata.csv</code> to change)</span>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;font-size:0.85rem;">
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);">
+            <div style="color:var(--text-dim);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Selected rates (gain cards &amp; lot tables)</div>
+            <label style="font-size:0.85rem;color:var(--text-dim);">Short-term:
+              <input type="number" id="taxShortRate" value="${(taxShortRate * 100).toFixed(1)}" step="0.5" min="0" max="50"
+                     style="width:60px;" oninput="if(this.value !== '') setTaxShortRate(this.value/100)"/>%
+            </label>
+            <label style="margin-left:14px;font-size:0.85rem;color:var(--text-dim);">Long-term:
+              <input type="number" id="taxLongRate" value="${(taxLongRate * 100).toFixed(1)}" step="0.5" min="0" max="50"
+                     style="width:60px;" oninput="if(this.value !== '') setTaxLongRate(this.value/100)"/>%
+            </label>
+            <button id="taxResetRates" class="tbtn" style="margin-left:10px;font-size:0.74rem;padding:3px 8px;"
+                    onclick="resetTaxRatesToEstimate()">Reset</button>
+          </div>
+          <div style="color:var(--text-dim);font-size:0.72rem;margin-top:10px;line-height:1.5;">
+            ${est.isProjection
+      ? `Current-year figures are extrapolated from YTD pace (${(est.yearFraction * 100).toFixed(0)}% of year elapsed); 401K capped at IRS limit.  Realized gains are YTD only.  `
+      : ''}Retirement sells excluded.
+          </div>
+
+      <details class="section-disclosure" id="taxIncomeBuildUp">
+      <summary>Income &amp; marginal-rate build-up <span class="scope-label">${est.year}</span></summary>
+      <p class="scope-context">ST gains stack with ordinary income; LT gains use the LTCG schedule but feed MAGI. §1256 contracts (SPX, NDX, NDXP, SPXW, XSP, RUT, DJX, VIX) get 60% LT / 40% ST regardless of hold period.</p>
+      <div class="secondary-detail-grid">
         <div>
           <div style="color:var(--text-dim);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Income build-up</div>
           <div>Salary (effective ${est.year}-12-31): <b>${fmtMoney(est.salary)}</b></div>
@@ -975,26 +997,10 @@ function renderTax() {
           <div style="margin-top:6px;padding-top:6px;border-top:1px dotted var(--border);color:var(--text-dim);font-size:0.78rem;">
             ${_htmlEsc(RETIREMENT_META.state)} has no state income tax — federal-only.
           </div>` : '')}
-          <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);">
-            <div style="color:var(--text-dim);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Override (used for the tables below)</div>
-            <label style="font-size:0.85rem;color:var(--text-dim);">Short-term:
-              <input type="number" id="taxShortRate" value="${(taxShortRate * 100).toFixed(1)}" step="0.5" min="0" max="50"
-                     style="width:60px;" oninput="if(this.value !== '') setTaxShortRate(this.value/100)"/>%
-            </label>
-            <label style="margin-left:14px;font-size:0.85rem;color:var(--text-dim);">Long-term:
-              <input type="number" id="taxLongRate" value="${(taxLongRate * 100).toFixed(1)}" step="0.5" min="0" max="50"
-                     style="width:60px;" oninput="if(this.value !== '') setTaxLongRate(this.value/100)"/>%
-            </label>
-            <button class="tbtn" style="margin-left:10px;font-size:0.74rem;padding:3px 8px;"
-                    onclick="resetTaxRatesToEstimate()">Reset</button>
-          </div>
-          <div style="color:var(--text-dim);font-size:0.72rem;margin-top:10px;line-height:1.5;">
-            ${est.isProjection
-      ? `Current-year figures are extrapolated from YTD pace (${(est.yearFraction * 100).toFixed(0)}% of year elapsed); 401K capped at IRS limit.  Realized gains are YTD only.  `
-      : ''}ST gains stack with ordinary income; LT gains use the LTCG schedule but feed MAGI.  Retirement sells excluded.  §1256 contracts (SPX, NDX, NDXP, SPXW, XSP, RUT, DJX, VIX) get 60% LT / 40% ST regardless of hold period.
-          </div>
         </div>
       </div>
+      </details>
+      ${est.capitalLossDisallowed ? '<p class="scope-context">Capital losses exceeding the annual deduction limit carry forward; carryforwards are not modeled.</p>' : ''}
     </div>
 
     ${_buildBracketSection(est.year)}
@@ -1082,7 +1088,8 @@ function renderTax() {
     </div>
     ${((ANALYTICS.tax || {}).form_8949 || []).length
       ? _taxScope('CSV export · all recorded years', 'Includes taxable-account disposals; the year filter does not limit the download.') : ''}
-    <div class="panel">
+    <details class="section-disclosure" id="taxRealizedYears">
+      <summary>Yearly realized-gain detail <span class="scope-label">${_htmlEsc(realizationScope)}</span></summary>
       <table class="mini-table"><caption class="sr-only">Realized gains by year</caption>
         <thead><tr>
           <th scope="col">Year</th><th scope="col" class="num">Trades</th>
@@ -1092,13 +1099,11 @@ function renderTax() {
         </tr></thead>
         <tbody>${yearRows || `<tr><td colspan="${showS1256ByYear ? 7 : 6}" style="color:var(--text-dim);padding:12px;">No realized gains.</td></tr>`}</tbody>
       </table>
-    </div>
+    </details>
 
-    <div class="section-header" style="margin-top:24px;">
-      <h2><span style="color:var(--accent);">By Asset</span></h2>
-      <span style="margin-left:12px;color:var(--text-dim);font-size:0.8rem;">contributors to the tax bill — sorted by gain magnitude</span>
-    </div>
-    <div class="panel">
+    <details class="section-disclosure" id="taxRealizedAssets">
+      <summary>Realized gains by asset <span class="scope-label">${_htmlEsc(realizationScope)}</span></summary>
+      <p class="scope-context">Contributors to the tax bill — sorted by gain magnitude.</p>
       <div class="table-wrap">
         <table class="mini-table"><caption class="sr-only">Realized gains by asset</caption>
           <thead><tr>
@@ -1112,8 +1117,8 @@ function renderTax() {
           <tbody>${symRows || `<tr><td colspan="${showS1256BySym ? 9 : 8}" style="color:var(--text-dim);padding:12px;">No realized gains in this range.</td></tr>`}</tbody>
         </table>
       </div>
-    </div>
-  `;
+    </details>
+  `);
 }
 
 registerTabRenderer('tax', renderTax);

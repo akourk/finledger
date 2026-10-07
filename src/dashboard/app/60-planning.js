@@ -39,7 +39,7 @@ function renderPlanning() {
     </tr>`;
   }).join('') : `<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">Add a birthday to <code>data/metadata.csv</code> to enable projections.</td></tr>`;
 
-  root.innerHTML = `
+  renderDisclosureContent(root, `
     <div class="section-header"><h2><span style="color:var(--accent);">Scenario Projection</span></h2>
       <span class="as-of-hint" style="margin-left:auto;">Constant-rate compound growth — simple but ignores volatility.  See Monte Carlo below for sequence-of-returns risk.</span>
     </div>
@@ -55,6 +55,7 @@ function renderPlanning() {
           <span style="color:var(--text-dim);font-size:0.72rem;"> (auto: ${fmtMoney(autoAnnualContrib)} — trailing 12 months)</span>
         </label>
       </div>
+      <p class="scope-context">Retirement accounts · starting balance ${fmtMoney(summary.value)}${currentAge != null ? ` · current age ${currentAge}` : ''}. Contributions and growth rates stay constant throughout this scenario.</p>
       <table class="mini-table"><caption class="sr-only">Projected portfolio value at retirement under each growth scenario</caption>
         <thead><tr>
           <th scope="col">Scenario</th><th scope="col" class="num">Annual Rate</th>
@@ -63,10 +64,14 @@ function renderPlanning() {
         </tr></thead>
         <tbody>${projRows}</tbody>
       </table>
+      <details class="section-disclosure" id="planningScenarioMethod">
+        <summary>Projection methodology</summary>
+        <p class="scope-context">Values use constant annual compound growth with annual contributions added at year end. The Personal rate approximates historical growth by treating all retirement contributions as if invested at the start; it is not time-weighted. These scenarios ignore volatility and do not change the precomputed Monte Carlo assumptions below.</p>
+      </details>
     </div>
 
     ${_buildMonteCarloSection()}
-  `;
+  `);
 
   // Year-by-Year table (goal tracking: balances vs targets + savings
   // rate) — its containers live in the tab-planning markup below
@@ -97,4 +102,3 @@ function setMonteCarloScenario(s) {
 }
 
 registerTabRenderer('planning', renderPlanning);
-

@@ -417,6 +417,39 @@ initTabA11y();
 // Width alone misses phones in landscape. Keep this predicate aligned with
 // styles.css and the browser navigation helper.
 const COMPACT_NAV_QUERY = '(max-width: 720px), (max-width: 1100px) and (max-height: 500px)';
+// Compact lists use the same filtered/sorted rows as their desktop tables.
+// Keep disclosure state outside replaced markup, including temporarily filtered
+// rows. Nothing is stored beyond the lifetime of this dashboard document.
+const compactRecordState = new Map();
+function compactRecordOpen(list, key) {
+  return compactRecordState.get(list)?.has(key) ? ' open' : '';
+}
+function rememberCompactRecords(container) {
+  if (!container) return;
+  if (!compactRecordState.has(container.id)) compactRecordState.set(container.id, new Set());
+  const state = compactRecordState.get(container.id);
+  container.querySelectorAll('details[data-record-key]').forEach(record => {
+    if (record.open) state.add(record.dataset.recordKey);
+    else state.delete(record.dataset.recordKey);
+  });
+}
+function compactSortHtml(cols, column, ascending, label) {
+  return `<div class="compact-sort"><label>Sort by <select data-compact-sort aria-label="${_htmlEsc(label)}">`
+    + cols.map(col => `<option value="${_htmlEsc(col)}"${col === column ? ' selected' : ''}>${_htmlEsc(fieldLabel(col))}</option>`).join('')
+    + `</select></label><button type="button" class="tbtn" data-compact-direction aria-label="${ascending ? 'Sort descending' : 'Sort ascending'}">${ascending ? 'Ascending ↑' : 'Descending ↓'}</button></div>`;
+}
+function compactFieldsHtml(fields) {
+  return '<dl class="compact-record-fields">' + fields.map(([label, html]) =>
+    `<div><dt>${_htmlEsc(label)}</dt><dd>${html || '—'}</dd></div>`).join('') + '</dl>';
+}
+function bindCompactSort(container, change) {
+  for (const [selector, event] of [['[data-compact-sort]', 'change'], ['[data-compact-direction]', 'click']]) {
+    container.querySelector(selector)?.addEventListener(event, e => {
+      change(e.currentTarget.matches('select') ? e.currentTarget.value : null);
+      container.querySelector(selector)?.focus({preventScroll: true});
+    });
+  }
+}
 const portfolioContextOpen = new Map();
 function syncPortfolioContext(name) {
   const context = document.getElementById('portfolioContext');
@@ -1029,6 +1062,74 @@ function lotDetailHtml(p, colspan) {
   </td></tr>`;
 }
 
+function compactLotsHtml(p, lotKey) {
+  const qty = n => n.toLocaleString(undefined, {maximumFractionDigits: 8});
+  const lots = (p.lots || []).map(l => '<div class="compact-lot">' + compactFieldsHtml([
+    ['Acquired', _htmlEsc(l.date || '—')], ['Quantity', qty(l.qty)],
+    ['Basis / share', fmtMoney(l.basis_per_share)], ['Cost basis', fmtMoney(l.cost_basis)],
+    ['Value', fmtMoney(l.value)], ['Unrealized gain', fmtSigned(l.unrealized_gain)],
+    ['Unrealized %', fmtPct(l.unrealized_pct)],
+    ['Held', l.days_held != null ? _htmlEsc(l.days_held) + 'd' : '—'],
+    ['Term', lotTermCell(p, l)],
+    ...(!l.is_long_term && p.lt_relevant && l.lt_eligible_date ? [['Long-term on', _htmlEsc(l.lt_eligible_date)]] : []),
+    ['Basis source', lotOriginCell(l.origin)],
+  ]) + '</div>');
+  if (p.micro) lots.push('<div class="compact-lot"><p>' + _htmlEsc(p.micro.count) + ' micro lot(s) · included in totals</p>' + compactFieldsHtml([
+    ['Quantity', qty(p.micro.qty)], ['Cost basis', fmtMoney(p.micro.cost_basis)],
+    ['Value', fmtMoney(p.micro.value)], ['Basis source', lotOriginCell(p.micro.origin)],
+  ]) + '</div>');
+  return `<details class="compact-lots" data-lotkey="${_htmlEsc(lotKey)}"${lotsExpanded.has(lotKey) ? ' open' : ''}><summary>Open tax lots</summary>${lots.join('')}</details>`;
+}
+
+function positionCellHtml(row, col) {
+  const val = row[col];
+  if (val == null || val === '') return '';
+  if (['quantity', 'price', 'value', 'cost_basis', 'unrealized_gain', 'realized_gain', 'total_return', 'pct_return'].includes(col)) {
+    const n = typeof val === 'number' ? val : parseFloat(val);
+    if (!Number.isFinite(n)) return _htmlEsc(val);
+    const fmt = col === 'quantity'
+      ? n.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 8})
+      : (col === 'pct_return'
+        ? n.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '%'
+        : fmtMoney(n));
+    const cls = ['quantity', 'price', 'value', 'cost_basis'].includes(col) ? ''
+      : (n < 0 ? 'negative' : (n > 0 ? 'positive' : ''));
+    return `<span class="${cls}">${fmt}</span>`;
+  }
+  if (col === 'symbol') return symLabel(val);
+  const color = col === 'account_group' ? ACCOUNT_COLORS[val] : col === 'sector' ? SECTOR_COLORS[val] : null;
+  return color ? `<span style="color:${color}">${_htmlEsc(val)}</span>` : _htmlEsc(val);
+}
+
+function renderCompactPositions(rows, cols) {
+  const container = document.getElementById('byAssetCompact');
+  if (!container) return;
+  rememberCompactRecords(container);
+  if (!matchMedia(COMPACT_NAV_QUERY).matches) { container.innerHTML = ''; return; }
+  const secondary = cols.filter(col => !['symbol', 'account_group', 'value'].includes(col));
+  container.innerHTML = compactSortHtml(cols, byAssetSortCol, byAssetSortAsc, 'Sort positions')
+    + (rows.length ? rows.map(row => {
+      const key = JSON.stringify([row.account_group || '', row.symbol || '']);
+      const lotKey = (row.account_group || '') + '||' + (row.symbol || '');
+      const lp = isAsOfLatest() ? LOTS_BY_KEY[lotKey] : null;
+      const hasLots = lp && ((lp.lots && lp.lots.length) || lp.micro);
+      return `<details class="compact-record" data-record-key="${_htmlEsc(key)}"${compactRecordOpen(container.id, key)}>
+        <summary class="compact-record-summary">
+          <span class="compact-record-identity">${symLabel(row.symbol)}<span class="compact-record-meta">${_htmlEsc(row.account_group || '—')}</span></span>
+          <span class="compact-record-value"><span class="compact-record-meta">Market value</span>${positionCellHtml(row, 'value') || '—'}<span class="compact-record-meta">Unrealized ${positionCellHtml(row, 'unrealized_gain') || '—'}</span></span>
+          <span class="compact-record-cue" aria-hidden="true">Details</span>
+        </summary>
+        ${compactFieldsHtml(secondary.map(col => [fieldLabel(col), positionCellHtml(row, col)]))}
+        ${hasLots ? compactLotsHtml(lp, lotKey) : `<p class="compact-record-note">${isAsOfLatest() ? 'No exported open lots for this position.' : 'Open lots are available at the latest snapshot.'}</p>`}
+      </details>`;
+    }).join('') : '<p class="compact-empty">No positions match these filters.</p>');
+  bindCompactSort(container, column => {
+    if (column) { byAssetSortCol = column; byAssetSortAsc = false; }
+    else byAssetSortAsc = !byAssetSortAsc;
+    renderByAssetTable();
+  });
+}
+
 // The heading is shared by Table and Board. Its amount belongs to the
 // visible rows, even though the two views keep independent filters.
 // A Board notice has no rows, so null clears the amount; an empty filter
@@ -1041,6 +1142,10 @@ function renderPositionsTotal(total, scope = '') {
 }
 
 function renderByAssetTable() {
+  document.getElementById('byAssetCompact')?.querySelectorAll('.compact-lots').forEach(detail => {
+    if (detail.open) lotsExpanded.add(detail.dataset.lotkey);
+    else lotsExpanded.delete(detail.dataset.lotkey);
+  });
   const realizedToDate = realizedByAccountSymbol(isAsOfLatest() ? null : getAsOfSnapshot()?.date || asOfDate);
   const rows = asOfHoldingsByAccount().map(r => {
     const realized = r._inTransit ? 0 : (realizedToDate[JSON.stringify([r.account_group || '', r.symbol || ''])] || 0);
@@ -1114,42 +1219,23 @@ function renderByAssetTable() {
     const lp = isAsOfLatest() ? LOTS_BY_KEY[lotKey] : null;
     const expandable = !!(lp && ((lp.lots && lp.lots.length) || lp.micro));
     const expanded = expandable && lotsExpanded.has(lotKey);
-    let rowHtml = `<tr${expandable ? ` class="lot-toggle" data-lotkey="${_htmlEsc(lotKey)}"` : ''}>` + cols.map(col => {
+    let rowHtml = `<tr data-record-key="${_htmlEsc(JSON.stringify([row.account_group || '', row.symbol || '']))}"${expandable ? ` class="lot-toggle" data-lotkey="${_htmlEsc(lotKey)}"` : ''}>` + cols.map(col => {
       const cls = numCols.has(col) ? ' class="num"' : '';
       const val = row[col];
-      let html = '';
-      if (val == null || val === '') html = '';
-      else if (numCols.has(col)) {
-        const n = typeof val === 'number' ? val : parseFloat(val);
-        if (!Number.isFinite(n)) html = _htmlEsc(val);
-        else {
-          const fmt = col === 'quantity'
-            ? n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })
-            : (col === 'pct_return'
-              ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%'
-              : fmtMoney(n));
-          const c = ['quantity', 'price', 'value', 'cost_basis'].includes(col) ? ''
-            : (n < 0 ? 'negative' : (n > 0 ? 'positive' : ''));
-          html = `<span class="${c}">${fmt}</span>`;
-        }
-      } else if (col === 'symbol') {
+      let html = positionCellHtml(row, col);
+      if (col === 'symbol' && val != null && val !== '') {
         const chev = expandable
           ? `<span class="lot-chev">${expanded ? '▾' : '▸'}</span>` : '';
         html = expandable
           ? `<button type="button" class="lot-disclosure" data-lotkey="${_htmlEsc(lotKey)}" aria-expanded="${expanded}" aria-label="${_htmlEsc('Lots for ' + val + ' in ' + row.account_group)}">${chev}${symLabel(val)}</button>`
           : symLabel(val);
-      } else if (col === 'account_group' && ACCOUNT_COLORS[val]) {
-        html = `<span style="color:${ACCOUNT_COLORS[val]}">${_htmlEsc(val)}</span>`;
-      } else if (col === 'sector' && SECTOR_COLORS[val]) {
-        html = `<span style="color:${SECTOR_COLORS[val]}">${_htmlEsc(val)}</span>`;
-      } else {
-        html = _htmlEsc(val);
       }
       return `<td${cls}>${html}</td>`;
     }).join('') + '</tr>';
     if (expanded) rowHtml += lotDetailHtml(lp, cols.length);
     return rowHtml;
   }).join('');
+  renderCompactPositions(filtered, cols);
 
   // Totals + count
   const totalValue = filtered.reduce((s, r) => s + (typeof r.value === 'number' ? r.value : 0), 0);

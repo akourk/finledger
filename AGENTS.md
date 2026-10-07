@@ -36,6 +36,14 @@ This repository is public. User financial data is private.
 
 ## Agent guidance
 
+Use subagents for independent, bounded work when doing so would materially
+improve speed or quality. Keep small or tightly dependent tasks in the main
+agent. Give each worker the relevant project instructions, clear file ownership,
+and acceptance criteria. Avoid duplicate work and conflicting edits; the main
+agent owns integration and verification of the combined result. Follow the
+user's current usage budget and stopping rules; do not assume a separate
+allowance per agent or project.
+
 Read the skill matching the change from `.claude/skills/`; the mapping in
 `CONTRIBUTING.md` works for any agent even when the client does not discover that
 directory automatically. Maintain those skills in one place. Keep this file and

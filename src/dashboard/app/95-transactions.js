@@ -212,7 +212,10 @@ colWrap.addEventListener('click', e => {
   renderColToggle();
   renderHeader();
   renderTable();
-  dataControl(headerRow, 'col', col)?.focus({ preventScroll: true });
+  const focusTarget = matchMedia(COMPACT_NAV_QUERY).matches
+    ? document.querySelector('#transactionsCompact [data-compact-sort]')
+    : dataControl(headerRow, 'col', col);
+  focusTarget?.focus({ preventScroll: true });
 });
 
 // --- Header ---
@@ -320,6 +323,12 @@ const countPill = document.getElementById('countPill');
 // The embedded ledger is immutable. Build search text only when a row is
 // first searched, then reuse it across keystrokes and filter changes.
 const txnSearchText = new WeakMap();
+const txnRecordKeys = new WeakMap();
+let nextTxnRecordKey = 0;
+function transactionRecordKey(t) {
+  if (!txnRecordKeys.has(t)) txnRecordKeys.set(t, String(nextTxnRecordKey++));
+  return txnRecordKeys.get(t);
+}
 function transactionSearchText(t) {
   if (!txnSearchText.has(t)) {
     txnSearchText.set(t, columns.map(c => String(t[c] ?? '')).join(' ').toLowerCase());
@@ -358,6 +367,34 @@ function resetTransactionFilters() {
   openPopover = null;
   renderFilterBar();
   _setDateRange('', '', 'all');
+}
+
+function renderCompactTransactions(rows, filteredCount) {
+  const container = document.getElementById('transactionsCompact');
+  if (!container) return;
+  rememberCompactRecords(container);
+  if (!matchMedia(COMPACT_NAV_QUERY).matches) { container.innerHTML = ''; return; }
+  const valueCol = columns.includes('amount') ? 'amount' : 'value';
+  const secondary = columns.filter(col => !['date', 'action', 'symbol', valueCol].includes(col));
+  container.innerHTML = compactSortHtml(visibleCols(), sortCol, sortAsc, 'Sort transactions')
+    + (rows.length ? rows.map(t => {
+      const key = transactionRecordKey(t);
+      return `<details class="compact-record" data-record-key="${key}"${compactRecordOpen(container.id, key)}>
+        <summary class="compact-record-summary">
+          <span class="compact-record-identity"><span class="compact-record-meta">${formatCell(t.date, 'date') || 'Undated'} · ${formatCell(t.action, 'action') || 'Transaction'}</span>${formatCell(t.symbol, 'symbol') || 'Cash / other'}<span class="compact-record-meta">${_htmlEsc(t.account_group || t.account || '')}</span></span>
+          <span class="compact-record-value"><span class="compact-record-meta">${_htmlEsc(fieldLabel(valueCol))}</span>${formatCell(t[valueCol], valueCol) || '—'}</span>
+          <span class="compact-record-cue" aria-hidden="true">Details</span>
+        </summary>
+        ${compactFieldsHtml(secondary.map(col => [fieldLabel(col), formatCell(t[col], col)]))}
+      </details>`;
+    }).join('') : '<p class="compact-empty">No transactions match these filters.</p>')
+    + (filteredCount > 5000 ? `<p class="compact-record-note">Showing 5,000 of ${filteredCount.toLocaleString()} rows. Use filters to narrow.</p>` : '');
+  bindCompactSort(container, column => {
+    if (column) { sortCol = column; sortAsc = true; }
+    else sortAsc = !sortAsc;
+    renderHeader();
+    renderTable();
+  });
 }
 
 function renderTable() {
@@ -414,7 +451,7 @@ function renderTable() {
 
   const show = filtered.slice(0, 5000);
   tbody.innerHTML = show.map(t =>
-    '<tr>' + vis.map(col => {
+    `<tr data-record-key="${transactionRecordKey(t)}">` + vis.map(col => {
       const cls = NUMERIC_FIELDS.has(col) ? ' class="num"' : '';
       return `<td${cls}>${formatCell(t[col], col)}</td>`;
     }).join('') + '</tr>'
@@ -424,6 +461,8 @@ function renderTable() {
     tbody.innerHTML += `<tr><td colspan="${vis.length}" style="color:var(--yellow);text-align:center;">
       Showing 5,000 of ${filtered.length.toLocaleString()} rows. Use filters to narrow.</td></tr>`;
   }
+  renderCompactTransactions(show, filtered.length);
+  applyScrollRegionFocus();
 }
 
 // Thousands of formatted ledger rows should not delay the Overview.
@@ -434,6 +473,56 @@ registerTabRenderer('transactions', () => {
   renderColToggle();
   renderHeader();
   renderTable();
+});
+
+// Resizing changes presentation, never row scope, sort, or disclosure state.
+// Move focus to the equivalent visible control if the old surface disappears.
+// Browsers can blur a display:none descendant before the media-query callback.
+// Remember focus while it is in either representation; an intentional move to
+// another control or a pointer action outside the tables clears that fallback.
+let lastDataTableFocus = null;
+document.addEventListener('focusin', event => {
+  lastDataTableFocus = event.target.closest?.('.compact-data-list, .desktop-data-table')
+    ? event.target : null;
+});
+document.addEventListener('focusout', event => {
+  if (event.target !== lastDataTableFocus) return;
+  const surface = event.target.closest('.compact-data-list, .desktop-data-table');
+  if (!surface || !event.target.isConnected || event.relatedTarget
+      || getComputedStyle(surface).display !== 'none') lastDataTableFocus = null;
+});
+document.addEventListener('pointerdown', event => {
+  if (!event.target.closest?.('.compact-data-list, .desktop-data-table')) lastDataTableFocus = null;
+});
+window.matchMedia(COMPACT_NAV_QUERY).addEventListener('change', event => {
+  let active = document.activeElement;
+  if ((active === document.body || active === document.documentElement)
+      && lastDataTableFocus?.isConnected
+      && lastDataTableFocus.closest('.tab-panel')?.classList.contains('active')) {
+    active = lastDataTableFocus;
+  }
+  const surfaces = [
+    ['byAssetCompact', 'byAssetTbody', 'byAssetHeaderRow', renderByAssetTable],
+    ['transactionsCompact', 'tbody', 'headerRow', () => {
+      if (TAB_RENDERED.has('transactions')) renderTable();
+    }],
+  ];
+  for (const [compactId, bodyId, headerId, render] of surfaces) {
+    const compact = document.getElementById(compactId);
+    const table = document.getElementById(bodyId)?.closest('table');
+    const losingFocus = (event.matches ? table : compact)?.contains(active);
+    const key = active?.closest('[data-record-key]')?.dataset.recordKey;
+    render();
+    if (!losingFocus) continue;
+    const target = event.matches ? compact : table;
+    const row = key != null ? [...target.querySelectorAll('[data-record-key]')]
+      .find(record => record.dataset.recordKey === key) : null;
+    const control = event.matches
+      ? row?.querySelector('summary') || compact.querySelector('[data-compact-sort]')
+      : row?.querySelector('button.lot-disclosure') || document.getElementById(headerId)?.querySelector('th');
+    control?.focus({preventScroll: true});
+  }
+  applyScrollRegionFocus();
 });
 
 // Honor initial URL hash — deferred to here (bottom of script) so

@@ -682,41 +682,32 @@ function renderMultiLineChart(seriesArr, opts) {
     const dots = document.getElementById(id + '_dots');
     const cap = document.getElementById(id + '_cap');
     const tip = document.getElementById(id + '_tip');
-    if (tip) tip.style.display = 'none';
-    if (!cap) return;
-    cap.addEventListener('mousemove', ev => {
-      const r = svg.getBoundingClientRect();
-      const mx = (ev.clientX - r.left) * (W / r.width);
-      let idx = Math.round(((mx - PAD.l) / plotW) * (n - 1));
-      idx = Math.max(0, Math.min(n - 1, idx));
-      const x = xOf(idx);
-      hv.setAttribute('x1', x); hv.setAttribute('x2', x);
-      hv.style.display = '';
-      dots.innerHTML = seriesArr.map(s => {
-        const y = yOf(s.points[idx].value);
-        return `<circle cx="${x}" cy="${y}" r="4" fill="${s.color}" stroke="var(--bg)" stroke-width="1.5"/>`;
-      }).join('');
-      if (tip) {
+    if (!cap || !tip) return;
+    _bindChartInspection({svg, capture: cap, tooltip: tip,
+      dates: seriesArr[0].points.map(p => p.date), label: label + ' observation',
+      indexAt: clientX => {
+        const r = svg.getBoundingClientRect();
+        const mx = (clientX - r.left) * (W / r.width);
+        return Math.round(((mx - PAD.l) / plotW) * (n - 1));
+      },
+      show: idx => {
+        const x = xOf(idx);
+        hv.setAttribute('x1', x); hv.setAttribute('x2', x);
+        hv.style.display = '';
+        dots.innerHTML = seriesArr.map(s => {
+          const y = yOf(s.points[idx].value);
+          return `<circle cx="${x}" cy="${y}" r="4" fill="${s.color}" stroke="var(--bg)" stroke-width="1.5"/>`;
+        }).join('');
         const rows = seriesArr.map(s => `<div class="tt-row">
-          <span class="tt-name"><span class="tt-swatch" style="background:${s.color}"></span>${_htmlEsc(s.label)}</span>
-          <span>${fmtMoney(s.points[idx].value)}</span>
-        </div>`).join('');
-        tip.innerHTML = `<div class="tt-date">${_htmlEsc(seriesArr[0].points[idx].date || '')}</div>${rows}`;
-        tip.style.display = 'block';
-        const wrap = tip.parentElement.getBoundingClientRect();
-        let tx = ev.clientX - wrap.left + 12;
-        let ty = ev.clientY - wrap.top + 12;
-        const tr = tip.getBoundingClientRect();
-        if (tx + tr.width + 12 > wrap.width) tx = ev.clientX - wrap.left - tr.width - 12;
-        if (ty + tr.height + 12 > wrap.height) ty = ev.clientY - wrap.top - tr.height - 12;
-        tip.style.left = tx + 'px';
-        tip.style.top = ty + 'px';
+            <span class="tt-name"><span class="tt-swatch" style="background:${s.color}"></span>${_htmlEsc(s.label)}</span>
+            <span>${fmtMoney(s.points[idx].value)}</span>
+          </div>`).join('');
+        return `<div class="tt-date">${_htmlEsc(seriesArr[0].points[idx].date || '')}</div>${rows}`;
+      },
+      hide: () => {
+        hv.style.display = 'none';
+        dots.innerHTML = '';
       }
-    });
-    cap.addEventListener('mouseleave', () => {
-      hv.style.display = 'none';
-      dots.innerHTML = '';
-      if (tip) tip.style.display = 'none';
     });
   });
 
@@ -1363,7 +1354,7 @@ function renderPerformance() {
   const moreWindows = PERF_TWR_PRESETS.filter(w => !commonWindows.includes(w));
   const mobileWindows = commonWindows.map(w => windowChip(w, 'mobile')).join('') + `
     <label class="sr-only" for="perfWindowSelect">Additional performance ranges</label>
-    <select id="perfWindowSelect" onchange="setPerformanceWindow(this.value)">
+    <select class="perf-more-ranges" id="perfWindowSelect" onchange="setPerformanceWindow(this.value)">
       <option value="" disabled${commonWindows.includes(performanceWindow) ? ' selected' : ''}>More ranges</option>
       ${moreWindows.map(w => `<option value="${w}"${w === performanceWindow ? ' selected' : ''}>${PERF_TWR_PRESET_LABEL[w]}</option>`).join('')}
     </select>`;

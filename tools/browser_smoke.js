@@ -569,7 +569,11 @@ async function main() {
       assert.ok(overflow <= 1, `${tab} overflows mobile viewport by ${overflow}px`);
     }
     await selectSection(page, 'holdings');
-    await checkStickyIdentity(page, '#byAssetBody .sticky-identity');
+    assert.equal(await page.$eval('#byAssetBody .desktop-data-table', el => el.checkVisibility()), false,
+      'phone positions use compact records');
+    assert.equal(await page.$eval('#byAssetCompact', el => el.checkVisibility()), true);
+    assert.ok(await page.$eval('#byAssetCompact', el => el.scrollWidth <= el.clientWidth + 1),
+      'phone position records need no sideways scrolling');
     await page.click('#btnBoardBoard');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 1), 'Board must fit the mobile page');
     await checkStickyIdentity(page, '#boardPanes [data-pane="0"] .board-scroll');

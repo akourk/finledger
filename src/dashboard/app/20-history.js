@@ -673,12 +673,148 @@ function buildHistorySeries() {
   return series;
 }
 
+function _clearChartInspection(svg, tooltip) {
+  svg._chartInspection = null;
+  svg.onfocus = null;
+  svg.onkeydown = null;
+  svg.removeAttribute('tabindex');
+  svg.setAttribute('aria-disabled', 'true');
+  svg.setAttribute('aria-valuetext', 'No observations');
+  svg.removeAttribute('aria-describedby');
+  tooltip.style.display = 'none';
+  tooltip.classList.remove('chart-tooltip-pinned');
+  document.getElementById(svg.id + '_inspectHint')?.remove();
+}
+
+// Shared by History and Performance. The SVG is a date slider; touch/keyboard
+// inspection uses a readable, persistent panel while mouse hover stays transient.
+function _bindChartInspection({svg, capture, tooltip, dates, indexAt, show, hide, label}) {
+  const previous = svg._chartInspection;
+  const restoreClearFocus = tooltip.querySelector('.chart-inspection-clear') === document.activeElement;
+  const state = {index: Math.max(0, dates.length - 1), pinned: false, date: null};
+  svg._chartInspection = state;
+  svg.setAttribute('role', 'slider');
+  svg.setAttribute('tabindex', '0');
+  svg.setAttribute('aria-label', label);
+  svg.setAttribute('aria-orientation', 'horizontal');
+  svg.setAttribute('aria-valuemin', '1');
+  svg.setAttribute('aria-valuemax', String(Math.max(1, dates.length)));
+  svg.setAttribute('aria-valuenow', String(state.index + 1));
+  svg.setAttribute('aria-valuetext', dates[state.index] || 'No observations');
+  svg.setAttribute('aria-disabled', String(!dates.length));
+  svg.setAttribute('aria-describedby', svg.id + '_inspectHint');
+  capture.style.touchAction = 'pan-y pinch-zoom';
+  let hint = document.getElementById(svg.id + '_inspectHint');
+  if (!hint) {
+    hint = document.createElement('p');
+    hint.id = svg.id + '_inspectHint';
+    hint.className = 'chart-inspection-hint';
+    hint.textContent = 'Tap or drag across the chart to inspect. Use Left/Right arrow keys when focused; Escape clears.';
+    svg.parentElement.appendChild(hint);
+  }
+  tooltip.setAttribute('role', 'status');
+  tooltip.setAttribute('aria-atomic', 'true');
+  const clear = () => {
+    state.pinned = false;
+    state.date = null;
+    tooltip.style.display = 'none';
+    tooltip.classList.remove('chart-tooltip-pinned');
+    hide();
+  };
+  const inspect = (index, pinned, event) => {
+    if (!dates.length) return;
+    state.index = Math.max(0, Math.min(dates.length - 1, index));
+    state.pinned = pinned;
+    state.date = dates[state.index];
+    const clearFocused = tooltip.querySelector('.chart-inspection-clear') === document.activeElement;
+    tooltip.setAttribute('aria-live', pinned ? 'polite' : 'off');
+    tooltip.innerHTML = show(state.index);
+    const readout = tooltip.textContent.replace(/\s+/g, ' ').trim();
+    svg.setAttribute('aria-valuenow', String(state.index + 1));
+    svg.setAttribute('aria-valuetext', readout);
+    tooltip.classList.toggle('chart-tooltip-pinned', pinned);
+    tooltip.style.display = 'block';
+    tooltip.style.left = '';
+    tooltip.style.top = '';
+    if (pinned) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'chart-inspection-clear';
+      button.textContent = 'Clear inspection';
+      button.onclick = () => {
+        // Focus the persistent SVG before removing the button under focus.
+        svg.focus({preventScroll: true});
+        clear();
+      };
+      tooltip.appendChild(button);
+      if (clearFocused) button.focus({preventScroll: true});
+    } else {
+      // Clamp in viewport coordinates before converting to the positioned wrap.
+      // Long labels wrap; the tooltip never extends off either phone edge.
+      const wrap = tooltip.parentElement.getBoundingClientRect();
+      const box = tooltip.getBoundingClientRect();
+      const left = Math.max(8, Math.min(event.clientX + 12, innerWidth - box.width - 8));
+      const top = Math.max(8, Math.min(event.clientY + 12, innerHeight - box.height - 8));
+      tooltip.style.left = (left - wrap.left) + 'px';
+      tooltip.style.top = (top - wrap.top) + 'px';
+    }
+  };
+  let gesture = null;
+  capture.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' || !event.isPrimary) return;
+    gesture = {id: event.pointerId, x: event.clientX, y: event.clientY, dragging: false};
+    inspect(indexAt(event.clientX), true, event);
+    // No preventDefault: the browser owns vertical pan and pinch gestures.
+  });
+  capture.addEventListener('pointermove', event => {
+    if (event.pointerType === 'mouse') {
+      if (!state.pinned) inspect(indexAt(event.clientX), false, event);
+      return;
+    }
+    if (!gesture || gesture.id !== event.pointerId) return;
+    const dx = Math.abs(event.clientX - gesture.x), dy = Math.abs(event.clientY - gesture.y);
+    if (!gesture.dragging && dy > 8 && dy > dx) { gesture = null; clear(); return; }
+    if (dx > 8 && dx >= dy) gesture.dragging = true;
+    if (gesture.dragging) inspect(indexAt(event.clientX), true, event);
+  });
+  capture.addEventListener('pointerup', event => {
+    if (!gesture || gesture.id !== event.pointerId) return;
+    inspect(indexAt(event.clientX), true, event);
+    gesture = null;
+  });
+  capture.addEventListener('pointercancel', () => { gesture = null; clear(); });
+  capture.addEventListener('pointerleave', event => {
+    if (event.pointerType === 'mouse' && !state.pinned) clear();
+  });
+  // DOM properties replace handlers on geometry redraw, keeping SVG focus intact.
+  svg.onfocus = () => inspect(state.index, true);
+  svg.onkeydown = event => {
+    let index = state.index;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') index--;
+    else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') index++;
+    else if (event.key === 'Home') index = 0;
+    else if (event.key === 'End') index = dates.length - 1;
+    else if (event.key === 'Escape') { event.preventDefault(); clear(); return; }
+    else return;
+    event.preventDefault();
+    inspect(index, true);
+  };
+  clear();
+  // Resizing should preserve an inspected observation when it still exists.
+  const restored = previous?.pinned ? dates.indexOf(previous.date) : -1;
+  if (restored >= 0) {
+    inspect(restored, true);
+    if (restoreClearFocus) tooltip.querySelector('.chart-inspection-clear').focus({preventScroll: true});
+  }
+}
+
 function renderHistory() {
   const svg = document.getElementById('chartSvg');
   const tooltip = document.getElementById('chartTooltip');
   const legend = document.getElementById('chartLegend');
 
   if (!history.length) {
+    _clearChartInspection(svg, tooltip);
     svg.innerHTML = '';
     legend.innerHTML = '';
     const wrap = document.getElementById('chartWrap');
@@ -702,6 +838,12 @@ function renderHistory() {
   const allSeries = buildHistorySeries();
   const series = allSeries.filter(s => !seriesHidden.has(s.key));
   const hist = filteredHistory();  // axis dates come from filtered slice
+  if (!hist.length) {
+    _clearChartInspection(svg, tooltip);
+    svg.innerHTML = '';
+    legend.innerHTML = '';
+    return;
+  }
 
   // Dimensions
   const rect = svg.getBoundingClientRect();
@@ -806,50 +948,40 @@ function renderHistory() {
     renderHistory();
   };
 
-  // Hover interaction
   const capture = document.getElementById('chartCapture');
   const hoverV = document.getElementById('chartHoverV');
   const dotsG = document.getElementById('chartHoverDots');
-  capture.addEventListener('mousemove', ev => {
-    const svgRect = svg.getBoundingClientRect();
-    // SVG viewBox is 0..W; scale mouse X into that space
-    const mx = (ev.clientX - svgRect.left) * (W / svgRect.width);
-    let idx = Math.round(((mx - PAD.l) / plotW) * (n - 1));
-    idx = Math.max(0, Math.min(n - 1, idx));
-    const x = xOf(idx);
-    hoverV.setAttribute('x1', x);
-    hoverV.setAttribute('x2', x);
-    hoverV.style.display = '';
-    dotsG.innerHTML = series.map(s => {
-      const y = yOf(s.points[idx].value);
-      return `<circle class="hover-dot" cx="${x}" cy="${y}" r="4" fill="${s.colorResolved}"/>`;
-    }).join('');
+  _bindChartInspection({svg, capture, tooltip, dates: hist.map(h => h.date),
+    label: 'History chart observation',
+    indexAt: clientX => {
+      const svgRect = svg.getBoundingClientRect();
+      const mx = (clientX - svgRect.left) * (W / svgRect.width);
+      return Math.round(((mx - PAD.l) / plotW) * (n - 1));
+    },
+    show: idx => {
+      const x = xOf(idx);
+      hoverV.setAttribute('x1', x);
+      hoverV.setAttribute('x2', x);
+      hoverV.style.display = '';
+      dotsG.innerHTML = series.map(s => {
+        const y = yOf(s.points[idx].value);
+        return `<circle class="hover-dot" cx="${x}" cy="${y}" r="4" fill="${s.colorResolved}"/>`;
+      }).join('');
 
-    // Tooltip
-    const rows = series.map(s => {
-      const v = s.points[idx].value;
-      return `<div class="tt-row">
-        <span class="tt-name"><span class="tt-swatch" style="background:${s.colorResolved}"></span>${_htmlEsc(s.key)}</span>
-        <span>${formatMoney(v)}</span>
-      </div>`;
-    }).join('');
-    tooltip.innerHTML = `<div class="tt-date">${_htmlEsc(hist[idx].date)}</div>${rows}`;
-    tooltip.style.display = 'block';
-
-    const wrapRect = document.getElementById('chartWrap').getBoundingClientRect();
-    // Position tooltip near mouse, clamp inside the chart wrap
-    let tx = ev.clientX - wrapRect.left + 12;
-    let ty = ev.clientY - wrapRect.top + 12;
-    const tRect = tooltip.getBoundingClientRect();
-    if (tx + tRect.width + 12 > wrapRect.width) tx = ev.clientX - wrapRect.left - tRect.width - 12;
-    if (ty + tRect.height + 12 > wrapRect.height) ty = ev.clientY - wrapRect.top - tRect.height - 12;
-    tooltip.style.left = tx + 'px';
-    tooltip.style.top = ty + 'px';
-  });
-  capture.addEventListener('mouseleave', () => {
-    hoverV.style.display = 'none';
-    dotsG.innerHTML = '';
-    tooltip.style.display = 'none';
+      // Tooltip
+      const rows = series.map(s => {
+        const v = s.points[idx].value;
+        return `<div class="tt-row">
+          <span class="tt-name"><span class="tt-swatch" style="background:${s.colorResolved}"></span>${_htmlEsc(s.key)}</span>
+          <span>${formatMoney(v)}</span>
+        </div>`;
+      }).join('');
+      return `<div class="tt-date">${_htmlEsc(hist[idx].date)}</div>${rows}`;
+    },
+    hide: () => {
+      hoverV.style.display = 'none';
+      dotsG.innerHTML = '';
+    }
   });
 }
 
@@ -859,7 +991,10 @@ function renderHistory() {
 // the categories bottom-to-top, and fills each band with its category
 // color.  Self-contained — own axes/legend/hover, no overlays.
 function _renderComposition(svg, tooltip, legend, hist) {
-  if (!hist.length) { svg.innerHTML = ''; legend.innerHTML = ''; return; }
+  if (!hist.length) {
+    _clearChartInspection(svg, tooltip);
+    svg.innerHTML = ''; legend.innerHTML = ''; return;
+  }
   const rect = svg.getBoundingClientRect();
   const W = rect.width || 800;
   const H = rect.height || 340;
@@ -950,37 +1085,29 @@ function _renderComposition(svg, tooltip, legend, hist) {
 
   const capture = document.getElementById('chartCapture');
   const hoverV = document.getElementById('chartHoverV');
-  capture.addEventListener('mousemove', ev => {
-    const svgRect = svg.getBoundingClientRect();
-    const mx = (ev.clientX - svgRect.left) * (W / svgRect.width);
-    let idx = Math.round(((mx - PAD.l) / plotW) * (n - 1));
-    idx = Math.max(0, Math.min(n - 1, idx));
-    const x = xOf(idx);
-    hoverV.setAttribute('x1', x); hoverV.setAttribute('x2', x); hoverV.style.display = '';
-    const h = hist[idx];
-    let total = 0; for (const c of drawCats) total += valAt(h, c);
-    const rows = [...drawCats].reverse().map(c => {
-      const v = valAt(h, c);
-      const pct = total > 0 ? (v / total * 100) : 0;
-      return `<div class="tt-row">
-        <span class="tt-name"><span class="tt-swatch" style="background:${catColor(c)}"></span>${_htmlEsc(catLabel(c))}</span>
-        <span>${formatMoney(v)} <span style="color:var(--text-dim);">${pct.toFixed(0)}%</span></span>
-      </div>`;
-    }).join('');
-    tooltip.innerHTML = `<div class="tt-date">${_htmlEsc(h.date)} · total ${formatMoney(total)}</div>${rows}`;
-    tooltip.style.display = 'block';
-    const wrapRect = document.getElementById('chartWrap').getBoundingClientRect();
-    let tx = ev.clientX - wrapRect.left + 12;
-    let ty = ev.clientY - wrapRect.top + 12;
-    const tRect = tooltip.getBoundingClientRect();
-    if (tx + tRect.width + 12 > wrapRect.width) tx = ev.clientX - wrapRect.left - tRect.width - 12;
-    if (ty + tRect.height + 12 > wrapRect.height) ty = ev.clientY - wrapRect.top - tRect.height - 12;
-    tooltip.style.left = tx + 'px';
-    tooltip.style.top = ty + 'px';
-  });
-  capture.addEventListener('mouseleave', () => {
-    hoverV.style.display = 'none';
-    tooltip.style.display = 'none';
+  _bindChartInspection({svg, capture, tooltip, dates: hist.map(h => h.date),
+    label: 'Account mix chart observation',
+    indexAt: clientX => {
+      const svgRect = svg.getBoundingClientRect();
+      const mx = (clientX - svgRect.left) * (W / svgRect.width);
+      return Math.round(((mx - PAD.l) / plotW) * (n - 1));
+    },
+    show: idx => {
+      const x = xOf(idx);
+      hoverV.setAttribute('x1', x); hoverV.setAttribute('x2', x); hoverV.style.display = '';
+      const h = hist[idx];
+      let total = 0; for (const c of drawCats) total += valAt(h, c);
+      const rows = [...drawCats].reverse().map(c => {
+        const v = valAt(h, c);
+        const pct = total > 0 ? (v / total * 100) : 0;
+        return `<div class="tt-row">
+          <span class="tt-name"><span class="tt-swatch" style="background:${catColor(c)}"></span>${_htmlEsc(catLabel(c))}</span>
+          <span>${formatMoney(v)} <span style="color:var(--text-dim);">${pct.toFixed(0)}%</span></span>
+        </div>`;
+      }).join('');
+      return `<div class="tt-date">${_htmlEsc(h.date)} · total ${formatMoney(total)}</div>${rows}`;
+    },
+    hide: () => { hoverV.style.display = 'none'; }
   });
 }
 

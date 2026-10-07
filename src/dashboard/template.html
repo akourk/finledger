@@ -218,7 +218,7 @@
     <!-- Both layouts consume the exported positions. Board can combine
          a symbol across accounts; each layout retains its own filters. -->
     <div class="toggle-group" role="group" aria-label="Holdings by asset layout">
-      <button class="tbtn active" id="btnBoardTable" onclick="setBoardLayout('table')">Table</button>
+      <button class="tbtn active" id="btnBoardTable" onclick="setBoardLayout('table')">Positions</button>
       <button class="tbtn" id="btnBoardBoard" onclick="setBoardLayout('board')">P&amp;L board</button>
     </div>
     <span class="total-value" id="byAssetTotalValue"></span>
@@ -230,8 +230,8 @@
       <span class="pill" id="byAssetCountPill"></span>
     </div>
     <details class="section-disclosure filter-disclosure" id="holdingsFilters">
-      <summary>Table filters <span class="scope-label" id="holdingsFilterSummary">All account groups · All sectors</span></summary>
-      <p class="scope-context">Table filters apply only to this table. P&amp;L board keeps its own selection.</p>
+      <summary>Position filters <span class="scope-label" id="holdingsFilterSummary">All account groups · All sectors</span></summary>
+      <p class="scope-context">These filters apply only to the positions list. P&amp;L board keeps its own selection.</p>
       <div class="controls">
       <select id="byAssetAccountGroupFilter" aria-label="Filter holdings by account group">
         <option value="">All account groups</option>
@@ -241,13 +241,14 @@
       </select>
       </div>
     </details>
-    <div class="table-wrap mini-scroll tall sticky-identity">
+    <div class="table-wrap mini-scroll tall sticky-identity desktop-data-table">
       <table>
         <caption class="sr-only">Positions by symbol and account. Activate a symbol's lot button to expand its tax lots.</caption>
         <thead><tr id="byAssetHeaderRow"></tr></thead>
         <tbody id="byAssetTbody"></tbody>
       </table>
     </div>
+    <div id="byAssetCompact" class="compact-data-list" role="region" aria-label="Positions by symbol and account"></div>
   </div>
 
   <div id="rebalanceSection"></div>
@@ -308,7 +309,7 @@
     <span class="pill" id="countPill"></span>
   </div>
   <details class="section-disclosure filter-disclosure" id="transactionFilters">
-    <summary>Filters &amp; columns <span class="scope-label" id="transactionFilterSummary">All transactions · all dates</span></summary>
+    <summary>Filters &amp; desktop columns <span class="scope-label" id="transactionFilterSummary">All transactions · all dates</span></summary>
     <button class="tbtn" id="resetTransactionFilters" onclick="resetTransactionFilters()">Clear filters</button>
     <div class="filter-bar" id="filterBar"></div>
     <div class="controls">
@@ -328,13 +329,14 @@
     <div class="col-toggle-wrap" id="colToggleWrap"></div>
     </div>
   </details>
-  <div class="table-wrap">
+  <div class="table-wrap desktop-data-table">
     <table>
       <caption class="sr-only">Full transaction ledger</caption>
       <thead><tr id="headerRow"></tr></thead>
       <tbody id="tbody"></tbody>
     </table>
   </div>
+  <div id="transactionsCompact" class="compact-data-list" role="region" aria-label="Transactions"></div>
 </div>
 
 <!-- ============================ OPTIONS ============================ -->
@@ -355,11 +357,14 @@
        columns, year-end balance + Δ% + Δ$ (and contributions on
        expand) per cell.  Lives on Planning — it's goal tracking
        (targets, savings rate) rather than a portfolio snapshot. -->
+  <details class="section-disclosure" id="planningAnnualHistory">
+  <summary>Year by Year <span class="scope-label">Balances, targets &amp; savings rate</span></summary>
   <div class="section-header" id="annualBreakdownHeader" style="margin-top:24px;">
     <h2><span style="color:var(--accent);">Year by Year</span></h2>
     <span class="as-of-hint" style="margin-left:auto;">Click an account name to expand contribution columns.</span>
   </div>
   <div class="annual-breakdown-wrap" id="annualBreakdown"></div>
+  </details>
 </div>
 
 <!-- ============================ INCOME ============================ -->

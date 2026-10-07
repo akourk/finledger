@@ -126,6 +126,32 @@ range; returning to Custom preserves previously entered dates. The
 transitions and the distinct balance/contribution series. Quick and advanced
 chart controls retain keyboard focus after rerendering.
 
+## Mobile details and touch inspection
+
+Positions and Transactions use compact records on phone-sized screens and short
+landscape viewports. Each record shows its identifying fields and main amount;
+native disclosures retain the other fields and open-lot detail. The same filtered,
+sorted rows feed the desktop table and compact view. Sorting, historical scope,
+and account filters keep their existing meaning. Transaction column preferences
+apply to the desktop table; expanded phone records expose every exported column.
+
+History and Performance charts support touch and keyboard observation selection.
+Horizontal dragging inspects dates while vertical gestures remain available for
+page scrolling. A selected observation has a persistent readout with a Clear
+inspection button; desktop mouse hover remains available. More ranges has its
+own row on narrow Performance layouts so the selected range stays readable.
+
+Income, Tax, Retirement, and Planning place detailed tables and methodology in
+native disclosures. Main figures, active inputs, measurement scopes, and important
+projection or eligibility caveats remain visible. Disclosure choices survive
+rerenders, and controls retain focus when updating their dependent figures.
+These changes do not alter financial calculations or add persistent data storage.
+
+Behavioral browser checks live in `tools/mobile_tables.js`,
+`tools/touch_chart_smoke.js`, and `tools/secondary_disclosure_smoke.js`, included in
+`npm run test:mobile`. They use independently fictional data. Chrome viewport and
+touch emulation do not establish actual iPhone Safari behavior.
+
 ## Evidence and acceptance
 
 Before this batch, the Performance benchmark heading appeared roughly 760 pixels

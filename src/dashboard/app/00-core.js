@@ -269,6 +269,21 @@ function renderKeepingFocus(render) {
   }
 }
 
+// Native disclosure choices belong to the reader. Preserve them when a
+// tab rebuilds its contents after an input, filter, or navigation change.
+const _disclosureStates = new WeakMap();
+function renderDisclosureContent(root, html) {
+  const states = _disclosureStates.get(root) || new Map();
+  for (const details of root.querySelectorAll('details[id]')) {
+    states.set(details.id, details.open);
+  }
+  _disclosureStates.set(root, states);
+  root.innerHTML = html;
+  for (const details of root.querySelectorAll('details[id]')) {
+    if (states.has(details.id)) details.open = states.get(details.id);
+  }
+}
+
 // Compare imported data values without interpolating them into selectors.
 function dataControl(root, attribute, value) {
   return [...root.querySelectorAll('[data-' + attribute + ']')]
