@@ -206,7 +206,10 @@ def test_historical_holdings_overview_and_composition_reconcile_transit(tmp_path
       const composition = ['account', 'type', 'sector'].map(dim => {
         historyCompositionDim = dim;
         _renderComposition(nodeFor('transitComposition'), nodeFor('transitTooltip'), nodeFor('transitLegend'), history);
-        nodeFor('chartCapture').listeners.mousemove({clientX: 474, clientY: 100});
+        // Inspect the same observation through the chart's touch pointer binding.
+        nodeFor('chartCapture').listeners.pointerdown({
+          pointerType: 'touch', isPrimary: true, pointerId: 1, clientX: 474, clientY: 100,
+        });
         return {legend: nodeFor('transitLegend').innerHTML, tooltip: nodeFor('transitTooltip').innerHTML};
       });
       process.stdout.write(JSON.stringify({
