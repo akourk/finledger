@@ -102,7 +102,12 @@ async function checkInputs(page) {
   await selectSection(page, 'tax');
   assert.equal(await page.$eval('#taxShortRate', element => element.closest('details')), null,
     'selected rates stay visible outside supporting detail');
+  // Keep the pointer target clear of fixed mobile navigation across font metrics.
+  await page.$eval('#taxIncomeBuildUp > summary', element =>
+    element.scrollIntoView({block: 'center', behavior: 'instant'}));
   await page.click('#taxIncomeBuildUp > summary');
+  assert.equal(await page.$eval('#taxIncomeBuildUp', element => element.open), true,
+    'pointer reveal opens detail before editing rates');
   await editNumber(page, '#taxShortRate', '27');
   await editNumber(page, '#taxLongRate', '18');
   assert.equal(await page.$eval('#taxIncomeBuildUp', element => element.open), true,
