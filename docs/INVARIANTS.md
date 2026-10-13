@@ -123,13 +123,49 @@ Normal local output lives in `exports/transactions.json` and
    the max intra-file count. Identity rounds quantity and price to eight
    decimals and amount to cents; this matching tolerance does not round fees.
    For each identity shared across files, the retained source must contain
-   every other source's fee multiset, including repeated fees. Otherwise
-   deduplication rejects the import without exposing financial values.
-   It must not select conflicting fees by file order or combine sources to
-   invent extra transactions. Same-file fee differences and compatible subsets
-   remain valid. `tests/test_deduplication.py` protects these boundaries;
-   `tests/test_deduplication_cli.py` checks that rejection preserves JSON, HTML,
-   and the activity baseline.
+   every other source's fee multiset, including repeated fees. Otherwise the
+   import is rejected unless the narrow Coinbase report-recency exception
+   below applies. It must not select conflicting fees by file order or combine
+   sources to invent extra transactions. Same-file fee differences and
+   compatible subsets remain valid. `tests/test_deduplication.py` protects these
+   boundaries; `tests/test_deduplication_cli.py` checks that rejection preserves
+   JSON, HTML, and the activity baseline.
+
+   **Coinbase fee-only exception** (`coinbase_reports`): the regular
+   transaction-history parser attaches internal `_coinbase_import` evidence
+   only to Buy/Sell and Advanced Trade Buy/Sell rows. Evidence fingerprints every
+   raw non-fee field, including nonblank broker ID, full UTC-normalized timestamp,
+   signed quantity/total, currency, subtotal, price, and notes. Numeric evidence
+   uses lossless decimal representations, not the rounded hash or parsed floats.
+   Every conflicting source must have the same exact evidence multiset,
+   including occurrence counts. Missing evidence, different IDs/economic
+   fields, or unequal counts retain the strict failure. Coinbase Pro,
+   standalone fees, conversions, and synthesized legs are not eligible.
+
+   The entire group compares explicit, unambiguous timezone-qualified report
+   generation timestamps when all sources have them; otherwise it compares
+   each source's latest full transaction timestamp. This maximum includes
+   unrelated rows and is computed before deduplication. Recognized preamble
+   labels are `Report generated at` and `Generated at`; invalid or conflicting
+   labels and generation preceding known activity cannot establish generation
+   order. No generation value is assumed for current exports without these
+   fields. The activity fallback is explicitly a heuristic, not a completeness
+   or generation claim. Pairwise mixing of generation and activity times would
+   be non-transitive and is prohibited. File names, filesystem timestamps, and
+   the processing clock never rank reports.
+
+   Highest-rank reports must agree on fees per exact identity, not just the
+   aggregate total or unordered fee values. Disagreement on a tied rank fails
+   with a redacted diagnostic. Interchangeable highest-rank sources use a stable
+   filename order for provenance only. The selected source supplies its complete
+   rows without changing quantities, amounts, prices, or repeated-row counts.
+   Selected rows carry exported `fee_resolution` with criterion, selected source,
+   and compared reports' dates/fee multisets. Internal matching evidence is
+   removed from result copies before analytics can embed transaction records;
+   input dictionaries are not mutated. Refresh retains the selection record and
+   never re-deducts informational fees. `tests/test_coinbase_fee_recency.py` and
+   `tests/test_coinbase_fee_recency_cli.py` protect chronology, exact identity,
+   multiplicity, redaction, output preservation, and full/refresh accounting parity.
 5. **Reconcile USAA → Schwab Roth transfers** (`main._reconcile_usaa_to_schwab_transfer`) —
    Schwab reports the inbound "Security Transfer" leg but USAA's export doesn't
    contain the outbound leg. Synthesize matching `Synthetic Transfer Out` rows

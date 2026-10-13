@@ -86,6 +86,10 @@ class Transaction(TypedDict, total=False):
     holding_days:   Optional[int]
     basis_effect:   str
     seq:            int
+    # Coinbase raw matching evidence is internal; fee-selection provenance
+    # is exported so price-only refreshes preserve the original decision.
+    _coinbase_import: dict
+    fee_resolution: dict
 
 
 # ---------------------------------------------------------------------------

@@ -35,7 +35,8 @@ def deduplicate(txns: list[dict]) -> tuple[list[dict], int]:
     files are overlapping exports. For each identity hash, we keep the max count
     from any single source file, provided that source's fee multiset contains
     every other source's fee multiset. Otherwise the overlap is ambiguous and
-    must fail before publishing. Fees retain their parsed numeric precision;
+    must fail before publishing unless exact Coinbase trade evidence permits
+    the narrowly scoped report-recency policy. Fees retain numeric precision;
     different-fee repeats within a source are legitimate transactions.
 
     Returns (deduped_list, num_removed).
@@ -69,6 +70,11 @@ def deduplicate(txns: list[dict]) -> tuple[list[dict], int]:
         if any(count > best_fees[fee]
                for fees in hash_source_fees[h].values()
                for fee, count in fees.items()):
+            from .coinbase_reports import resolve_fee_conflict
+            resolved = resolve_fee_conflict(hash_txns[h])
+            if resolved is not None:
+                result.extend(resolved)
+                continue
             raise ValueError(
                 "Conflicting fee evidence across overlapping exports; "
                 "review source files before importing."
@@ -79,6 +85,11 @@ def deduplicate(txns: list[dict]) -> tuple[list[dict], int]:
                 result.append(txn)
                 kept += 1
 
+    # Raw parser evidence has served its purpose. Analytics embeds complete
+    # transaction dictionaries in some views, so discard it before those copies
+    # are made, while preserving the exported fee_resolution audit record.
+    result = [{key: value for key, value in txn.items() if key != "_coinbase_import"}
+              if "_coinbase_import" in txn else txn for txn in result]
     return result, len(txns) - len(result)
 
 
@@ -115,7 +126,7 @@ def export_json(txns: list[dict], output_path: Path, *,
     # only record of the order the full pipeline's lot walkers ran in —
     # strip it and the refresh path silently relieves different lots.
     # See pipeline_stages.assign_ingest_seq.
-    _INTERNAL_FIELDS = {"lot_breakdown", "basis_override"}
+    _INTERNAL_FIELDS = {"lot_breakdown", "basis_override", "_coinbase_import"}
 
     def _ordered(txn: dict) -> dict:
         ordered = {}

@@ -744,6 +744,10 @@ def main():
     txns, removed = deduplicate(txns)
     if removed:
         print(f"Removed {removed} duplicates")
+    fee_resolutions = sum(bool(txn.get("fee_resolution")) for txn in txns)
+    if fee_resolutions:
+        print(f"Selected report fees for {fee_resolutions} overlapping Coinbase "
+              "transaction(s) using report recency; details are in the local JSON export.")
 
     # CUSIP collision diagnostic — surfaces likely retroactive ticker
     # renames the user may want to add to cache/ticker_renames.json.

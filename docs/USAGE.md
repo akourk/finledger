@@ -85,11 +85,40 @@ Open `exports/dashboard.html` in any browser. It's a single file with the
 full dataset inlined — no network calls at view time.
 
 Overlapping exports are merged while preserving repeated transactions within a
-single file. If matching rows carry incompatible fees across files, ingestion
-stops and keeps the previous dashboard, JSON export, and activity baseline.
-The error reports the conflict without printing financial values.
-Review the original exports locally and obtain consistent broker records before
-retrying; changing file order does not resolve conflicting fee evidence.
+single file. Coinbase transaction-history Buy/Sell rows (including Advanced
+Trade Buy/Sell in that format) have a narrow exception for conflicting fees:
+when every report agrees on the transaction IDs, full timestamps, exact economic
+values, other non-fee fields, and occurrence counts, the newer report supplies
+the fees. Other brokers, Coinbase Pro exports, conversions, and standalone fee
+rows retain the strict conflict check.
+
+Report order uses explicit generation metadata when every compared report has
+a valid value. The recognized preamble labels are `Report generated at` and
+`Generated at`, followed by a separate CSV cell or colon and a complete ISO
+timestamp with UTC or a numeric timezone offset. Missing, conflicting,
+timezone-free, or internally inconsistent metadata is unavailable. Current
+retail exports may omit generation metadata entirely; FinLedger never invents
+it from a filename, file modification time, or processing date.
+
+When any generation date is unavailable, all compared reports use their latest
+transaction timestamp, including unrelated transactions elsewhere in each
+report. This is a coverage heuristic: a newly generated report covering an old
+period can lose to a report covering newer transactions. Equal recency with
+different fees remains an error. Equal recency with identical fee evidence can
+resolve a conflicting older report. No manual report-preference setting is
+required.
+
+Resolved transactions retain `fee_resolution` in the local JSON export: the
+selection criterion, selected source, and every compared report's dates and
+fees. Price-only refresh preserves this record. Fees remain broker-reported
+figures; selecting a newer export does not verify them against a receipt or
+subtract them again from net proceeds. Original CSVs are unchanged.
+
+Unresolved fee conflicts stop ingestion and keep the previous dashboard, JSON
+export, and activity baseline. Diagnostics flag tied or unavailable recency
+without printing financial values. Review the original exports locally and
+obtain consistent broker records before retrying; changing file order does not
+resolve a tie or an ambiguous transaction match.
 
 `--refresh-prices` reuses the imported transactions and rebuilds lot-method
 comparisons after refreshing prices and split evidence. Split revalidation

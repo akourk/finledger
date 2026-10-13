@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import re
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from ._helpers import (
 #   Quantity Transacted, Price Currency, Price at Transaction, Subtotal,
 #   Total (inclusive of fees and/or spread), Fees and/or Spread, Notes
 
-def _read_coinbase_rows(filepath: Path) -> list[dict]:
+def _read_coinbase_report(filepath: Path) -> tuple[list[dict], str | None]:
     """Read Coinbase CSV, skipping metadata header lines."""
     with open(filepath, newline="", encoding="utf-8-sig") as f:
         lines = f.readlines()
@@ -33,11 +34,23 @@ def _read_coinbase_rows(filepath: Path) -> list[dict]:
             header_idx = i
             break
 
-    return list(read_csv_rows(lines[header_idx:], filepath.name, nonblank=('Transaction Type', 'Asset'), required=('Timestamp', 'Transaction Type', 'Asset', 'Quantity Transacted', 'Price at Transaction', 'Total (inclusive of fees and/or spread)'), line_offset=header_idx))
+    from ..coinbase_reports import generation_timestamp
+    generated_at = generation_timestamp(list(csv.reader(lines[:header_idx])))
+    rows = list(read_csv_rows(lines[header_idx:], filepath.name, nonblank=('Transaction Type', 'Asset'), required=('Timestamp', 'Transaction Type', 'Asset', 'Quantity Transacted', 'Price at Transaction', 'Total (inclusive of fees and/or spread)'), line_offset=header_idx))
+    return rows, generated_at
+
+
+def _read_coinbase_rows(filepath: Path) -> list[dict]:
+    return _read_coinbase_report(filepath)[0]
 
 
 def parse_coinbase(filepath: Path) -> list[Transaction]:
-    rows = _read_coinbase_rows(filepath)
+    from ..coinbase_reports import exact_trade_identity, report_timestamp
+    rows, generated_at = _read_coinbase_report(filepath)
+    timestamps = [report_timestamp(row.get("Timestamp", "")) for row in rows]
+    latest_at = max(timestamps) if timestamps and all(timestamps) else None
+    if generated_at and latest_at and generated_at < latest_at:
+        generated_at = None  # Inconsistent metadata cannot verify generation.
     txns = []
     for row in rows:
         action = (row.get("Transaction Type") or "").strip()
@@ -109,7 +122,7 @@ def parse_coinbase(filepath: Path) -> list[Transaction]:
                         source=filepath.name,
                     )
 
-        txns.append(_txn(
+        txn = _txn(
             date=date,
             account="Coinbase",
             symbol=asset,
@@ -120,7 +133,14 @@ def parse_coinbase(filepath: Path) -> list[Transaction]:
             amount=amount,
             description=notes,
             source=filepath.name,
-        ))
+        )
+        identity = exact_trade_identity(row)
+        if identity:
+            txn["_coinbase_import"] = {
+                "format": "coinbase_transaction_history", "identity": identity,
+                "generated_at": generated_at, "latest_transaction_at": latest_at,
+            }
+        txns.append(txn)
         if synth:
             txns.append(synth)
     return txns
