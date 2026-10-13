@@ -173,7 +173,7 @@ def _window_pnl(lots: list[dict], boundary: str, price_now: float | None,
     cache cannot supply.  A position whose lots were ALL acquired inside
     the window needs no historical price and is always computable.
     """
-    if price_now is None or price_now <= 0 or not lots:
+    if price_now is None or price_now < 0 or not lots:
         return None
 
     pnl = 0.0
@@ -268,6 +268,8 @@ def compute_position_pnl(fifo_state: dict | None,
         price_now = h.get("price")
         price_now = (float(price_now)
                      if isinstance(price_now, (int, float)) else None)
+        if price_now == 0 and h.get("value") is None:
+            price_now = None  # Legacy missing-price rows used a zero sentinel.
         value = h.get("value")
         cost_basis = h.get("cost_basis")
         open_pnl = h.get("unrealized_gain")

@@ -190,7 +190,7 @@ Normal local output lives in `exports/transactions.json` and
     `cache/price_cache_meta.json` tracks per-symbol
     `covered_start`, `covered_end`, `settled_through` (newest date whose
     bar is final — see the settle-awareness invariants below),
-    `last_fetch`, `failure_count`,
+    `last_attempt`, `last_successful_fetch`, `failure_count`,
     `retry_after`, and `tombstone` (true after 5 consecutive failures).
     Weekly refreshes retain closed-position tombstones and retry requested
     open symbols only when due; explicit forced refresh can retry either.
@@ -412,7 +412,7 @@ Normal local output lives in `exports/transactions.json` and
       figure; the top bar and the Performance tab's all-time anchor
       card both read these fields (they used to derive it
       independently and disagreed by rounding cents).  Plus
-      `prices_as_of`: the OLDEST `last_fetch` across held positions
+      `prices_as_of`: the OLDEST successful fetch across held positions
       (`prices.oldest_last_fetch`) — a staleness FLOOR, never the
       newest.  `as_of` is only a date, so a snapshot reads as
       "current" all day even when its marks were pulled at 7am;
@@ -423,13 +423,13 @@ Normal local output lives in `exports/transactions.json` and
       display names without a proxy, corp-action stubs, cash)
       contribute nothing — they're priced from txn history and no
       fetch timestamp describes them.  Alongside it,
-      `prices_provisional` (`prices.any_provisional`) is true when any
-      held position is marked from a bar that hasn't settled — the
-      stamp then reads `· provisional`.  A symbol with NO
-      `settled_through` is deliberately not flagged: the fetch path
-      treats unknown as unsettled because refetching is the safe error
-      there, but flagging every tombstoned / backed-off symbol would
-      leave the caveat permanently lit.
+      `prices_provisional` follows the dated position evidence: a bar beyond
+      its completed-session horizon is provisional. Legacy current snapshots
+      without that evidence can consult `prices.any_provisional`; historical
+      snapshots cannot inherit today's metadata flag. `prices_quote_date`
+      is the oldest actual evidence date, including transaction estimates.
+      Missing retrieval or observation evidence sets
+      `prices_freshness_unknown`; it never becomes the build timestamp.
     - `concentration` — positions / sectors / account_groups /
       account_types each as a sorted-by-pct list, plus Herfindahl
       index, top-5 share, and risk flags.
@@ -2149,7 +2149,8 @@ process.
   Existing price consumers are daily-or-coarser (`history.compute_history`,
   `history.compute_daily_totals`, `analytics/_shared._value_at_date`,
   `analytics/header.py`, `analytics/daily_pnl.py`, `prices.option_intrinsic`).
-  Intraday freshness is represented by `settled_through` and `last_fetch`, not
+  Intraday freshness is represented by `settled_through` and
+  `last_successful_fetch`, not
   by adding a second time resolution. Generated price shards stay local.
 - **Coverage scheduling uses the asset's calendar.** `_last_quote_day`
   shares `_settle_class` with settlement: equities and funds clamp requests
@@ -2181,6 +2182,61 @@ process.
   `retry_after` / `last_error` / `tombstone`. "No data returned" only
   counts as a failure when the requested range is ≥7 days — shorter
   ranges get a free pass (weekend-run forgiveness).
+- **Retrieval time and quote date are separate evidence.** `last_attempt`
+  records requests, including empty or failed responses; only usable data
+  advances `last_successful_fetch`. Legacy `last_fetch` is accepted only with
+  usable cached bars and no failure state. An unknown successful fetch for any
+  fetchable held target makes the portfolio retrieval stamp unknown.
+  `get_price_observation` uses the same lookup as `get_price` and adds the actual
+  cached bar date, quote target, and scaled-proxy flag without changing values.
+  Refresh outcomes are per-run, deduplicated by quote target, and cleared by
+  `reset_caches`; reporting cannot create retry delays. Full and price-only
+  pipelines print them after publication. Partial/empty short requests remain
+  visible without changing the existing cooldown policy.
+  `tests/test_price_freshness_report.py` protects this boundary.
+- **Valuation provenance describes the kernel's selected mark.**
+  `price_provenance.describe_pricing` consumes `Mark.source`; it cannot replace
+  price, quantity, or value. Current and historical positions carry `pricing`
+  with source, evidence date, quote target, stale, and provisional fields.
+  Transaction dates never exceed the valuation date; proxy and intrinsic marks
+  remain estimates. Unavailable values remain null. Historical snapshot metadata
+  must not inherit today's provisional status. Market staleness permits one
+  completed weekday of grace beyond settlement to reduce holiday/NAV warnings;
+  crypto uses completed UTC days and transaction estimates use seven calendar
+  days. This is a display heuristic, not a trading-holiday calendar.
+  `summarize_pricing` and the browser count overlapping estimated, stale,
+  unavailable, and unknown evidence for the exact positions in each total.
+  `tests/test_price_provenance.py` and `tests/test_freshness_presentation.py`
+  protect sources, dates, missing evidence, and filtered/historical rendering.
+- **Broker observations are private dated prices, not transactions.**
+  `broker_prices.load_broker_prices` validates `data/broker-prices.csv` atomically
+  using strict CSV helpers. The full and price-only paths reload it before any
+  writes; malformed input preserves previous outputs. The scanner and renamer
+  exclude this canonical filename, while snapshots carry it as a private input.
+  Conflicting symbol/date duplicates fail with redacted row/column diagnostics.
+  Prices are finite and nonnegative; zero is known, while missing remains null.
+  No observation changes quantity, basis, retry state, or persisted market data.
+  `get_price_observation` compares actual broker and market dates, selecting the
+  newer (broker on ties); a recent original-symbol broker observation outranks
+  a scaled proxy estimate. All lookups stay within the same seven-day backward
+  window and never use a future observation. Observed prices are supplied in
+  that date's share units and converted to the current share basis using
+  `split_factor_since`, with the existing total-return adjustment preserved.
+  Actual option premiums, including zero, bypass the estimate-only intrinsic
+  floor. A broker mark inherited through a scaled proxy remains an estimate.
+  `get_series` adds actual observation dates only, never carried gap days.
+  Provenance identifies broker prices separately; broker-only holdings do not
+  need a market-fetch timestamp to establish their observed date.
+  `tests/test_broker_prices.py`, `tests/test_broker_price_valuation.py`, and
+  `tests/test_broker_price_pipeline.py` protect parsing, dated selection, units,
+  explicit-zero consumers, cache isolation, and full/refresh/snapshot parity.
+- **Imported activity dates are per account, not completeness claims.**
+  `analytics.freshness` counts valid dated CSV records through the export's
+  as-of date. Generated sources and future rows cannot advance these dates.
+  Held accounts without eligible records have unknown dates; closed accounts
+  remain in the disclosure. Old activity produces neutral information, since
+  inactivity neither establishes missing records nor reveals a download time.
+  `tests/test_account_freshness.py` protects these cases.
 - **A missing market-data dependency is a setup failure.** The full CLI and
   `--refresh-prices` verify that `yfinance` imports before any writes or market
   requests, and stop with the locked dependency installation and `uv run`

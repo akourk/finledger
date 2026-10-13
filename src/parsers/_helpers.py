@@ -119,7 +119,7 @@ def skip_informational_row():
 
 
 def read_csv_rows(lines, source, *, required=(), nonblank=(), line_offset=0,
-                  is_informational=None):
+                  is_informational=None, strict=False):
     """Read CSV cells with precise numeric error locations and header checks.
 
     A broker may recognize a documented informational record in the raw
@@ -134,7 +134,7 @@ def read_csv_rows(lines, source, *, required=(), nonblank=(), line_offset=0,
             iterator = chain([first], iterator)
             break
         line_offset += 1
-    reader = csv.DictReader(iterator)
+    reader = csv.DictReader(iterator, strict=strict)
     if len(reader.fieldnames or ()) != len(set(reader.fieldnames or ())):
         raise ValueError(f"{source}: duplicate CSV column names")
     missing = set(required) - set(reader.fieldnames or ())

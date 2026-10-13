@@ -39,10 +39,189 @@ function getAsOfSnapshot() {
   return null;
 }
 
-// Position list shaped like holdings_by_account (enriches with
-// account_type + sector + unrealized_gain).  For the latest snapshot we
-// return the live holdingsByAccount directly so everything stays
-// consistent with the basis methods table and live stat cards.
+// Price provenance comes from Python. An older export with no metadata
+// cannot establish that the displayed number is a downloaded market quote.
+function positionPricing(row) {
+  const p = row?.pricing || {};
+  const known = ['market', 'broker', 'transaction', 'proxy', 'intrinsic', 'cash', 'unavailable'];
+  return {
+    source: known.includes(p.source) ? p.source : (!row?.pricing && row?.symbol === 'USD' ? 'cash' : 'unknown'),
+    date: typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : null,
+    quote_symbol: typeof p.quote_symbol === 'string' ? p.quote_symbol : null,
+    stale: p.stale === true, provisional: p.provisional === true,
+  };
+}
+
+function priceSourceLabel(row) {
+  const p = positionPricing(row);
+  const labels = {market: 'Market quote', broker: 'Broker price', transaction: 'Transaction estimate',
+    proxy: 'Proxy estimate', intrinsic: 'Intrinsic estimate', cash: 'Cash',
+    unavailable: 'Price unavailable', unknown: 'Price source unknown'};
+  return labels[p.source];
+}
+
+function priceDescription(row) {
+  const p = positionPricing(row);
+  if (row.value == null || p.source === 'unavailable') return 'Price unavailable. Excluded from this total.';
+  const labels = {market: 'Market quote', broker: 'Broker price', transaction: 'Transaction estimate',
+    proxy: 'Proxy estimate', intrinsic: 'Intrinsic estimate', cash: 'Cash',
+    unavailable: 'Price unavailable', unknown: 'Price source unknown'};
+  const detail = [labels[p.source]];
+  if (p.quote_symbol && ['proxy', 'intrinsic'].includes(p.source)) detail.push(p.quote_symbol);
+  if (p.date) detail.push(p.date);
+  else if (!['cash', 'unavailable', 'unknown'].includes(p.source)) detail.push('date unknown');
+  if (p.stale) detail.push('stale');
+  if (p.provisional) detail.push('provisional');
+  if (p.source === 'transaction') detail.push('Uses an imported transaction price.');
+  if (p.source === 'proxy') detail.push('Estimated from the configured proxy.');
+  if (p.source === 'intrinsic') detail.push('Estimated from the underlying price and option strike.');
+  return detail.join(' · ');
+}
+
+function pricingNoteHtml(detail, label = 'Price details', text = '*') {
+  return `<button type="button" class="pricing-note${text !== '*' ? ' pricing-info' : ''}" data-pricing-detail="${_htmlEsc(detail)}" aria-label="${_htmlEsc(label)}" aria-haspopup="dialog" aria-expanded="false" aria-controls="pricingPopover">${_htmlEsc(text)}</button>`;
+}
+
+function priceProvenanceHtml(row) {
+  const p = positionPricing(row);
+  const caveat = row.value == null || p.stale || p.provisional || ['transaction', 'proxy', 'intrinsic', 'unavailable', 'unknown'].includes(p.source)
+    || (!p.date && p.source !== 'cash');
+  return caveat ? pricingNoteHtml(priceDescription(row), `Price details for ${row.symbol || 'this position'}`) : '';
+}
+
+function pricingQuality(rows) {
+  const exported = ANALYTICS.pricing_quality?.total;
+  if (rows === holdingsByAccount && exported) return {...exported};
+  const result = {positions: rows.length, estimated: 0, stale: 0, unavailable: 0, unknown: 0};
+  for (const row of rows) {
+    const p = positionPricing(row);
+    if (['transaction', 'proxy', 'intrinsic'].includes(p.source)) result.estimated++;
+    if (p.stale) result.stale++;
+    const unavailable = row.value == null || p.source === 'unavailable';
+    if (unavailable) result.unavailable++;
+    if (!unavailable && (p.source === 'unknown' || (!p.date && p.source !== 'cash'))) result.unknown++;
+  }
+  return result;
+}
+
+function pricingQualityHtml(rows) {
+  const q = pricingQuality(rows);
+  const parts = [];
+  if (q.estimated) parts.push(`${q.estimated} estimated`);
+  if (q.stale) parts.push(`${q.stale} stale`);
+  if (q.unavailable) parts.push(`${q.unavailable} unpriced`);
+  if (q.unknown) parts.push(`${q.unknown} freshness unknown`);
+  if (!parts.length) return '';
+  const lead = q.unavailable ? 'Incomplete value' : (q.estimated ? 'Value includes estimates'
+    : (q.stale ? 'Value includes older prices' : 'Freshness unknown'));
+  const detail = `${lead}: ${parts.join(', ')}. Counts describe these positions and can overlap.`
+    + (q.unavailable ? `\n${q.unavailable} unpriced position${q.unavailable === 1 ? '' : 's'}: Excluded from this total.` : '')
+    + (q.estimated ? '\nProxy and intrinsic estimates follow their configured valuation method. Transaction estimates use an imported transaction price.' : '');
+  return pricingNoteHtml(detail, 'Pricing details for this total');
+}
+
+function renderSelectedPricingQuality() {
+  if (typeof renderTransactionCoverage === 'function') renderTransactionCoverage();
+}
+
+// One top-layer popover keeps details outside horizontally scrolling tables.
+// Delegated events survive sorting, filtering and lazy tab rendering.
+let pricingPopoverTrigger = null;
+let pricingPopoverPinned = false;
+let pricingPopoverTimer = null;
+let pricingFocusSuppressed = null;
+
+function closePricingPopover(restoreFocus = false) {
+  clearTimeout(pricingPopoverTimer);
+  const trigger = pricingPopoverTrigger;
+  const popover = document.getElementById('pricingPopover');
+  if (trigger) {
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.removeAttribute('aria-describedby');
+  }
+  pricingPopoverTrigger = null;
+  pricingPopoverPinned = false;
+  if (popover) {
+    if (typeof popover.hidePopover === 'function' && popover.matches(':popover-open')) popover.hidePopover();
+    popover.classList.remove('is-open');
+  }
+  if (restoreFocus && trigger?.isConnected) {
+    pricingFocusSuppressed = trigger;
+    trigger.focus({preventScroll: true});
+  }
+}
+
+function openPricingPopover(trigger, pin = false) {
+  const popover = document.getElementById('pricingPopover');
+  const content = document.getElementById('pricingPopoverContent');
+  if (!trigger || !popover || !content) return;
+  clearTimeout(pricingPopoverTimer);
+  if (pricingPopoverTrigger !== trigger) closePricingPopover();
+  pricingPopoverTrigger = trigger;
+  pricingPopoverPinned = pricingPopoverPinned || pin;
+  content.textContent = trigger.dataset.pricingDetail || '';
+  trigger.setAttribute('aria-expanded', 'true');
+  trigger.setAttribute('aria-describedby', 'pricingPopoverContent');
+  popover.classList.add('is-open');
+  if (typeof popover.showPopover === 'function' && !popover.matches(':popover-open')) popover.showPopover();
+  const anchor = trigger.getBoundingClientRect();
+  const box = popover.getBoundingClientRect();
+  const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+  const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+  const left = Math.max(8, Math.min(anchor.right - box.width, viewportWidth - box.width - 8));
+  const below = anchor.bottom + 8;
+  const top = below + box.height <= viewportHeight - 8 ? below : Math.max(8, anchor.top - box.height - 8);
+  popover.style.left = left + 'px';
+  popover.style.top = top + 'px';
+}
+
+document.addEventListener('pointerover', event => {
+  if (event.pointerType === 'touch') return;
+  const trigger = event.target.closest?.('.pricing-note');
+  if (trigger) openPricingPopover(trigger);
+  else if (event.target.closest?.('#pricingPopover')) clearTimeout(pricingPopoverTimer);
+});
+document.addEventListener('pointerout', event => {
+  if (!event.target.closest?.('.pricing-note, #pricingPopover') || pricingPopoverPinned) return;
+  if (event.relatedTarget?.closest?.('.pricing-note, #pricingPopover')) return;
+  pricingPopoverTimer = setTimeout(() => {
+    if (document.activeElement !== pricingPopoverTrigger
+        && !document.activeElement?.closest?.('#pricingPopover')) closePricingPopover();
+  }, 160);
+});
+document.addEventListener('focusin', event => {
+  const trigger = event.target.closest?.('.pricing-note');
+  if (trigger === pricingFocusSuppressed) { pricingFocusSuppressed = null; return; }
+  pricingFocusSuppressed = null;
+  if (trigger) openPricingPopover(trigger);
+  else if (!event.target.closest?.('#pricingPopover')) closePricingPopover();
+});
+document.addEventListener('pointerdown', event => {
+  if (!event.target.closest?.('.pricing-note, #pricingPopover')) closePricingPopover();
+});
+document.addEventListener('click', event => {
+  const trigger = event.target.closest?.('.pricing-note');
+  if (trigger) {
+    event.stopPropagation();
+    if (pricingPopoverTrigger === trigger && pricingPopoverPinned) closePricingPopover();
+    else openPricingPopover(trigger, true);
+  } else if (event.target.closest?.('#pricingPopoverClose')) {
+    closePricingPopover(true);
+  }
+}, true);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && pricingPopoverTrigger) {
+    event.preventDefault();
+    event.stopPropagation();
+    closePricingPopover(true);
+  }
+});
+window.addEventListener('resize', () => closePricingPopover());
+document.addEventListener('scroll', event => {
+  if (!event.target.closest?.('#pricingPopover')) closePricingPopover();
+}, true);
+
+// Enrich snapshot positions while preserving their own dated provenance.
 function asOfHoldingsByAccount() {
   if (isAsOfLatest()) return holdingsByAccount;
   const snap = getAsOfSnapshot();
@@ -62,6 +241,7 @@ function asOfHoldingsByAccount() {
       symbol: p.symbol,
       quantity: p.quantity,
       price: p.price,
+      pricing: p.pricing || snap.positions.find(r => r.account_group === p.account_group && r.symbol === p.symbol)?.pricing,
       value: value,
       cost_basis: cb,
       unrealized_gain: ug,
@@ -108,9 +288,11 @@ function asOfHoldingsByAsset() {
 // Income / Tax tabs stay lifetime (they're either aggregates-to-today
 // or already have their own period controls).
 function setAsOfDate(date) {
+  closePricingPopover();
   asOfDate = date || LATEST_DATE;
   document.querySelectorAll('.as-of-picker').forEach(el => { el.value = asOfDate; });
   renderDateScopes();
+  renderSelectedPricingQuality();
   if (typeof renderStats === 'function') renderStats();
   if (typeof renderTopHoldings === 'function') renderTopHoldings();
   if (typeof renderAllocation === 'function') renderAllocation();
@@ -156,37 +338,27 @@ function _rolloverBridgeAdjustment(snapshotDate, filterSet) {
 document.getElementById('generated').textContent =
   (DATA.generated || '').replace('T', ' ').slice(0, 16);
 
-// Price freshness, next to the generation stamp.  `as_of` is only a
-// DATE, so a snapshot reads as "current" all day even when the marks
-// behind it were pulled at 7am — which is what makes a mid-session
-// reconciliation against a broker statement confusing.  The stamp is
-// the OLDEST fetch across held positions (a staleness floor), so it
-// never flatters.  Same-day shows just the time; anything older keeps
-// its date, because that is the case worth noticing.
+// Price observation dates and successful download times are distinct.
+// Generating the HTML or attempting a download does not make a price fresh.
 function renderPricesAsOf() {
   const el = document.getElementById('pricesAsOf');
   if (!el) return;
-  const stamp = (ANALYTICS.header_summary || {}).prices_as_of;
-  if (!stamp) { el.textContent = ''; return; }
-  const t = new Date(stamp);
-  if (isNaN(t)) { el.textContent = ''; return; }
-  const time = t.toLocaleTimeString(undefined,
-    { hour: 'numeric', minute: '2-digit' });
-  const sameDay = stamp.slice(0, 10) === (DATA.generated || '').slice(0, 10);
-  const when = sameDay ? time : stamp.slice(0, 10) + ' ' + time;
-  // "provisional" = at least one held position is marked from a bar
-  // that can still change (a mid-session price, a fund NAV that has
-  // not struck). Showing an intraday figure is fine; presenting it as
-  // a close without saying so is what makes a broker reconciliation
-  // disagree at 11am and then differently again after the bell.
-  const live = (ANALYTICS.header_summary || {}).prices_provisional;
-  el.innerHTML = ` · prices as of ${_htmlEsc(when)}`
-    + (live ? ' <span class="tb-provisional">· provisional</span>' : '');
-  el.title = 'Oldest price fetch across held positions — the marks '
-           + 'behind this snapshot are no fresher than this.'
-           + (live ? '\n\nProvisional: at least one position is marked from '
-                   + 'a bar that has not settled yet, so its value will '
-                   + 'still move.' : '');
+  const hs = ANALYTICS.header_summary || {};
+  const quoteDate = typeof hs.prices_quote_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(hs.prices_quote_date)
+    ? hs.prices_quote_date : null;
+  // Older exports recorded failed attempts in prices_as_of. Trust the
+  // successful-download field only when the new freshness contract exists.
+  const stamp = Object.hasOwn(hs, 'prices_freshness_unknown') ? hs.prices_as_of : null;
+  const fetched = typeof stamp === 'string' ? new Date(stamp) : null;
+  const parts = [quoteDate ? `oldest price date ${quoteDate}` : 'oldest price date unknown'];
+  if (fetched && !isNaN(fetched)) {
+    parts.push(`last successful fetch ${stamp.slice(0, 10)} ${fetched.toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'})}`);
+  } else if (hs.prices_market_required !== false) parts.push('successful fetch unknown');
+  else parts.push('No market download required for these prices.');
+  if (hs.prices_freshness_unknown !== false) parts.push('freshness unknown');
+  if (hs.prices_provisional) parts.push('provisional');
+  const detail = parts.join('\n') + '\nOldest price observation includes transaction estimates. Last successful fetch describes market downloads. All sources and dates are in Data details.';
+  el.innerHTML = ' · ' + pricingNoteHtml(detail, 'Price observation and download details', 'Price info');
 }
 renderPricesAsOf();
 
@@ -224,7 +396,7 @@ function renderTopBarSummary() {
   const parts = [
     `<div class="tb-item">
        <span class="tb-label">Portfolio Value</span>
-       <span class="tb-value tb-portfolio-value">${fmtMoney(value)}</span>
+       <span class="tb-value tb-portfolio-value pricing-annotated">${fmtMoney(value)}${pricingQualityHtml(holdingsByAccount)}</span>
      </div>`,
     `<div class="tb-divider"></div>`,
     `<div class="tb-item">
@@ -650,8 +822,9 @@ function groupByBasisAware(rows, key) {
   for (const row of rows) {
     const k = row[key] || 'Unknown';
     const mapKey = row._inTransit && key !== 'sector' ? _TRANSIT_BUCKET : k;
-    if (!out[mapKey]) out[mapKey] = { [key]: k, value: 0, cost_basis: 0, unrealized_gain: 0, _anyBasis: false, _groups: new Set() };
+    if (!out[mapKey]) out[mapKey] = { [key]: k, value: 0, cost_basis: 0, unrealized_gain: 0, _anyBasis: false, _groups: new Set(), _pricingRows: [] };
     const aggregate = out[mapKey];
+    aggregate._pricingRows.push(row);
     // Which account groups this row is made of.  A precomputed TWR
     // filter covers a SET of account groups, so this is what lets a
     // grouped row find its own return without recomputing one.
@@ -755,6 +928,7 @@ const HOLDINGS_PCT_COLS = new Set(['unrealized_pct', 'twr_cum', 'twr_ann', 'xirr
 const HOLDINGS_SPAN_COLS = new Set(['twr_cum', 'twr_ann', 'xirr']);
 
 function renderHoldings() {
+  closePricingPopover();
   // By Account: one row per account_group total.
   // By Type:    one row per account_type total (Taxable/Retirement/Savings).
   // By Sector:  one row per sector total — sourced from the by-asset holdings
@@ -773,6 +947,11 @@ function renderHoldings() {
   // column of dashes.
   data = withPerformance(groupByBasisAware(
     holdingsView === 'sector' ? byAssetSrc : byAccountSrc, keyCol));
+  // Sector figures are aggregated by symbol; their quality still comes
+  // from the actual account positions, whose sources may differ.
+  if (holdingsView === 'sector') {
+    for (const row of data) row._pricingRows = byAccountSrc.filter(p => (p.sector || 'Unknown') === row.sector);
+  }
   const anyPerf = data.some(r => r.twr_ann != null || r.xirr != null);
   cols = [keyCol, 'value', 'cost_basis', 'unrealized_gain', 'unrealized_pct'];
   if (anyPerf) cols.push('twr_cum', 'twr_ann', 'xirr');
@@ -843,6 +1022,7 @@ function renderHoldings() {
       } else {
         html = _htmlEsc(val);
       }
+      if (col === 'value') html = `<span class="pricing-annotated">${html}${pricingQualityHtml(row._pricingRows)}</span>`;
       return `<td${cls}>${html}</td>`;
     }).join('') + '</tr>';
   }).join('');
@@ -854,6 +1034,8 @@ function renderHoldings() {
   const total = data.reduce((s, r) => s + (typeof r.value === 'number' ? r.value : 0), 0);
   document.getElementById('holdingsTotalValue').textContent =
     total ? '$' + total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+  const quality = document.getElementById('holdingsPricingQuality');
+  if (quality) quality.innerHTML = pricingQualityHtml(byAccountSrc);
 
   renderRebalancing();
   applyScrollRegionFocus();
@@ -1101,6 +1283,10 @@ function positionCellHtml(row, col) {
   return color ? `<span style="color:${color}">${_htmlEsc(val)}</span>` : _htmlEsc(val);
 }
 
+function positionPriceHtml(row) {
+  return `<span class="pricing-annotated">${positionCellHtml(row, 'price') || '—'}${priceProvenanceHtml(row)}</span>`;
+}
+
 function renderCompactPositions(rows, cols) {
   const container = document.getElementById('byAssetCompact');
   if (!container) return;
@@ -1116,10 +1302,10 @@ function renderCompactPositions(rows, cols) {
       return `<details class="compact-record" data-record-key="${_htmlEsc(key)}"${compactRecordOpen(container.id, key)}>
         <summary class="compact-record-summary">
           <span class="compact-record-identity">${symLabel(row.symbol)}<span class="compact-record-meta">${_htmlEsc(row.account_group || '—')}</span></span>
-          <span class="compact-record-value"><span class="compact-record-meta">Market value</span>${positionCellHtml(row, 'value') || '—'}<span class="compact-record-meta">Unrealized ${positionCellHtml(row, 'unrealized_gain') || '—'}</span></span>
+          <span class="compact-record-value"><span class="compact-record-meta">Value</span>${positionCellHtml(row, 'value') || '—'}<span class="compact-record-meta">Unrealized ${positionCellHtml(row, 'unrealized_gain') || '—'}</span></span>
           <span class="compact-record-cue" aria-hidden="true">Details</span>
         </summary>
-        ${compactFieldsHtml(secondary.map(col => [fieldLabel(col), positionCellHtml(row, col)]))}
+        ${compactFieldsHtml(secondary.map(col => [fieldLabel(col), col === 'price' ? positionPriceHtml(row) : positionCellHtml(row, col)]))}
         ${hasLots ? compactLotsHtml(lp, lotKey) : `<p class="compact-record-note">${isAsOfLatest() ? 'No exported open lots for this position.' : 'Open lots are available at the latest snapshot.'}</p>`}
       </details>`;
     }).join('') : '<p class="compact-empty">No positions match these filters.</p>');
@@ -1134,14 +1320,17 @@ function renderCompactPositions(rows, cols) {
 // visible rows, even though the two views keep independent filters.
 // A Board notice has no rows, so null clears the amount; an empty filter
 // result is a real $0.00 subtotal.
-function renderPositionsTotal(total, scope = '') {
+function renderPositionsTotal(total, scope = '', rows = []) {
   const el = document.getElementById('byAssetTotalValue');
   if (!el) return;
   el.textContent = total == null ? '' : fmtMoney(total);
   el.title = scope;
+  const quality = document.getElementById('positionsPricingQuality');
+  if (quality) quality.innerHTML = total == null ? '' : pricingQualityHtml(rows);
 }
 
 function renderByAssetTable() {
+  closePricingPopover();
   document.getElementById('byAssetCompact')?.querySelectorAll('.compact-lots').forEach(detail => {
     if (detail.open) lotsExpanded.add(detail.dataset.lotkey);
     else lotsExpanded.delete(detail.dataset.lotkey);
@@ -1162,6 +1351,7 @@ function renderByAssetTable() {
       sector: r.sector,
       quantity: r.quantity,
       price: r.price,
+      pricing: r.pricing,
       value,
       cost_basis: cb,
       unrealized_gain: unreal,
@@ -1230,6 +1420,7 @@ function renderByAssetTable() {
           ? `<button type="button" class="lot-disclosure" data-lotkey="${_htmlEsc(lotKey)}" aria-expanded="${expanded}" aria-label="${_htmlEsc('Lots for ' + val + ' in ' + row.account_group)}">${chev}${symLabel(val)}</button>`
           : symLabel(val);
       }
+      if (col === 'price') html = positionPriceHtml(row);
       return `<td${cls}>${html}</td>`;
     }).join('') + '</tr>';
     if (expanded) rowHtml += lotDetailHtml(lp, cols.length);
@@ -1242,7 +1433,7 @@ function renderByAssetTable() {
   // Read the visible layout from the DOM: this renderer also runs while
   // the bundle loads, before 15-board.js initializes its layout state.
   if (document.getElementById('byAssetBody')?.style.display !== 'none') {
-    renderPositionsTotal(totalValue, 'Market value of the filtered Table positions');
+    renderPositionsTotal(totalValue, 'Value of the filtered Table positions', filtered);
   }
   byAssetCountPill.textContent = `${filtered.length} / ${rows.length}`;
   const filterSummary = document.getElementById('holdingsFilterSummary');
@@ -1265,6 +1456,7 @@ document.getElementById('byAssetHeaderRow').addEventListener('click', e => {
 // Toggle a row's per-lot detail.  Delegated — rows re-render on every
 // sort/filter change, so per-row listeners wouldn't survive.
 document.getElementById('byAssetTbody').addEventListener('click', e => {
+  if (e.target.closest('.pricing-note')) return;
   const tr = e.target.closest('tr[data-lotkey]');
   if (!tr) return;
   const k = tr.dataset.lotkey;

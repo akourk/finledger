@@ -43,6 +43,7 @@ from .daily_pnl import compute_daily_pnl
 from .budget import compute_budget
 from .drawdown import compute_drawdown
 from .header import compute_header_summary
+from .freshness import compute_account_freshness
 from .paycheck import compute_paycheck
 from .income import compute_income_analytics
 from .income_calendar import compute_income_calendar
@@ -265,6 +266,11 @@ def build_analytics(txns: list[dict], history: list[dict],
         # ValueError: parent of JSONDecodeError when the file is malformed.
         pass
 
+    activity_as_of = clock.today().isoformat()
+    if history and history[-1].get("date"):
+        activity_as_of = min(activity_as_of, history[-1]["date"])
+    account_freshness = compute_account_freshness(
+        txns, holdings_by_account, as_of=activity_as_of)
     alerts = compute_alerts(
         txns=txns,
         holdings_by_account=holdings_by_account,
@@ -273,6 +279,7 @@ def build_analytics(txns: list[dict], history: list[dict],
         concentration=concentration,
         price_meta=price_meta,
         cusip_collisions=rename_for_alerts,
+        account_freshness=account_freshness,
     )
 
     # Current-year tax estimate — the paycheck panel reads its projected
@@ -311,6 +318,8 @@ def build_analytics(txns: list[dict], history: list[dict],
     transit_issues: list[dict] = []
     daily_totals = _daily_totals(txns, transit_issues=transit_issues)
     out = {
+        "account_freshness": account_freshness,
+        "account_freshness_as_of": activity_as_of,
         "rollover_bridges": bridges,
         "retirement_contributions_by_year": contribs_yr,
         "savings_by_year":  compute_savings_by_year(txns, retirement_meta),
@@ -371,6 +380,9 @@ def build_analytics(txns: list[dict], history: list[dict],
     }
     # Data-health checks run last — they consult the rest of the
     # analytics dict (e.g. options.open_contracts, tax.realized_by_year).
+    from ..price_provenance import summarize_pricing
+    out["pricing_quality"] = summarize_pricing(
+        holdings_by_account, as_of=history[-1].get("date") if history else None)
     out["data_health"] = compute_data_health(
         txns, holdings_by_account, history, out, CACHE_DIR,
         cash_summary=cash_summary or {},

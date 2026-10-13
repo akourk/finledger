@@ -30,7 +30,8 @@ def detect_broker(filepath: Path) -> str:
         return "manual"
     # metadata.csv is the canonical name; retirement-data.csv is the
     # legacy name kept for backwards compat (see src/metadata.py).
-    if name in ("metadata.csv", "retirement-data.csv", "account-mappings.csv"):
+    if name in ("metadata.csv", "retirement-data.csv", "account-mappings.csv",
+                "broker-prices.csv"):
         return "skip"
 
     # Broker REFERENCE reports — Coinbase's tax-center "raw transactions"

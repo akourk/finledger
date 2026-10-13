@@ -209,6 +209,132 @@ async function checkStickyIdentity(page, selector) {
   assert.ok(Math.abs(after - initial.x) <= 1, selector + ' must keep the position identity visible while scrolling');
 }
 
+async function checkPriceEvidence(page) {
+  await selectSection(page, 'overview');
+  await page.focus('#transactionCoverage summary');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.$eval('#transactionCoverage details', el => el.open), true);
+  const coverage = await page.$eval('#transactionCoverage', el => el.textContent);
+  assert.match(coverage, /does not prove statement completeness/);
+  assert.match(coverage, /Inactivity may be normal/);
+  assert.equal(await page.$$eval('#importCoverage tbody tr', els => els.length),
+    await page.evaluate(() => ANALYTICS.account_freshness.length));
+  assert.equal(await page.$$eval('#pricingDetails tbody tr', els => els.length),
+    await page.evaluate(() => asOfHoldingsByAccount().length));
+  await page.keyboard.press('Space');
+  assert.equal(await page.$eval('#transactionCoverage details', el => el.open), false);
+  await selectSection(page, 'holdings');
+  const evidence = await page.evaluate(() => ({
+    sourceLines: document.querySelectorAll('#byAssetTbody .price-provenance').length,
+    markers: [...document.querySelectorAll('#byAssetTbody .pricing-note')].map(el => el.textContent),
+    stamp: document.querySelector('#pricesAsOf .pricing-info').dataset.pricingDetail,
+    oldest: ANALYTICS.header_summary.prices_quote_date,
+  }));
+  assert.equal(evidence.sourceLines, 0, 'source explanations must not add table rows or lines');
+  assert.ok(evidence.markers.every(label => label === '*'));
+  assert.ok(evidence.stamp.includes(evidence.oldest || 'oldest price date unknown'));
+  await checkPricePopover(page);
+}
+
+async function checkPricePopover(page, touch = false) {
+  await selectSection(page, 'holdings');
+  const surface = touch ? '#byAssetCompact' : '#byAssetTbody';
+  const totals = await page.evaluate(() => ['holdingsTotalValue', 'byAssetTotalValue'].map(id => {
+    const amount = document.getElementById(id);
+    const marker = amount.closest('.pricing-annotated')?.querySelector('.pricing-note');
+    return marker ? {id, gap: marker.getBoundingClientRect().left - amount.getBoundingClientRect().right} : null;
+  }).filter(Boolean));
+  for (const total of totals) assert.ok(Math.abs(total.gap) <= 1, total.id + ' footnote must stay beside its amount');
+  const healthy = await page.evaluate(selector => {
+    window.priceEvidenceSaved = {rows: holdingsByAccount.slice(),
+      group: byAssetGroupFilter, sector: byAssetSectorFilter, search: byAssetSearch,
+      sortCol: byAssetSortCol, sortAsc: byAssetSortAsc};
+    holdingsByAccount.splice(0, holdingsByAccount.length, {
+      account_group: 'Example note', account_type: 'Taxable', symbol: 'DEMONOTE', sector: 'Other',
+      quantity: 1, price: 40, value: 40, cost_basis: 35, unrealized_gain: 5,
+      pricing: {source: 'market', date: '2026-06-30', stale: false, provisional: false},
+    });
+    byAssetGroupFilter = byAssetSectorFilter = byAssetSearch = '';
+    renderByAssetTable();
+    const root = document.querySelector(selector);
+    const record = root.querySelector('.compact-record');
+    if (record) record.open = true;
+    return {markers: root.querySelectorAll('.pricing-note').length,
+      height: root.querySelector('.compact-record, tr').getBoundingClientRect().height,
+      right: root.querySelector('.pricing-annotated').getBoundingClientRect().right};
+  }, surface);
+  try {
+    assert.equal(healthy.markers, 0, 'healthy market quotes must stay unmarked');
+    const caveated = await page.evaluate(selector => {
+      holdingsByAccount[0].pricing = {source: 'transaction', date: '2024-03-15', stale: true, provisional: false};
+      renderByAssetTable();
+      const root = document.querySelector(selector);
+      const button = root.querySelector('.pricing-note');
+      return {height: root.querySelector('.compact-record, tr').getBoundingClientRect().height,
+        right: button.parentElement.getBoundingClientRect().right,
+        color: getComputedStyle(button).color, numberColor: getComputedStyle(button.parentElement).color};
+    }, surface);
+    assert.equal(caveated.height, healthy.height, 'a price footnote must not increase row height');
+    assert.equal(caveated.right, healthy.right, 'a price footnote must preserve numeric alignment');
+    assert.equal(caveated.color, caveated.numberColor, 'the asterisk inherits its number color');
+    const selector = surface + ' .pricing-note';
+    await page.$eval(selector, el => el.scrollIntoView({block: 'center', inline: 'center'}));
+    if (touch) {
+      // Mobile focus can pan the visual viewport independently of the
+      // layout viewport. CDP touch coordinates start at the visible origin.
+      const point = await page.$eval(selector, el => {
+        const box = el.getBoundingClientRect();
+        return {x: box.x + box.width / 2 - (visualViewport?.offsetLeft || 0),
+          y: box.y + box.height / 2 - (visualViewport?.offsetTop || 0)};
+      });
+      await page.touchscreen.tap(point.x, point.y);
+    } else await page.hover(selector);
+    const open = await page.$eval('#pricingPopover', el => {
+      const box = el.getBoundingClientRect();
+      return {topLayer: el.matches(':popover-open'), text: el.textContent,
+        fits: box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight};
+    });
+    assert.equal(open.topLayer, true, 'price details must escape table clipping');
+    assert.equal(open.fits, true, 'price details must fit the viewport');
+    assert.match(open.text, /Transaction estimate · 2024-03-15 · stale/);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.$eval('#pricingPopover', el => el.matches(':popover-open')), false);
+    await page.focus(selector);
+    await page.keyboard.press('Enter');
+    assert.equal(await page.$eval('#pricingPopover', el => el.matches(':popover-open')), true);
+    await page.focus('#pricingPopoverClose');
+    await page.keyboard.press('Space');
+    assert.equal(await page.$eval('#pricingPopover', el => el.matches(':popover-open')), false);
+    await page.click(selector);
+    await selectSection(page, 'holdings');
+    assert.equal(await page.$eval('#pricingPopover', el => el.matches(':popover-open')), false, 'outside click dismisses price details');
+    if (touch) {
+      assert.equal(await page.$eval('#byAssetCompact .compact-record', el => el.scrollWidth <= el.clientWidth), true,
+        'price footnotes must fit inside compact position records');
+      assert.equal(await page.$eval('#byAssetCompact .compact-record', el => el.open), true,
+        'price details must preserve the compact position disclosure');
+      await page.click(selector);
+      await page.hover('#byAssetCompact [data-compact-sort]');
+      await page.focus('#byAssetCompact [data-compact-sort]');
+      await page.select('#byAssetCompact [data-compact-sort]', 'symbol');
+      assert.equal(await page.$eval('#pricingPopover', el => el.matches(':popover-open')), false,
+        'sorting compact positions dismisses obsolete price details');
+      assert.equal(await page.$eval('#byAssetCompact .compact-record', el => el.open), true);
+      assert.equal(await page.$$eval('#byAssetCompact .pricing-note', els => els.length), 1);
+    }
+  } finally {
+    await page.evaluate(() => {
+      closePricingPopover();
+      const saved = window.priceEvidenceSaved;
+      holdingsByAccount.splice(0, holdingsByAccount.length, ...saved.rows);
+      byAssetGroupFilter = saved.group; byAssetSectorFilter = saved.sector; byAssetSearch = saved.search;
+      byAssetSortCol = saved.sortCol; byAssetSortAsc = saved.sortAsc;
+      delete window.priceEvidenceSaved;
+      renderByAssetTable();
+    });
+  }
+}
+
 async function checkMobilePerformance(page) {
   await selectSection(page, 'performance');
   const account = await page.$eval('#perfAccountSelect', el => [...el.options].find(option => option.value && !option.value.startsWith('__')).value);
@@ -480,6 +606,7 @@ async function main() {
     }
     await checkHistoryControls(page);
     await checkHoldingsLayouts(page);
+    await checkPriceEvidence(page);
     await checkPerformanceChartPresentation(page);
 
     async function typeEach(selector, value) {
@@ -568,12 +695,18 @@ async function main() {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert.ok(overflow <= 1, `${tab} overflows mobile viewport by ${overflow}px`);
     }
+    await checkPricePopover(page, true);
     await selectSection(page, 'holdings');
     assert.equal(await page.$eval('#byAssetBody .desktop-data-table', el => el.checkVisibility()), false,
       'phone positions use compact records');
     assert.equal(await page.$eval('#byAssetCompact', el => el.checkVisibility()), true);
     assert.ok(await page.$eval('#byAssetCompact', el => el.scrollWidth <= el.clientWidth + 1),
       'phone position records need no sideways scrolling');
+    await page.$eval('#btnBoardBoard', el => el.scrollIntoView({block: 'center'}));
+    assert.equal(await page.$eval('#btnBoardBoard', el => {
+      const rect = el.getBoundingClientRect();
+      return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest('button') === el;
+    }), true, 'Board toggle must be visible before the mobile click');
     await page.click('#btnBoardBoard');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 1), 'Board must fit the mobile page');
     await checkStickyIdentity(page, '#boardPanes [data-pane="0"] .board-scroll');

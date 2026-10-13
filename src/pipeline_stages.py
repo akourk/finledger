@@ -363,7 +363,7 @@ def build_holdings(
     holdings_by_account: list[dict] = []
     for (acct, sym), qty in sorted(balances.items()):
         price = last_prices.get(sym, 0.0)
-        raw_value = qty * price * contract_multiplier(sym) if price else None
+        raw_value = qty * price * contract_multiplier(sym) if sym in last_prices else None
         if is_dust(qty, price, value=raw_value):
             continue
         # Option quantities are CONTRACTS; price is the per-share
@@ -407,7 +407,7 @@ def build_holdings(
     holdings: list[dict] = []
     for sym, qty in sorted(asset_totals.items()):
         price = last_prices.get(sym, 0.0)
-        raw_value = qty * price * contract_multiplier(sym) if price else None
+        raw_value = qty * price * contract_multiplier(sym) if sym in last_prices else None
         if is_dust(qty, price, value=raw_value):
             continue
         cost_basis = round(asset_basis[sym], 2) if asset_has_basis[sym] else None

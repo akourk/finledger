@@ -163,6 +163,8 @@ function boardRows() {
       open_pnl: r.open_pnl,
       open_pnl_pct: r.open_pnl_pct,
       traded_in: r.traded_in || [],
+      _pricingRows: holdingsByAccount.filter(p => p.symbol === r.symbol
+        && (boardGroupBy === 'symbol' || p.account_group === r.account_group)),
     };
     for (const w of PPNL_WINDOWS) {
       const win = (r.windows || {})[w.key] || null;
@@ -202,6 +204,7 @@ function boardFmt(col, row, cfg) {
              : _htmlEsc(String(v || ''));
   }
   if (v == null || (typeof v === 'number' && isNaN(v))) {
+    if (col.key === 'price') return `<span class="pricing-annotated">—${pricingNoteHtml('Price unavailable. Excluded from this total.', `Price details for ${row.symbol}`)}</span>`;
     return '<span class="board-na" title="No price available for this window&#39;s start date, so the move is unknown — not zero.">—</span>';
   }
   const n = typeof v === 'number' ? v : parseFloat(v);
@@ -210,6 +213,13 @@ function boardFmt(col, row, cfg) {
     return `<span>${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })}</span>`;
   }
   if (col.fmt === 'money') {
+    if (col.key === 'value') return `<span class="pricing-annotated">${fmtMoney(n)}${pricingQualityHtml(row._pricingRows || [row])}</span>`;
+    if (col.key === 'price') {
+      const sources = row._pricingRows || [row];
+      const caveats = sources.filter(r => priceProvenanceHtml(r));
+      const note = caveats.length ? pricingNoteHtml([...new Set(caveats.map(priceDescription))].join('\n'), `Price details for ${row.symbol}`) : '';
+      return `<span class="pricing-annotated">${fmtMoney(n)}${note}</span>`;
+    }
     return `<span>${fmtMoney(n)}</span>`;   // a level, not a move
   }
   const cls = n < 0 ? 'negative' : (n > 0 ? 'positive' : '');
@@ -286,7 +296,7 @@ function boardPaneHtml(paneIdx) {
         <div class="board-chips">${chips}</div>
         <div class="board-pane-meta">
           <span class="pill">${rows.length}</span>
-          <span class="board-pane-total" title="Total market value of the rows shown">${fmtMoney(total)}</span>
+          <span class="pricing-annotated"><span class="board-pane-total" title="Total market value of the rows shown">${fmtMoney(total)}</span>${pricingQualityHtml(rows.flatMap(r => r._pricingRows?.length ? r._pricingRows : [r]))}</span>
           ${sortSum === null ? '' : `<span class="board-pane-total ${
             sortSum < 0 ? 'negative' : (sortSum > 0 ? 'positive' : '')}"
             title="Sum of the ${_htmlEsc(sortCol.label)} column over the rows shown">${
@@ -428,14 +438,17 @@ function renderBoardScope() {
 }
 
 function renderBoardPanes() {
+  closePricingPopover();
   const el = document.getElementById('boardPanes');
   if (!el) return;
   renderBoardScope();
   if (boardLayout === 'board') {
-    const total = boardRows().reduce((s, r) => s + (typeof r.value === 'number' ? r.value : 0), 0);
+    const visible = boardRows();
+    const total = visible.reduce((s, r) => s + (typeof r.value === 'number' ? r.value : 0), 0);
     renderPositionsTotal(total, boardGroupBy === 'symbol'
       ? 'Market value of filtered Board symbols across all accounts'
-      : 'Market value of the filtered Board account positions');
+      : 'Market value of the filtered Board account positions',
+      visible.flatMap(r => r._pricingRows.length ? r._pricingRows : [r]));
   }
   if (boardPaneCount === 1) {
     el.innerHTML = `<div class="board-grid board-grid-1">${boardPaneHtml(0)}</div>`;

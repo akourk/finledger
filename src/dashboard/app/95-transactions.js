@@ -88,7 +88,7 @@ function renderStats() {
   const cards = [
     { label: 'Cost Basis', value: fmtMoney(costBasis) },
     {
-      label: 'Unrealized P&L', value: fmtSigned(unrealized) + (unrealPct != null ? ` <span class="sub">${fmtPct(unrealPct)}</span>` : ''),
+      label: 'Unrealized P&L', value: `<span class="pricing-annotated">${fmtSigned(unrealized)}${pricingQualityHtml(asOfHoldingsByAccount())}</span>` + (unrealPct != null ? ` <span class="sub">${fmtPct(unrealPct)}</span>` : ''),
       cls: gainCls(unrealized)
     },
     { label: 'Realized P&L', value: fmtSigned(realized) + lifeTag, cls: gainCls(realized) },

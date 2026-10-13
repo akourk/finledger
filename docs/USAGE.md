@@ -97,6 +97,15 @@ keeps its usual weekly throttle; if split records changed, refresh backfills
 only the affected price histories before recalculating holdings and returns.
 Use `--refresh-caches` with it to force that revalidation.
 
+Successful full and price-only runs finish with the dashboard path and a
+**Price refresh** report. It counts quote targets that were updated, already
+cached, failed, deferred by a retry delay, returned no usable data, or cannot
+be fetched. Failed and deferred targets include their retry date when known.
+The counts include required historical and benchmark quotes, so they need not
+equal the number of holdings. An updated quote means data was retrieved; its
+actual market date may still be earlier than the run date. A completed dashboard
+build can therefore contain estimates or missing valuations.
+
 Missing quotes do not establish that a security was delisted or remove it
 from holdings. Broker sales, merger proceeds, and other transactions determine
 share balances and realized gains. Closed positions still need historical
@@ -126,6 +135,48 @@ by any open holding or option stays current; otherwise its request ends at
 the latest closing date among its consumers. Ordinary ticker renames and
 fund reorganizations still require correct transaction and mapping evidence;
 an unavailable quote does not automatically replace the security.
+
+### Supply dated broker prices
+
+For a fund without a public quote or an option that otherwise uses an estimate,
+create the optional local file `data/broker-prices.csv`. Use these exact columns
+and the exact symbol shown in Holdings. This is a normalized price input, not
+an unmodified broker positions export. For example, with fictional data:
+
+```csv
+Date,Symbol,Price
+2026-06-30,Example Retirement Fund,32.15
+2026-06-30,FAKEA 7/17/2026 Call $100.00,2.40
+```
+
+Enter the broker's observation date as `YYYY-MM-DD` and its unit price or NAV
+in the share units on that date. Option prices are premiums per underlying
+share; the existing contract multiplier is applied automatically. A genuine
+zero mark is allowed and remains a known zero value. Blank, negative, or
+non-finite prices are rejected. Prices apply to that symbol across accounts;
+different instruments or share classes must have distinct symbols.
+
+Then rebuild with either command:
+
+```bash
+uv run python -m src.main --refresh-prices
+uv run python -m src.main
+```
+
+The input updates valuations without creating transactions or changing shares
+or cost basis. Each run reloads the file. It uses observations only on or after
+their date, for at most seven calendar days. A broker price takes precedence
+over a scaled proxy estimate; between actual market and broker quotes, the
+newer date wins, with the broker winning a same-date tie. Older observations
+remain useful for historical views, but do not keep today's valuation current.
+Broker prices retain their own date and do not count as market downloads.
+
+Keep adding dated observations to maintain coverage. Conflicting prices for
+the same symbol and date reject the input, preserving previous outputs; matching
+duplicates are harmless. The file stays private with other `data/` inputs and
+is included in local snapshot exports. Removing a row restores normal quote or
+estimate selection on the next run. Unsupported positions can still need
+estimates when no recent observed price is available.
 
 ### Open your snapshot on the demo site
 
@@ -409,6 +460,36 @@ History keeps its own range. Performance uses its own account/window controls:
 its dollar figures, TWR observations, and chart range are labeled separately.
 Annual returns cover all available years for the selected account; winners and
 losers describe latest positions and lifetime gains across all accounts.
+
+**Price evidence:** A small, same-color asterisk beside a price or total marks
+estimated, stale, provisional, unpriced, or unknown evidence. Hover, focus with
+the keyboard, or tap it to read the details; Escape or the close button dismisses
+them. Prices and totals keep their normal alignment. Healthy market quotes,
+dated broker prices, and cash do not need an asterisk. Overview's collapsed
+**Data details** lists every position's source and date, including estimates
+from transactions, proxies, or option intrinsic value. An intrinsic estimate
+uses the underlying quote's date. Historical views retain their selected
+snapshot's evidence. Counts can overlap; an incomplete value omits unpriced
+positions rather than assigning them a zero price.
+
+The header's **Price info** separates the dashboard's **Generated** time, the
+oldest successful market-data fetch, and the oldest price date among its
+positions. A failed
+request never advances the successful-fetch time. Unknown legacy evidence stays
+unknown until a successful refresh. Cash does not need a market quote date.
+Market quotes become stale after the expected completed session, with one extra
+weekday allowed for holidays or delayed fund NAVs; crypto uses completed UTC
+days. Transaction estimates older than seven calendar days are marked stale.
+These are warning thresholds, not a complete exchange-holiday calendar. The
+actual date remains available in the details even during that grace period.
+
+The same **Data details** disclosure lists each account's latest
+imported transaction date and number of dated records. Generated adjustments
+cannot make imported activity look newer. A quiet account can legitimately have
+an old activity date: this date does not establish when its CSV was downloaded
+or whether its transaction history is complete. Refreshing prices reuses the
+existing transactions; import new broker CSVs and run the full pipeline to
+update activity.
 
 Use the skip link to reach dashboard content by keyboard. When a navigation tab
 has focus, Left/Right switch tabs and Home/End select the first/last visible tab.

@@ -46,6 +46,15 @@ def _paths(root, data=None):
     return source, destination
 
 
+def _symlink_or_skip(link, target, *, target_is_directory=False):
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows requires Developer Mode or symlink privilege for filesystem symlinks")
+        raise
+
+
 def test_export_preserves_complete_numeric_payload_and_source(module, isolated_workdir):
     source, destination = _paths(isolated_workdir)
     before = source.read_bytes()
@@ -58,6 +67,31 @@ def test_export_preserves_complete_numeric_payload_and_source(module, isolated_w
     assert source.read_bytes() == before
     assert not list((isolated_workdir / "data").iterdir())
     assert not list((isolated_workdir / "cache").iterdir())
+
+
+def test_viewer_round_trip_preserves_pricing_and_account_freshness(module, isolated_workdir):
+    data = _payload()
+    pricing = {"source": "broker", "date": "2024-03-29", "quote_symbol": "EXAMPLE",
+               "stale": False, "provisional": False}
+    position = {"symbol": "EXAMPLE", "quantity": 2.0, "price": 0.0, "value": 0.0,
+                "cost_basis": 40.0, "unrealized_gain": -40.0,
+                "account_group": "Example Account", "pricing": pricing}
+    data["holdings"] = [copy.deepcopy(position)]
+    data["holdings_by_account"] = [copy.deepcopy(position)]
+    data["history"][0]["positions"] = [copy.deepcopy(position)]
+    data["analytics"]["account_freshness"] = [{
+        "account_group": "Example Account", "account_type": "Taxable",
+        "latest_transaction_date": "2024-01-03", "days_since_latest": 88,
+        "transaction_count": 1,
+    }]
+    data["analytics"]["account_freshness_as_of"] = "2024-03-31"
+    source, destination = _paths(isolated_workdir, data)
+
+    module.export_viewer_snapshot(source, destination)
+    snapshot = json.loads(destination.read_bytes())
+    module.validate_viewer_snapshot(snapshot)
+
+    assert snapshot["data"] == dict(data, as_of="2024-03-31")
 
 
 @pytest.mark.parametrize("headers,history,expected", [
@@ -246,7 +280,7 @@ def test_source_aliases_cannot_be_overwritten(module, isolated_workdir, alias):
     else:
         destination = source.with_name("alias.json")
         if alias == "symlink":
-            destination.symlink_to(source)
+            _symlink_or_skip(destination, source)
         else:
             os.link(source, destination)
     with pytest.raises(ValueError, match="must differ"):
@@ -262,11 +296,17 @@ def test_destination_cannot_overwrite_inputs_or_cache(module, isolated_workdir, 
     with pytest.raises(ValueError, match="outside inputs and caches"):
         module.export_viewer_snapshot(source, protected)
     assert protected.read_bytes() == b"original fictional input"
+
+
+@pytest.mark.parametrize("folder", ["data", "cache"])
+def test_destination_symlink_cannot_target_inputs_or_cache(module, isolated_workdir, folder):
+    source, _ = _paths(isolated_workdir)
+    protected = isolated_workdir / folder
     alias = isolated_workdir / (folder + "-alias")
-    alias.symlink_to(protected.parent, target_is_directory=True)
+    _symlink_or_skip(alias, protected, target_is_directory=True)
     with pytest.raises(ValueError, match="outside inputs and caches"):
         module.export_viewer_snapshot(source, alias / "new.json")
-    assert not (protected.parent / "new.json").exists()
+    assert not (protected / "new.json").exists()
 
 
 @pytest.mark.parametrize("boundary", ["read", "stage", "replace"])

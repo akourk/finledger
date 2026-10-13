@@ -33,6 +33,7 @@ from .broker_lots import (build_wrap_demand, copy_disposal_lots, hints_for,
 from .config import ACCOUNT_TYPES, CASH_SYMBOLS
 from .pipeline_stages import cash_principal_effect
 from .prices import get_price
+from .price_provenance import describe_pricing
 from .valuation import QTY_EPSILON, mark, mark_is_dust, rebase_transaction_prices
 from .return_flows import eligible_account_transfer_pairs, transit_positions
 
@@ -568,6 +569,7 @@ def compute_history(txns: list[dict],
         attempted = 0.0
         prices_on_date = rebase_transaction_prices(last_txn_price, quote_dates, sample_date)
         px_on_date: dict[str, float | None] = {}
+        pricing_on_date: dict[tuple[str, str], dict] = {}
         for (acct, sym), qty in balances.items():
             # Price + today-basis quantity, resolved by the shared
             # kernel (see src/valuation.py for the ladder).
@@ -623,6 +625,10 @@ def compute_history(txns: list[dict],
             # it's pre-split and matches the raw quantity — not the
             # yfinance split-adjusted price.
             eff_price = (val / qty) if (val is not None and qty) else None
+            evidence_key = (sym, m.source)
+            if evidence_key not in pricing_on_date:
+                pricing_on_date[evidence_key] = describe_pricing(
+                    sym, sample_date, m.source, quote_dates.get(sym))
             positions.append({
                 "account_group": acct,
                 "symbol":        sym,
@@ -630,6 +636,7 @@ def compute_history(txns: list[dict],
                 "price":         eff_price,
                 "value":         round(val, 2) if val is not None else None,
                 "cost_basis":    round(pos_basis, 2),
+                "pricing":       pricing_on_date[evidence_key],
             })
             if active_transfers:
                 precision_positions.append({**positions[-1], "value": val,
@@ -659,6 +666,7 @@ def compute_history(txns: list[dict],
                 "price":         1.0,
                 "value":         bcash,
                 "cost_basis":    bcash,
+                "pricing":       describe_pricing("USD", sample_date, "cash"),
             })
             if active_transfers:
                 precision_positions.append(positions[-1])
@@ -702,7 +710,7 @@ def compute_history(txns: list[dict],
             carried_basis={id(tout): sum(lot["qty"] * lot["basis_per_share"]
                                         for lot in stashed_tout_lots.get(id(tout), ()))
                            for tout, _ in active_transfers},
-            price_cache=px_on_date)
+            price_cache=px_on_date, quote_dates=quote_dates)
         if in_transit:
             history[-1]["in_transit"] = in_transit
             # The existing custody fields are display-rounded. Preserve the
@@ -824,7 +832,8 @@ def compute_daily_totals(txns: list[dict], *,
             if _bbal >= BRIDGE_MIN:
                 total += _bbal
         in_transit = transit_positions(
-            transfer_pairs, d_iso, prices_today, price_cache=px_today)
+            transfer_pairs, d_iso, prices_today, price_cache=px_today,
+            quote_dates=quote_dates)
         total += sum(p["value"] or 0 for p in in_transit)
         if transit_issues is not None:
             missing = [p for p in in_transit if p["value"] is None]

@@ -335,6 +335,51 @@ function renderAnnualBreakdown() {
   if (sumToggle) sumToggle.addEventListener('click', () => renderKeepingFocus(_toggleAnnualSumExpand));
 }
 
+function renderTransactionCoverage() {
+  const host = document.getElementById('transactionCoverage');
+  if (!host) return;
+  const rows = Array.isArray(ANALYTICS.account_freshness) ? ANALYTICS.account_freshness : [];
+  const open = host.querySelector('details')?.open;
+  const body = rows.length ? `<div class="table-wrap">
+    <table class="mini-table"><caption class="sr-only">Latest imported transaction activity by account, for the latest export</caption>
+      <thead><tr><th scope="col">Account</th><th scope="col">Latest activity</th><th scope="col" class="num">Imported transactions</th></tr></thead>
+      <tbody>${rows.map(row => {
+        const date = typeof row.latest_transaction_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(row.latest_transaction_date)
+          ? row.latest_transaction_date : null;
+        const days = Number.isInteger(row.days_since_latest) && row.days_since_latest >= 0
+          ? ` · ${row.days_since_latest.toLocaleString()} days before export` : '';
+        const count = Number.isInteger(row.transaction_count) && row.transaction_count >= 0
+          ? row.transaction_count.toLocaleString() : 'Unknown';
+        return `<tr><th scope="row">${_htmlEsc(row.account_group || 'Unknown account')}</th>
+          <td>${date ? _htmlEsc(date + days) : 'Imported date unknown'}</td><td class="num">${count}</td></tr>`;
+      }).join('')}</tbody></table></div>`
+    : '<p class="scope-context">Transaction coverage is unavailable in this export.</p>';
+  const positions = asOfHoldingsByAccount();
+  const selectedDate = isAsOfLatest() ? LATEST_DATE : getAsOfSnapshot()?.date;
+  const prices = positions.length ? `<div class="table-wrap">
+    <table class="mini-table"><caption class="sr-only">Price sources and observation dates for the selected snapshot</caption>
+      <thead><tr><th scope="col">Account</th><th scope="col">Symbol</th><th scope="col">Source</th><th scope="col">Price date</th><th scope="col">Note</th></tr></thead>
+      <tbody>${positions.map(row => {
+        const p = positionPricing(row);
+        const notes = [];
+        if (row.value == null || p.source === 'unavailable') notes.push('Excluded from this total');
+        if (p.stale) notes.push('Stale');
+        if (p.provisional) notes.push('Provisional');
+        if (p.quote_symbol && ['proxy', 'intrinsic'].includes(p.source)) notes.push(p.quote_symbol);
+        return `<tr><th scope="row">${_htmlEsc(row.account_group || 'Unknown account')}</th>
+          <td>${_htmlEsc(row.symbol || '')}</td><td>${_htmlEsc(priceSourceLabel(row))}</td>
+          <td>${_htmlEsc(p.date || (p.source === 'cash' ? '—' : 'Unknown'))}</td><td>${_htmlEsc(notes.join(' · '))}</td></tr>`;
+      }).join('')}</tbody></table></div>`
+    : '<p class="scope-context">No positions at this snapshot.</p>';
+  host.innerHTML = `<details class="data-details panel"${open ? ' open' : ''}>
+    <summary>Data details <span class="scope-label">Price sources · imports</span></summary>
+    <section id="pricingDetails"><h3>Pricing details <span class="scope-label">${_htmlEsc(selectedDate ? 'As of ' + selectedDate : 'No prior snapshot')}</span></h3>
+      ${prices}</section>
+    <section id="importCoverage"><h3>Transaction coverage <span class="scope-label">Latest export · ${_htmlEsc(ANALYTICS.account_freshness_as_of || SNAPSHOT_DATE)}</span></h3>
+      <p class="scope-context">Latest imported activity does not prove statement completeness. Inactivity may be normal.</p>
+      ${body}</section></details>`;
+}
+
 function renderTopHoldings() {
   const head = document.getElementById('topHoldingsHead');
   const body = document.getElementById('topHoldingsBody');
@@ -1117,6 +1162,8 @@ function renderDataHealth() { /* merged into renderOverviewStatus() */ }
 // (goal tracking); Daily P&L lives on Performance.
 registerTabRenderer('overview', () => {
   renderOverviewStatus();
+  renderTransactionCoverage();
+  renderSelectedPricingQuality();
   renderTopHoldings();
   renderRecentTransactions();
   renderAllocation();

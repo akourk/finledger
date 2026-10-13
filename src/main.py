@@ -225,7 +225,7 @@ def _build_basis_methods(txns, last_prices, holdings_by_account):
         for r in rows:
             px = last_prices.get(r["symbol"], 0.0)
             value = (round(r["quantity"] * px * _cmult(r["symbol"]), 2)
-                     if px else None)
+                     if r["symbol"] in last_prices else None)
             r["price"] = round(px, 2)
             r["value"] = value
             r["account_type"] = ACCOUNT_TYPES.get(r["account_group"], "Taxable")
@@ -250,18 +250,8 @@ def _build_basis_methods(txns, last_prices, holdings_by_account):
 
 def _current_transaction_prices(txns, target):
     """Resolve the latest known transaction quotes in target-date share units."""
-    from .basis import _sort_key
-    from .valuation import rebase_transaction_prices
-
-    prices, quote_dates = {}, {}
-    for txn in sorted(txns, key=_sort_key):
-        day = txn.get("date", "")
-        price = float(txn.get("price", 0) or 0)
-        symbol = txn.get("symbol", "")
-        if symbol and day and day <= target and price > 0:
-            prices[symbol] = price
-            quote_dates[symbol] = day
-    return rebase_transaction_prices(prices, quote_dates, target)
+    from .price_provenance import transaction_quotes
+    return transaction_quotes(txns, target)[0]
 
 
 def _refresh_split_evidence(txns, *, force=False):
@@ -333,6 +323,9 @@ def _refresh_prices_only(args) -> None:
         build_holdings, compute_cash_principal,
         restore_ingest_order, walk_balances,
     )
+    from .prices import reset_price_refresh_report, reload_broker_prices
+    reset_price_refresh_report()
+    reload_broker_prices()
 
     output_path = Path(args.output) if args.output else (EXPORT_DIR / "transactions.json")
     if not output_path.exists():
@@ -486,6 +479,8 @@ def _refresh_prices_only(args) -> None:
     holdings, holdings_by_account = build_holdings(
         balances, last_prices, basis_for_holdings, cash_principal_by_key,
     )
+    from .price_provenance import annotate_holdings
+    annotate_holdings(holdings, holdings_by_account, txns, today_str)
 
     # Sector enrichment (cheap, cache-first)
     from .sectors import get_sector
@@ -547,6 +542,8 @@ def _refresh_prices_only(args) -> None:
 
     dashboard_path = output_path.parent / "dashboard.html"
     print(f"Dashboard: {dashboard_path}")
+    from .prices import print_price_refresh_report
+    print_price_refresh_report()
 
 
 
@@ -684,6 +681,11 @@ def main():
     # Administrative modes above need no market-data installation. All
     # dashboard runs check it before renaming inputs or changing local state.
     require_market_data()
+    from .prices import reset_price_refresh_report, reload_broker_prices
+    reset_price_refresh_report()
+    broker_observations = reload_broker_prices()
+    if broker_observations:
+        print(f"Loaded {broker_observations} dated broker price observation(s).")
     recovered = reset_dependency_failures()
     if recovered:
         print(f"Cleared {recovered} price retry cooldown(s) caused by missing "
@@ -1032,6 +1034,8 @@ def main():
     holdings, holdings_by_account = build_holdings(
         balances, last_prices, fifo_basis_by_key, cash_principal_by_key,
     )
+    from .price_provenance import annotate_holdings
+    annotate_holdings(holdings, holdings_by_account, txns, today_str)
 
     # Recompute comparisons from the same split evidence as annotated basis.
     basis_methods = _build_basis_methods(txns, last_prices, holdings_by_account)
@@ -1113,6 +1117,8 @@ def main():
     # --- Step 6: Dashboard ---
     dashboard_path = output_path.parent / "dashboard.html"
     print(f"Dashboard: {dashboard_path}")
+    from .prices import print_price_refresh_report
+    print_price_refresh_report()
 
 
 

@@ -3179,6 +3179,35 @@ th:focus-within .col-x { opacity: 1; }
   .as-of-hint { overflow-wrap: anywhere; }
 }
 
+/* Footnote buttons preserve the number's alignment and the table row height. */
+.pricing-annotated { display: inline-block; position: relative; white-space: nowrap; align-self: flex-start; }
+/* Header totals sit at the page edge; include the footnote target in layout. */
+.section-header > .total-value > .pricing-annotated { margin-right: 24px; }
+.pricing-note { position: absolute; left: 100%; top: -0.35em; width: 24px; height: 24px;
+  padding: 0; border: 0; border-radius: 3px; background: transparent; color: inherit;
+  font: inherit; font-size: 0.75em; line-height: 1; font-weight: 500; text-align: left;
+  cursor: pointer; touch-action: manipulation; }
+.pricing-note:hover, .pricing-note[aria-expanded="true"] { text-decoration: underline; }
+.pricing-note:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pricing-note.pricing-info { position: static; width: auto; height: auto; padding: 1px 2px;
+  font-size: inherit; font-weight: 400; vertical-align: baseline; text-decoration: underline;
+  text-decoration-style: dotted; text-underline-offset: 3px; }
+.pricing-popover { position: fixed; inset: auto; margin: 0; display: none; z-index: 10000;
+  box-sizing: border-box; width: min(340px, calc(100vw - 16px)); max-height: calc(100vh - 16px);
+  overflow: auto; padding: 15px 36px 15px 15px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: 0 8px 28px #0006;
+  font-size: 0.78rem; line-height: 1.6; text-align: left; white-space: normal; }
+.pricing-popover.is-open { display: block; }
+#pricingPopoverContent { white-space: pre-line; overflow-wrap: anywhere; }
+#pricingPopoverClose { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px;
+  border: 0; border-radius: 4px; padding: 0; background: transparent; color: var(--text-dim);
+  font-size: 1.2rem; cursor: pointer; }
+.data-details { margin: 12px 0; padding: 10px 12px; }
+.data-details > summary { cursor: pointer; font-size: 0.84rem; font-weight: 500; }
+.data-details section { margin-top: 16px; }
+.data-details h3 { font-size: 0.8rem; margin: 0 0 8px; }
+.data-details th[scope="row"] { text-align: left; font-weight: 400; }
+
 /* Summary hierarchy and explicit date/account context. */
 .section-header h2 { color: var(--accent); }
 .top-bar-summary { padding: 12px 18px; gap: 18px; }
@@ -3514,6 +3543,7 @@ h2 > .scope-label, h3 > .scope-label { margin-left: 8px; }
   .compact-record-fields > div:last-child { border-bottom: 0; }
   .compact-record-fields dt { color: var(--text-dim); }
   .compact-record-fields dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .compact-record-fields .pricing-annotated { margin-right: 24px; }
   .compact-record-fields dt, .compact-record-fields dd { min-width: 0; overflow-wrap: anywhere; }
   .compact-lots { margin: 0 12px 10px; border-top: 1px solid var(--border); }
   .compact-lots > summary { cursor: pointer; min-height: 44px; padding: 12px 0; font-size: .8rem; }

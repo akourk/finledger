@@ -977,12 +977,7 @@ class TestTodayFreshness:
 
 
 class TestPriceFreshnessSurfacing:
-    """Phase 1.5 — ``last_fetch`` was already recorded and already
-    accurate; it just never reached the UI.  ``as_of`` is only a DATE,
-    so a snapshot reads as "current" all day even when the marks behind
-    it were pulled at 7am — which is exactly what makes a mid-session
-    reconciliation against a broker statement confusing.
-    """
+    """Successful fetch timestamps establish the oldest held refresh."""
 
     def test_price_source_resolves_proxies_and_option_underlyings(
             self, isolated_workdir, monkeypatch):
@@ -1009,9 +1004,9 @@ class TestPriceFreshnessSurfacing:
             self, isolated_workdir):
         from src.prices import _load_meta, oldest_last_fetch
         meta = _load_meta()["symbols"]
-        meta["AAA"] = {"last_fetch": "2026-08-05T11:04:00"}
-        meta["BBB"] = {"last_fetch": "2026-08-05T07:12:00"}
-        meta["CCC"] = {"last_fetch": "2026-08-05T09:30:00"}
+        meta["AAA"] = {"last_successful_fetch": "2026-08-05T11:04:00"}
+        meta["BBB"] = {"last_successful_fetch": "2026-08-05T07:12:00"}
+        meta["CCC"] = {"last_successful_fetch": "2026-08-05T09:30:00"}
         assert oldest_last_fetch(["AAA", "BBB", "CCC"]) == "2026-08-05T07:12:00"
 
     def test_oldest_last_fetch_ignores_unfetchable_symbols(
@@ -1020,7 +1015,8 @@ class TestPriceFreshnessSurfacing:
         must be skipped, not treated as infinitely stale (which would
         suppress the stamp for every portfolio holding one)."""
         from src.prices import _load_meta, oldest_last_fetch
-        _load_meta()["symbols"]["AAA"] = {"last_fetch": "2026-08-05T11:04:00"}
+        _load_meta()["symbols"]["AAA"] = {
+            "last_successful_fetch": "2026-08-05T11:04:00"}
         assert oldest_last_fetch(
             ["AAA", "USD", "Some Fund Display Name"]) == "2026-08-05T11:04:00"
         assert oldest_last_fetch(["USD", "Some Fund Display Name"]) is None
@@ -1052,8 +1048,8 @@ class TestPriceFreshnessSurfacing:
         assert history
 
         meta = _load_meta()["symbols"]
-        meta["AAA"]["last_fetch"] = "2026-08-04T11:04:00"
-        meta["BBB"]["last_fetch"] = "2026-08-04T07:12:00"
+        meta["AAA"]["last_successful_fetch"] = "2026-08-04T11:04:00"
+        meta["BBB"]["last_successful_fetch"] = "2026-08-04T07:12:00"
 
         summary = compute_header_summary(txns, history, [],
                                          {"net_contributed": 300.0})
@@ -1484,6 +1480,7 @@ class TestProvisionalLabelling:
         from src.history import compute_history
         from src import prices as _prices_mod
 
+        monkeypatch.setenv("FIN_AS_OF_DATE", "2026-08-04")
         # 11:00 ET on 2026-08-04 — the bar we store is a live mark.
         # Pin `_today` too: it derives from `_now_utc` through the
         # RUNNER's local zone, so pinning only the instant makes the
@@ -1511,8 +1508,11 @@ class TestProvisionalLabelling:
                                          {"net_contributed": 100.0})
         assert summary["prices_provisional"] is True
 
-        # After the close settles, the same snapshot is not provisional.
+        # After the close settles, rebuilding the snapshot refreshes its
+        # evidence; an already-exported snapshot keeps its original metadata.
+        _instant = datetime(2026, 8, 4, 23, 0, tzinfo=timezone.utc)
         _prices_mod._load_meta()["symbols"]["AAA"]["settled_through"] = "2026-08-04"
+        history = compute_history(txns, {"AAA": "Technology"})
         summary = compute_header_summary(txns, history, [],
                                          {"net_contributed": 100.0})
         assert summary["prices_provisional"] is False

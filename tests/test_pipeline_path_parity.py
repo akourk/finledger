@@ -226,6 +226,26 @@ def _txn_identity(t: dict) -> tuple:
 # Tests
 # ---------------------------------------------------------------------------
 
+def test_price_and_import_evidence_survives_refresh(both_paths):
+    """Refreshing the same fictional ledger preserves dated evidence."""
+    full, refresh = both_paths.full, both_paths.refresh
+    for key in ("account_freshness", "pricing_quality"):
+        assert full["analytics"][key] == refresh["analytics"][key]
+    assert full["analytics"]["account_freshness"]
+    assert any(row["latest_transaction_date"]
+               for row in full["analytics"]["account_freshness"])
+    for data in (full, refresh):
+        for row in data["holdings_by_account"]:
+            assert row["pricing"]["source"] != "unknown"
+        for snap in data["history"]:
+            for row in snap["positions"]:
+                detail = row["pricing"]
+                assert detail["source"] != "unknown"
+                assert detail["date"] is None or detail["date"] <= snap["date"]
+    assert [(row["symbol"], row["pricing"]) for row in full["holdings_by_account"]] == [
+        (row["symbol"], row["pricing"]) for row in refresh["holdings_by_account"]]
+
+
 class TestRealizedGainParity:
     def test_realized_total_matches(self, both_paths):
         assert _realized_total(both_paths.refresh) == pytest.approx(

@@ -107,7 +107,7 @@ def test_freshness_follows_the_actual_quote_cache(isolated_workdir):
 
     symbol = "XSP 06/20/2025 Call $490.00"
     prices._load_meta()["symbols"]["^GSPC"] = {
-        "last_fetch": "2025-06-18T18:00:00",
+        "last_successful_fetch": "2025-06-18T18:00:00",
     }
     assert prices.price_source_symbol(symbol) == "^GSPC"
     assert prices.last_fetch_at(symbol) == "2025-06-18T18:00:00"

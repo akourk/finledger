@@ -68,7 +68,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .config import CACHE_DIR, CRYPTO_SYMBOLS, SYMBOL_MAP, load_json_cache
+from .config import CACHE_DIR, DATA_DIR, CRYPTO_SYMBOLS, SYMBOL_MAP, load_json_cache
 from .io_safe import check_pending_recovery, replace_files
 from .market_symbols import option_underlying_quote
 
@@ -111,7 +111,7 @@ def _now_utc() -> datetime:
     The single clock seam for freshness reasoning — tests monkeypatch
     this rather than adding a freezegun dependency.  ``_today`` derives
     from it, so pinning one pins both.  (The ``clock.now(fallback=datetime.now)`` calls
-    elsewhere in this module stamp ``last_fetch`` in naive local time;
+    elsewhere stamp successful fetches and attempts in naive local time;
     that format is what the dashboard parses, so leave it alone.)
     """
     return clock.now(timezone.utc, fallback=datetime.now)
@@ -253,6 +253,7 @@ _meta:      dict | None                         = None
 _splits:    dict[str, list[list]] | None        = None
 _dividends: dict[str, list[list]] | None        = None
 _proxy:     dict | None                         = None
+_broker_prices: dict[str, dict[str, float]] | None = None
 # Per-symbol dirty tracking for the sharded price store: only symbols
 # in _prices_dirty_syms get their shard rewritten on save; symbols in
 # _prices_deleted_syms get their shard unlinked.  Mutually exclusive
@@ -264,6 +265,8 @@ _meta_dirty      = False
 _splits_dirty    = False
 _dividends_dirty = False
 _proxy_dirty     = False
+# Run-local diagnostics only; never persist this report beside private caches.
+_refresh_outcomes: dict[str, dict] = {}
 
 
 def _mark_prices_dirty(sym: str) -> None:
@@ -297,7 +300,7 @@ def reset_caches() -> None:
     without this, state leaks between tests.  Production code never
     needs to call this; the caches are loaded once per process.
     """
-    global _prices, _meta, _splits, _dividends, _proxy
+    global _prices, _meta, _splits, _dividends, _proxy, _broker_prices
     global _meta_dirty, _splits_dirty, _dividends_dirty, _proxy_dirty
     global _legacy_prices_pending_delete
     _prices = None
@@ -305,6 +308,7 @@ def reset_caches() -> None:
     _splits = None
     _dividends = None
     _proxy = None
+    _broker_prices = None
     _prices_dirty_syms.clear()
     _prices_deleted_syms.clear()
     _legacy_prices_pending_delete = False
@@ -314,6 +318,7 @@ def reset_caches() -> None:
     _proxy_dirty = False
     _tr_factor_cache.clear()
     _proxy_anchor_series.clear()
+    _refresh_outcomes.clear()
 
 # yfinance is imported lazily so dry-runs don't pay the import cost.
 _yf = None
@@ -810,20 +815,93 @@ def _parse_iso(d) -> date:
 
 
 def get_price(symbol: str, on_date) -> float | None:
-    """Return the adjusted close price for `symbol` on `on_date`.
+    """Return the selected price for `symbol` in the current share basis.
 
     Walks backward up to `_LOOKBACK_DAYS` to the most recent prior trading
     day.  Returns None if no price is available in that window.
 
-    Consults ``symbol_proxy_map.json`` first — mapped symbols resolve
-    via their proxy's price stream (see _proxy_entry for method
-    semantics).
+    Dated broker observations compete with market quotes and take precedence
+    over scaled proxy estimates. Mapped market symbols resolve through
+    ``symbol_proxy_map.json`` (see _proxy_entry for method semantics).
+    """
+    observation = get_price_observation(symbol, on_date)
+    return observation["price"] if observation is not None else None
+
+
+def get_price_observation(symbol: str, on_date) -> dict | None:
+    """Select a dated observed price, retaining its source and share units.
+
+    Broker prices compete with actual market quotes by date (broker wins a
+    same-date tie), and take precedence over scaled proxy estimates. Both use
+    the same seven-day backward limit. Returned prices always use the cache's
+    current share basis, including the existing total-return adjustment.
+    """
+    return _select_price_observation(symbol, on_date, _parse_iso(on_date).isoformat())
+
+
+def _select_price_observation(symbol: str, on_date, broker_cutoff: str) -> dict | None:
+    """Keep the original as-of cutoff through proxy and anchor recursion."""
+    broker = _broker_price_observation(symbol, on_date, cutoff=broker_cutoff)
+    market = _market_price_observation(symbol, on_date, broker_cutoff=broker_cutoff)
+    if broker is not None and (market is None or market["estimated"]
+                               or broker["date"] >= market["date"]):
+        return broker
+    return market
+
+
+def reload_broker_prices() -> int:
+    """Validate the local observation file atomically; never write a cache."""
+    from .broker_prices import load_broker_prices
+
+    global _broker_prices
+    loaded = load_broker_prices(DATA_DIR / "broker-prices.csv")
+    _broker_prices = loaded
+    return sum(len(series) for series in loaded.values())
+
+
+def _load_broker_prices() -> dict[str, dict[str, float]]:
+    if _broker_prices is None:
+        reload_broker_prices()
+    return _broker_prices
+
+
+def _broker_price_observation(symbol: str, on_date, *, cutoff: str | None = None) -> dict | None:
+    series = _load_broker_prices().get(symbol)
+    if not series or symbol == "USD":
+        return None
+    target = _parse_iso(on_date)
+    for offset in range(_LOOKBACK_DAYS + 1):
+        observed = (target - timedelta(days=offset)).isoformat()
+        if cutoff is not None and observed > cutoff:
+            continue
+        if observed not in series:
+            continue
+        factor = split_factor_since(symbol, observed)
+        if not math.isfinite(factor) or factor <= 0:
+            return None
+        value = series[observed] / factor
+        entry = _proxy_entry(symbol)
+        adjustment_symbol = entry[0] if entry and entry[1] == "direct" else symbol
+        if _is_total_return_symbol(adjustment_symbol):
+            value *= _tr_factor_after(adjustment_symbol, observed)
+        if not math.isfinite(value):
+            return None
+        return {"price": value, "date": observed, "quote_symbol": symbol,
+                "estimated": False, "source": "broker"}
+    return None
+
+
+def _market_price_observation(symbol: str, on_date, *, broker_cutoff: str) -> dict | None:
+    """Return the price with its actual cached bar date and quote source.
+
+    Uses exactly the same proxy, lookback, and total-return rules as
+    ``get_price``. A scaled proxy is an estimate even when its quote is fresh.
     """
     entry = _proxy_entry(symbol)
     if entry is not None:
         proxy, method, anchor_date, anchor_price = entry
         if method == "direct":
-            return get_price(proxy, on_date)
+            return _select_price_observation(proxy, on_date, broker_cutoff)
         if method == "scaled":
             # Scaled needs both an anchor (ground-truth txn price) and
             # the proxy's price on both the anchor date and the query
@@ -837,13 +915,22 @@ def get_price(symbol: str, on_date) -> float | None:
                 anchor_date, anchor_price = near
             if not anchor_date or anchor_price is None:
                 return None
-            now_px = get_price(proxy, on_date)
-            if now_px is None:
+            observation = _select_price_observation(proxy, on_date, broker_cutoff)
+            if observation is None:
                 return None
-            anchor_px = get_price(proxy, anchor_date)
+            # Existing transaction anchors may postdate the requested date.
+            # Preserve that policy without admitting a future broker input
+            # through the proxy's denominator.
+            anchor_observation = _select_price_observation(proxy, anchor_date, broker_cutoff)
+            anchor_px = anchor_observation["price"] if anchor_observation is not None else None
             if anchor_px is None or anchor_px <= 0:
                 return None
-            return anchor_price * (now_px / anchor_px)
+            return {
+                **observation,
+                "price": anchor_price * (observation["price"] / anchor_px),
+                "estimated": True,
+                **({"source": "proxy"} if observation.get("source") else {}),
+            }
         # Unknown method — fall through to the normal path (treat as not proxied)
     if _classify_no_fetch(symbol):
         return None
@@ -878,13 +965,15 @@ def get_price(symbol: str, on_date) -> float | None:
                 continue
             if _is_total_return_symbol(symbol):
                 val *= _tr_factor_after(symbol, probe)
-            return val
+            return {"price": val, "date": probe,
+                    "quote_symbol": symbol, "estimated": False}
     return None
 
 
 def get_series(symbol: str, start, end) -> dict[str, float]:
     """Return {date: price} entries within [start, end] (inclusive).
 
+    Includes actual broker observation dates without filling intervening gaps.
     Total-return symbols get the same dividend adjustment as get_price.
     NOTE: unlike get_price, this does NOT route through the proxy map
     or filter legacy NaN entries — its only consumer (daily_pnl) uses
@@ -897,6 +986,13 @@ def get_series(symbol: str, start, end) -> dict[str, float]:
     out = {d: p for d, p in series.items() if start_s <= d <= end_s}
     if out and _is_total_return_symbol(symbol):
         out = {d: p * _tr_factor_after(symbol, d) for d, p in out.items()}
+    # Include actual broker observation dates, never the intervening carry
+    # days: daily P&L uses these keys to identify observed trading dates.
+    for day in _load_broker_prices().get(symbol, {}):
+        if start_s <= day <= end_s:
+            observation = _broker_price_observation(symbol, day)
+            if observation is not None:
+                out[day] = observation["price"]
     return out
 
 
@@ -942,12 +1038,88 @@ def _should_skip(symbol: str, now: datetime) -> bool:
     return False
 
 
+def _record_refresh_outcome(symbol: str, status: str, *,
+                            error: str | None = None) -> None:
+    """Keep one outcome per quote target, with successful recovery winning.
+
+    A later cache hit or cooldown skip must not obscure an earlier failure.
+    A subsequent actual request replaces the earlier outcome, so successful
+    recovery and failures after a prior success both describe the final state.
+    This function only reads retry state; reporting never starts a cooldown.
+    """
+    previous = _refresh_outcomes.get(symbol)
+    if previous and status in {"cached", "deferred", "not_fetchable"}:
+        return
+    entry = _load_meta()["symbols"].get(symbol, {})
+    _refresh_outcomes[symbol] = {
+        "symbol": symbol, "status": status,
+        "retry_after": entry.get("retry_after"),
+        "error": error if error is not None else (
+            entry.get("last_error") if status == "deferred" else None),
+    }
+
+
+def price_refresh_report() -> list[dict]:
+    """Return a stable copy of this process's quote-refresh outcomes."""
+    return [dict(_refresh_outcomes[sym]) for sym in sorted(_refresh_outcomes)]
+
+
+def reset_price_refresh_report() -> None:
+    """Start a new run's report without disturbing seeded or loaded caches."""
+    _refresh_outcomes.clear()
+
+
+def print_price_refresh_report() -> None:
+    """Print an end-of-run refresh summary, including deferred retry dates."""
+    rows = price_refresh_report()
+    statuses = ("updated", "cached", "failed", "deferred", "unavailable",
+                "not_fetchable")
+    counts = {status: sum(row["status"] == status for row in rows)
+              for status in statuses}
+    labels = {"cached": "already cached", "not_fetchable": "not fetchable"}
+    print("Price refresh: " + ", ".join(
+        f"{counts[status]} {labels.get(status, status)}" for status in statuses))
+    for row in rows:
+        if row["status"] in {"failed", "deferred", "unavailable"}:
+            retry = (f"next retry {row['retry_after']}"
+                     if row["retry_after"] else "retry on the next run")
+            if row["status"] == "deferred" and not row["retry_after"]:
+                retry = "automatic retry date unavailable"
+            print(f"  {row['symbol']}: {row['status']}; {retry}")
+
+
+def _successful_fetch_stamp(symbol: str, entry: dict) -> str | None:
+    """Read successful-refresh evidence without trusting legacy failures."""
+    if "last_successful_fetch" in entry:
+        return entry["last_successful_fetch"]
+    # Older versions stamped failures as last_fetch, so that field is useful
+    # only when the entry is clean and at least one usable bar still exists.
+    if entry.get("failure_count") or entry.get("last_error") or entry.get("tombstone"):
+        return None
+    if not entry.get("last_fetch"):
+        return None
+    if any(not isinstance(value, bool) and isinstance(value, (int, float))
+           and math.isfinite(value)
+           for value in _load_prices().get(symbol, {}).values()):
+        return entry["last_fetch"]
+    return None
+
+
+def _record_attempt(symbol: str, now: datetime) -> None:
+    global _meta_dirty
+    entry = _load_meta()["symbols"].setdefault(symbol, {})
+    if "last_successful_fetch" not in entry:
+        entry["last_successful_fetch"] = _successful_fetch_stamp(symbol, entry)
+    entry["last_attempt"] = now.isoformat(timespec="seconds")
+    _meta_dirty = True
+
+
 def _record_failure(symbol: str, error: str, now: datetime) -> None:
     global _meta_dirty
     meta = _load_meta()
     entry = meta["symbols"].setdefault(symbol, {})
+    _record_attempt(symbol, now)
     entry["failure_count"] = entry.get("failure_count", 0) + 1
-    entry["last_fetch"]    = now.isoformat(timespec="seconds")
     entry["last_error"]    = error
     days = min(_BACKOFF_CAP_DAYS,
                _BACKOFF_BASE_DAYS * (2 ** (entry["failure_count"] - 1)))
@@ -955,6 +1127,7 @@ def _record_failure(symbol: str, error: str, now: datetime) -> None:
     if entry["failure_count"] >= _MAX_FAILURES:
         entry["tombstone"] = True
     _meta_dirty = True
+    _record_refresh_outcome(symbol, "failed", error=error)
 
 
 def _split_fetch_due(symbol: str, now: datetime) -> bool:
@@ -1037,12 +1210,14 @@ def _record_success(symbol: str, start: date, end: date, now: datetime) -> None:
     # cache heals itself on the next successful fetch.
     entry["covered_end"]   = _cap_covered_end(end_s if not ce else max(ce, end_s))
     _record_settled_through(entry, symbol)
-    entry["last_fetch"]    = now.isoformat(timespec="seconds")
+    entry["last_attempt"] = now.isoformat(timespec="seconds")
+    entry["last_successful_fetch"] = entry["last_attempt"]
     entry["failure_count"] = 0
     entry.pop("retry_after", None)
     entry.pop("last_error", None)
     entry.pop("tombstone", None)
     _meta_dirty = True
+    _record_refresh_outcome(symbol, "updated")
 
 
 def _fetch_splits(symbol: str) -> list[list]:
@@ -1198,36 +1373,43 @@ def fetch_latest_close_batch(symbols: list[str], *,
     proxy map (a mapped symbol contributes its proxy to the batch).
     Returns the number of symbols whose cache was updated.
 
-    Failures are silent — a partial batch (yfinance returned no data
-    for some tickers) just leaves those symbols' cached prices alone.
+    A partial or failed batch leaves cached prices and cooldown policy
+    alone, and records each target's outcome in ``price_refresh_report``.
     The next full pipeline run will retry via ``ensure_coverage``.
     """
     global _meta_dirty
-    yf = _lazy_yf()
-    if yf is None:
-        return 0
-
     # Expand proxies, dedupe, drop unfetchable
     targets: list[str] = []
     seen: set[str] = set()
     now = clock.now(fallback=datetime.now)
     for sym in symbols:
-        if _classify_no_fetch(sym):
-            continue
         entry = _proxy_entry(sym)
-        if entry is not None and entry[1] == "direct":
+        if entry is not None:
             tgt = entry[0]
         else:
             tgt = sym
         if tgt in seen:
             continue
-        if _should_skip(tgt, now):
-            continue
         seen.add(tgt)
+        if _classify_no_fetch(tgt):
+            _record_refresh_outcome(tgt, "not_fetchable")
+            continue
+        if _should_skip(tgt, now):
+            _record_refresh_outcome(tgt, "deferred")
+            continue
         targets.append(tgt)
 
     if not targets:
         return 0
+    yf = _lazy_yf()
+    if yf is None:
+        for sym in targets:
+            _record_refresh_outcome(sym, "unavailable",
+                                    error="market-data dependency unavailable")
+        return 0
+    for sym in targets:
+        _record_attempt(sym, now)
+        _record_refresh_outcome(sym, "unavailable", error="no usable close returned")
 
     # yfinance batched download.  period="5d" gives us a few extra days
     # in case today's data hasn't posted yet (markets closed / pre-open
@@ -1243,6 +1425,8 @@ def fetch_latest_close_batch(symbols: list[str], *,
             threads=True,
         )
     except Exception as e:
+        for sym in targets:
+            _record_refresh_outcome(sym, "failed", error=str(e)[:200])
         if verbose:
             print(f"  batched fetch failed: {e}")
         return 0
@@ -1281,6 +1465,8 @@ def fetch_latest_close_batch(symbols: list[str], *,
             val = float(series.iloc[-1])
         except (TypeError, ValueError):
             continue
+        if not math.isfinite(val):
+            continue
         prices.setdefault(sym, {})[dt_str] = val
         _mark_prices_dirty(sym)
         _tr_factor_cache.pop(sym, None)
@@ -1294,12 +1480,13 @@ def fetch_latest_close_batch(symbols: list[str], *,
         if not ce or dt_str > ce:
             entry["covered_end"] = _cap_covered_end(dt_str)
         _record_settled_through(entry, sym)
-        entry["last_fetch"] = now.isoformat(timespec="seconds")
+        entry["last_successful_fetch"] = now.isoformat(timespec="seconds")
         entry["failure_count"] = 0
         entry.pop("retry_after", None)
         entry.pop("last_error", None)
         entry.pop("tombstone", None)
         _meta_dirty = True
+        _record_refresh_outcome(sym, "updated")
         updated += 1
 
     if verbose:
@@ -1415,7 +1602,7 @@ def option_intrinsic(symbol: str, on_date) -> float | None:
         return None
     underlying, scale = option_underlying_quote(parsed["underlying"])
     s = get_price(underlying, on_date)
-    if s is None or s <= 0:
+    if s is None or s < 0:
         return None
     s *= scale * split_factor_since(underlying, on_date)
     if parsed["type"] == "Call":
@@ -1461,14 +1648,13 @@ def last_fetch_at(symbol: str) -> str | None:
     """ISO timestamp of the last successful fetch backing ``symbol``, or
     ``None`` when nothing in the cache does.
 
-    This is the only accurate freshness signal fin has: ``covered_end``
-    is a date, and a date says nothing about whether the bar behind it
-    is this morning's stale open or the settled close.
+    Attempt timestamps and coverage claims do not establish freshness.
+    Legacy timestamps are accepted only with clean state and cached prices.
     """
     target = price_source_symbol(symbol)
     if not target:
         return None
-    return (_load_meta()["symbols"].get(target) or {}).get("last_fetch")
+    return _successful_fetch_stamp(target, _load_meta()["symbols"].get(target) or {})
 
 
 def any_provisional(symbols) -> bool:
@@ -1496,13 +1682,20 @@ def any_provisional(symbols) -> bool:
 
 
 def oldest_last_fetch(symbols) -> str | None:
-    """The OLDEST ``last_fetch`` across ``symbols`` — a staleness floor.
+    """The oldest known successful fetch, only if every target is known.
 
     Deliberately oldest, not newest: one ticker refreshed a second ago
     says nothing about the fund whose NAV last landed yesterday, and the
     number the user is looking at is only as fresh as its stalest input.
     """
-    stamps = [s for s in (last_fetch_at(sym) for sym in symbols) if s]
+    stamps = []
+    for sym in symbols:
+        if price_source_symbol(sym) is None:
+            continue
+        stamp = last_fetch_at(sym)
+        if not stamp:
+            return None
+        stamps.append(stamp)
     return min(stamps) if stamps else None
 
 
@@ -1516,6 +1709,11 @@ def apply_option_intrinsic_floor(last_prices: dict[str, float],
     across both."""
     n = 0
     for sym in symbols:
+        # A dated contract mark already won the valuation kernel's first
+        # rung. Applying an intrinsic floor only here would make current
+        # holdings disagree with history and exact-date valuation.
+        if parse_option_symbol(sym) and get_price_observation(sym, on_date) is not None:
+            continue
         iv = option_intrinsic(sym, on_date)
         if iv is None:
             continue
@@ -1977,9 +2175,11 @@ def ensure_coverage(symbols: list[str], start, end, *,
     for sym in symbols:
         if _classify_no_fetch(sym):
             not_fetchable += 1
+            _record_refresh_outcome(sym, "not_fetchable")
             continue
         if _should_skip(sym, now):
             on_backoff += 1
+            _record_refresh_outcome(sym, "deferred")
             continue
         # Total-return symbols follow the same incremental gap path as
         # everything else — the store is plain Close and the dividend
@@ -2016,6 +2216,7 @@ def ensure_coverage(symbols: list[str], start, end, *,
             to_fetch.append((sym, gaps))
         else:
             already_cached += 1
+            _record_refresh_outcome(sym, "cached")
             # Fully covered by the price cache, but splits cache might be
             # stale / missing (e.g. for cache entries from before the splits
             # feature landed).  Backfill on first encounter.
@@ -2035,8 +2236,12 @@ def ensure_coverage(symbols: list[str], start, end, *,
         suffix = f"  ({', '.join(parts)})" if parts else ""
         if to_fetch:
             print(f"  Fetching price history for {len(to_fetch)} symbol(s){suffix}")
-        elif parts:
+        elif on_backoff:
+            print(f"  Price refresh deferred by retry cooldown{suffix}")
+        elif already_cached:
             print(f"  Price cache up to date{suffix}")
+        elif not_fetchable:
+            print(f"  No fetchable price quotes{suffix}")
 
     fetched_ok = 0
     fetched_fail = 0
@@ -2049,6 +2254,7 @@ def ensure_coverage(symbols: list[str], start, end, *,
     # path owns retry/failure bookkeeping.
     by_gaps: dict[tuple, list[str]] = {}
     for sym, gaps in to_fetch:
+        _record_attempt(sym, now)
         by_gaps.setdefault(tuple(gaps), []).append(sym)
 
     serial_fetch: list[tuple[str, list[tuple[date, date]]]] = []
@@ -2093,6 +2299,7 @@ def ensure_coverage(symbols: list[str], start, end, *,
             else:
                 # Short range, no rows — weekend / holiday / mutual-fund
                 # NAV not yet posted.  Same free pass as the serial path.
+                _record_refresh_outcome(sym, "unavailable", error="no data returned")
                 if verbose:
                     print(f"    {sym}: no data (short range, not penalized)")
 
@@ -2128,6 +2335,7 @@ def ensure_coverage(symbols: list[str], start, end, *,
             # a mutual fund whose EOD NAV hasn't posted yet (mutual
             # funds publish once per day, typically ~1-2 hours after
             # market close).  Not a real failure; next run picks it up.
+            _record_refresh_outcome(sym, "unavailable", error="no data returned")
             if verbose:
                 today_iso = now.date().isoformat()
                 hint = ""

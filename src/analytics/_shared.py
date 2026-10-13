@@ -894,7 +894,8 @@ def _value_at_date(txns_sorted: list[dict], target: str,
         if transfer_pairs is None:
             transfer_pairs = eligible_account_transfer_pairs(txns_sorted)
         total += sum(p["value"] or 0 for p in transit_positions(
-            transfer_pairs, target, prices_on_date, price_cache=px_on_date)
+            transfer_pairs, target, prices_on_date, price_cache=px_on_date,
+            quote_dates=quote_dates)
             if transit_in_scope(p, filter_groups))
     # Reconstructed broker cash (see cash_bridge.py).  Distinct from
     # `bridges` above, which is the rollover-bridge adjustment.

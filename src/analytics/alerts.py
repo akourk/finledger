@@ -13,15 +13,16 @@ Sources we pull from (each runs as a small classifier here):
 - Stale tickers (failure_count > 0 in the price cache meta)
 - CUSIP collision suggestions (rename candidates not in ticker_renames.json)
 - Tax-loss harvest candidates (top 3 by absolute loss)
-- Stale data (last txn > 30 days ago — user may have forgotten to drop new CSVs)
+- Per-account imported transaction ages (inactivity alone is not missing data)
 - Coverage gaps (recent snapshots with priced_pct < 1)
 - Significant unrealized gains crossing the long-term threshold soon
 """
 
 from __future__ import annotations
 
-from .. import clock
 from datetime import datetime, timedelta
+
+from .freshness import compute_account_freshness
 
 
 _COVERAGE_LOOKBACK_MONTHS = 12
@@ -62,7 +63,8 @@ def compute_alerts(txns: list[dict],
                    tax_analytics: dict,
                    concentration: dict,
                    price_meta: dict,
-                   cusip_collisions: list[dict] | None = None) -> list[dict]:
+                   cusip_collisions: list[dict] | None = None, *,
+                   account_freshness: list[dict] | None = None) -> list[dict]:
     alerts: list[dict] = []
 
     # 1. Concentration risk
@@ -99,23 +101,30 @@ def compute_alerts(txns: list[dict],
                              f"potential tax-loss harvest candidate."),
             })
 
-    # 3. Stale data: latest txn vs today
-    if txns:
-        latest = max((t.get("date", "") for t in txns if t.get("date")),
-                     default="")
-        if latest:
-            try:
-                latest_d = datetime.strptime(latest, "%Y-%m-%d").date()
-                age = (clock.now(fallback=datetime.now).date() - latest_d).days
-                if age > 30:
-                    alerts.append({
-                        "kind":     "stale_data",
-                        "severity": "info" if age < 90 else "warn",
-                        "message":  (f"Latest transaction is {age} days old — "
-                                     f"have you exported fresh broker CSVs?"),
-                    })
-            except ValueError:
-                pass
+    # 3. One account's recent activity cannot establish another's coverage.
+    # Current holdings are already filtered by the shared holdings builder;
+    # closed accounts remain visible in account_freshness without noisy alerts.
+    if account_freshness is None:
+        account_freshness = compute_account_freshness(txns, holdings_by_account)
+    held_groups = {h.get("account_group") for h in holdings_by_account}
+    for row in account_freshness:
+        group = row["account_group"]
+        if group not in held_groups:
+            continue
+        age = row["days_since_latest"]
+        if age is not None and age <= 30:
+            continue
+        latest = row["latest_transaction_date"]
+        detail = (f"{latest} ({age} days ago)" if latest else
+                  "unknown; no dated CSV records are available for this account")
+        alerts.append({
+            "kind": "account_transaction_age",
+            "severity": "info",
+            "account_group": group,
+            "message": (f"{group}: latest imported transaction is {detail}. "
+                        "Transaction dates do not show when an export was downloaded; "
+                        "inactivity may be normal and does not establish missing activity."),
+        })
 
     # 4. Coverage gaps in recent snapshots
     #

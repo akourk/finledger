@@ -58,8 +58,10 @@ SOURCES = [
             {"symbol": "SYM", "unrealized_gain": -500.0},
         ]},
     }),
-    ("stale_data", "stale_data", {
-        "txns": [{"date": "2020-01-01"}],
+    ("account_transaction_age", "account_transaction_age", {
+        "txns": [{"date": "2020-01-01", "account_group": "Example",
+                  "source": "fictional.csv"}],
+        "holdings_by_account": [{"account_group": "Example"}],
     }),
     ("coverage_gap", "coverage_gap", {
         "history": [{"date": "2024-01-31", "priced_pct": 0.5}],
@@ -104,9 +106,13 @@ class TestEveryAlertSourceCanFire:
 class TestAlertThresholds:
     """Near-misses. Each threshold is a decision; pin it."""
 
-    def test_fresh_transactions_are_not_stale(self):
+    def test_recent_account_transactions_do_not_show_age_alert(self):
         from datetime import date
-        assert "stale_data" not in _kinds(_call(txns=[{"date": date.today().isoformat()}]))
+        assert "account_transaction_age" not in _kinds(_call(
+            txns=[{"date": date.today().isoformat(), "account_group": "Example",
+                   "source": "fictional.csv"}],
+            holdings_by_account=[{"account_group": "Example"}],
+        ))
 
     def test_fully_priced_history_reports_no_coverage_gap(self):
         assert "coverage_gap" not in _kinds(

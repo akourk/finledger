@@ -28,11 +28,14 @@ documented intent.
 **The ladder**, in order:
 
 1. **Cash** — price 1.0, quantity unchanged.
-2. **Cache hit** — yfinance's ``Close``, which is always split-adjusted
-   regardless of ``auto_adjust``.  The stored series is therefore in
-   TODAY's share basis, so an as-of-date quantity is restated forward by
-   ``split_factor_since`` before multiplying.  See CLAUDE.md: never
-   multiply a historical balance by a historical cache price without it.
+2. **Observed or proxy price** — ``get_price`` selects a dated broker mark,
+   cached market quote, or configured proxy. It returns TODAY's share basis:
+   yfinance's ``Close`` is already split-adjusted regardless of ``auto_adjust``;
+   broker marks are separately normalized from their observation-date units.
+   An as-of-date quantity is restated forward by ``split_factor_since`` before
+   multiplying. The internal source remains ``cache`` for this rung; exported
+   provenance distinguishes the selected quote. Actual option premiums,
+   including zero, are used without the intrinsic floor for estimates.
 3. **Cache miss** — the most recent transaction price at or before the
    date.  Transaction prices are as-of-trade, so the quantity is NOT
    restated.  Floored at the option contract's intrinsic value, because

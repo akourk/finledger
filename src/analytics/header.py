@@ -20,7 +20,7 @@ from ._shared import (
 from ..actions import BASIS_EFFECTS  # noqa: F401
 from ..basis import _basis_dollars  # noqa: F401
 from ..config import ACCOUNT_TYPES, CASH_SYMBOLS
-from ..prices import any_provisional, oldest_last_fetch
+from ..prices import any_provisional, oldest_last_fetch, _today
 from ..valuation import mark
 from .price_fallbacks import current_position_price_series, current_position_quantities
 
@@ -112,19 +112,32 @@ def compute_header_summary(txns: list[dict], history: list[dict],
     # unfetchable stubs) contribute nothing; their mark comes from
     # transaction history and no fetch timestamp describes it.
     held_symbols = {pos.get("symbol", "") for pos in today_positions
-                    if pos.get("symbol") and pos.get("symbol") not in CASH_SYMBOLS}
+                    if pos.get("symbol") and pos.get("symbol") not in CASH_SYMBOLS
+                    and (pos.get("pricing") or {}).get("source") != "broker"}
     prices_as_of = oldest_last_fetch(held_symbols)
     # ...and whether any of those marks is still moving.  A mid-session
     # figure is a legitimate thing to show; silently presenting it as a
     # close is not, which is how a reconciliation against a broker
     # disagreed at 11am and then differently at the close.
-    prices_provisional = any_provisional(held_symbols)
+    evidence = [pos.get("pricing") or {} for pos in today_positions
+                if pos.get("symbol") not in CASH_SYMBOLS]
+    prices_provisional = any(item.get("provisional", False) for item in evidence)
+    if today >= _today().isoformat() and any(not item for item in evidence):
+        prices_provisional = prices_provisional or any_provisional(held_symbols)
+    observation_dates = [item["date"] for item in evidence if item.get("date")]
+    prices_quote_date = min(observation_dates) if observation_dates else None
+    prices_freshness_unknown = bool(evidence) and (
+        (bool(held_symbols) and prices_as_of is None)
+        or len(observation_dates) != len(evidence))
 
     return {
         "as_of": today,
         "prev_day": yest,
         "prices_as_of": prices_as_of,
         "prices_provisional": prices_provisional,
+        "prices_quote_date": prices_quote_date,
+        "prices_freshness_unknown": prices_freshness_unknown,
+        "prices_market_required": bool(held_symbols),
         "value": round(today_total, 2),
         "prev_day_value": round(yest_total, 2),
         "change_1d": round(change_1d, 2),

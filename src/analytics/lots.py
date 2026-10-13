@@ -93,7 +93,8 @@ def price_lookup(holding_rows: list[dict]) -> dict:
     out: dict = {}
     for h in holding_rows or []:
         price = h.get("price")
-        if not isinstance(price, (int, float)) or price <= 0:
+        if (not isinstance(price, (int, float)) or price < 0
+                or (price == 0 and h.get("value") != 0)):
             continue
         sym = h.get("symbol", "")
         acct = h.get("account_group", "")
@@ -131,7 +132,7 @@ def open_lot_rows(fifo_state: dict | None, prices: dict,
                 continue
             basis_per = float(lot.get("basis_per_share", 0) or 0)
             cost_basis = qty * basis_per
-            value = (qty * price * mult) if price else None
+            value = (qty * price * mult) if price is not None else None
             unrealized = (value - cost_basis) if value is not None else None
             unrealized_pct = (round(unrealized / cost_basis * 100, 2)
                               if (unrealized is not None and cost_basis > 0)
@@ -159,7 +160,7 @@ def open_lot_rows(fifo_state: dict | None, prices: dict,
                 "qty": round(qty, 8),
                 "basis_per_share": round(basis_per, 4),
                 "cost_basis": round(cost_basis, 2),
-                "price": price if price else None,
+                "price": price,
                 "value": round(value, 2) if value is not None else None,
                 "unrealized_gain": (round(unrealized, 2)
                                     if unrealized is not None else None),

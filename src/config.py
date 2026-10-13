@@ -78,7 +78,8 @@ CANONICAL_PREFIXES = {
 }
 
 # Files that should never be renamed
-SKIP_RENAME = {"manual-adjustments.csv", "metadata.csv", "retirement-data.csv"}
+SKIP_RENAME = {"manual-adjustments.csv", "metadata.csv", "retirement-data.csv",
+               "broker-prices.csv"}
 
 
 def contract_multiplier(symbol: str) -> float:

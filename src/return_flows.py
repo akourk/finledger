@@ -139,7 +139,8 @@ def transit_in_scope(position: dict, filter_groups: set | None) -> bool:
 def transit_positions(pairs: list[tuple[dict, dict]], target: str,
                       last_prices: dict[str, float], *,
                       carried_basis: dict[int, float] | None = None,
-                      price_cache: dict | None = None) -> list[dict]:
+                      price_cache: dict | None = None,
+                      quote_dates: dict[str, str] | None = None) -> list[dict]:
     """Mark eligible departed assets until arrival, with separate custody/basis.
 
     The matcher has reconciled both endpoints using cached split evidence.
@@ -147,6 +148,8 @@ def transit_positions(pairs: list[tuple[dict, dict]], target: str,
     valuation quantity to the target date. After a split, undated transaction
     fallbacks cannot establish price units, so require a cached market quote.
     """
+    from .price_provenance import describe_pricing
+
     positions = []
     for tout, tin in pairs:
         start, end = tout["date"], tin["date"]
@@ -176,6 +179,8 @@ def transit_positions(pairs: list[tuple[dict, dict]], target: str,
             "symbol": symbol, "quantity": quantity,
             "price": value / quantity if value is not None else None,
             "value": value,
+            "pricing": describe_pricing(symbol, target, "none" if issue else m.source,
+                                        (quote_dates or {}).get(symbol)),
             "cost_basis": (carried_basis.get(id(tout), 0.0)
                            if carried_basis is not None else None),
         }
