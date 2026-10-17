@@ -420,8 +420,10 @@ the navigation. Tabs:
   monthly P&L, and current-position Recent Daily P&L.
 - **Transactions** — every row with per-field filters, free-text search,
   symbol filter, and column visibility toggle.
-- **Options** — cumulative P&L chart, open contracts (with DTE), closed
-  trade history, per-underlying win/loss breakdown, lifetime stats.
+- **Options** — completed-position and matched-contract outcomes, realized
+  P&L by closing date, open positions with contract quantities and DTE,
+  closing transaction detail, and account/window filters. See
+  [Options metrics](#options-metrics) for the counting and date rules.
 - **Retirement** — contributions by year vs IRS limits with a per-year
   Roth Eligibility column (MAGI bar vs single-filer phase-out window),
   retirement balance over time, Roth vs Traditional inline stacked bar.
@@ -603,6 +605,59 @@ remain available. Basis and realized-gain comparisons start from the first
 successful update because the older figures used hypothetical FIFO totals.
 The activity panel explains this one-time reset.
 
+### Options metrics
+
+A **completed position** is one continuous long holding of an exact option contract
+in one account: the same underlying, call/put, strike, and expiry, from opening
+until its quantity returns to zero. Additional purchases and partial exits
+belong to that position. Reopening after it is flat starts another position.
+Different accounts and contracts stay separate; spreads and rolls are not
+automatically combined into a strategy.
+
+The ledger records dates, so purchases are processed before closes on the same
+date. It cannot distinguish an intraday exit and reentry from a continuous
+position in that contract. Completed-position outcomes require a supported,
+complete opening/closing history. Unfinished positions, transfers, missing
+openings, overcloses, and inconsistent accounting are excluded from these
+outcomes rather than treated as wins or breakevens.
+
+| Figure | Calculation and scope |
+| --- | --- |
+| Position win rate | Winning completed positions divided by winning plus losing completed positions. Breakevens are shown separately and excluded from this denominator everywhere. |
+| Completed positions, wins/losses/breakevens | Each completed position counts once, regardless of contract quantity or the number of closing transactions. Its outcome uses the combined realized P&L of all its exits. |
+| Average winner/loser; biggest winner/loser | Average or extreme P&L among winning or losing completed positions. |
+| Average position P&L (expectancy) | Combined P&L of completed positions divided by their count, including breakevens. This historical average is not a forecast. |
+| Profit factor | Sum of positive completed-position P&L divided by the absolute sum of negative completed-position P&L. A zero loss denominator is undefined. |
+| Average position duration | Mean calendar days from the first opening to the final close of each completed position. Same-day positions have zero days. |
+| Contract win rate | Winning matched contract quantity divided by winning plus losing matched contract quantity. Each consumed lot's gain determines its outcome; an exit can contain both winning and losing contracts. Breakeven and unknown quantities are separate. |
+| Realized P&L | Sum of annotated gains on closing transactions in the window, including partial exits from positions that remain open. The cumulative chart groups these gains by closing date. |
+
+Contract outcomes depend on the ledger's matched-lot evidence and selected
+lot-relief method. If an exit's lot quantities and dollars do not fully reconcile
+to the closing transaction, its entire quantity is unknown. Unknown quantities
+are excluded from the contract win-rate denominator and appear in its coverage
+information. They are not counted as breakevens or assigned the overall closing
+transaction's sign.
+Fees follow the ledger's cost-basis and realized-gain annotations; the Options
+pane does not subtract them again.
+
+**Window rules:** Completed-position statistics select positions by their
+final closing date and include each selected position's entire P&L, even if
+some exits occurred before the window. Realized P&L selects each closing
+transaction by its own date. These totals can therefore differ. The same
+distinction applies to annual, underlying, and call/put summaries. Lifetime
+reference figures remain fixed while the account/window filters change the
+selected view.
+
+**Current holdings:** Open contract quantity is the sum of contracts held;
+open position count is the number of account/contract holdings. The account
+filter applies to these holdings, but the historical window does not. Dates and
+DTE refer to the export's as-of date; Opened refers to the current position's
+opening, not its first purchase in an earlier completed position. Remaining
+basis comes from ledger annotations, and the average remaining premium is that
+basis divided by remaining contract quantity and the contract multiplier.
+It is a cost measure, not the latest purchase premium or a current quote.
+Unavailable remaining basis stays unavailable.
 
 ## Input validation and recovery
 

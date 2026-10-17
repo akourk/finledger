@@ -324,9 +324,11 @@ Normal local output lives in `exports/transactions.json` and
       Currently has NO consumer in `src/dashboard/` — both sides come
       from one snapshot, so it's inert rather than wrong, but don't
       assume it's what the Overview renders.
-    - `options` — open_contracts, closed_trades (with parsed
-      underlying/expiry/type/strike + hold_days), by_underlying,
-      annual_summary, cumulative_pnl, stats.
+    - `options` — account-scoped open_contracts, closed_trades (closing
+      transactions with parsed contract fields and matched-lot outcomes),
+      completed_positions, by_underlying, annual_summary, cumulative_pnl,
+      stats. See [Options outcomes](#options-outcomes) for the distinct
+      completed-position and realization-date populations.
     - `crypto` — per_coin, recent_activity, conversions, stats.
     - `income` — by_year, by_month, by_source, total.
     - `tax` — realized_by_year / _by_symbol / _by_underlying,
@@ -749,9 +751,10 @@ Normal local output lives in `exports/transactions.json` and
       comparison remains **Lifetime · what-if**. Quantity/price/value/basis
       use neutral text, with sign colors reserved for gain/return columns.
     - **Transactions** — full ledger with filters, search, column toggle.
-    - **Options** — lifetime P&L, win rate, cumulative P&L chart, open
-      contracts, closed trades, per-underlying breakdown (with cross-
-      link to Tax tab for ST/LT/§1256 split).
+    - **Options** — completed-position and matched-contract win rates,
+      realization-date P&L and cumulative chart, current positions and
+      contract quantities, closing transactions, and per-underlying/annual
+      summaries. Tax retains the ST/LT/§1256 split.
     - **Retirement** — contributions-by-year table with Roth Eligibility
       column (per-year MAGI bar vs single-filer phase-out window —
       MAGI estimated from salary + bonuses + portfolio income − 401K,
@@ -1510,6 +1513,59 @@ Normal local output lives in `exports/transactions.json` and
   (birthday, salary, account-group overrides, etc.) that the
   transaction pipeline ignores via `broker = "skip"` in `scanner.py`.
   Don't confuse it with actual transaction data.
+
+### Options outcomes
+
+`analytics/options.py` separates closing transactions (`closed_trades`) from
+`completed_positions`. A long position groups one account and exact symbol from
+opening until flat; scale-ins and partial exits do not create extra outcomes.
+Later reopenings start new positions. The date-only ledger uses the canonical
+adds-before-closes order, so it cannot identify separate intraday round trips.
+Do not infer multi-leg strategies or roll continuity from contract proximity.
+Only supported positions with complete opening/closing evidence enter position
+statistics. Unfinished, transferred, unmatched/overclosed, or inconsistent
+episodes cannot fabricate a win, loss, or breakeven. Ignore later activity when
+constructing an as-of export.
+
+Position win rate, counts, average/extreme winners and losers, profit factor,
+mean P&L, and mean first-open-to-final-close duration share the completed-position
+population. Win rate excludes breakevens consistently across every breakdown;
+mean P&L includes them. Profit factor divides positive position P&L by absolute
+negative position P&L and is undefined without losses. Preserve genuine zero
+durations and unavailable results. Contract win rate instead weights actual
+matched-lot outcomes by quantity; an exit's aggregate sign cannot classify all
+of its contracts. A close's lot vector must reconcile in quantity, basis,
+proceeds, and realized gain; otherwise all of that close's quantity is unknown.
+Unknown lot outcomes stay outside the denominator and remain visible in coverage
+counts.
+
+Filter completed positions by final close date, retaining their full lifetime
+P&L. Filter realized totals, close detail, and contract outcomes by each closing
+transaction's date, including partial exits from still-open positions. The
+cumulative chart aggregates realization-date gains, not closing row counts.
+Annual and underlying summaries preserve these distinct populations. Python
+exports the shared figures; JavaScript applies identical rules to interactive
+account/window subsets, including empty and breakeven-only selections.
+
+Position reconstruction is scoped by account and contract. Open contract
+quantity and the number of open positions are distinct; account choices include
+accounts with only open activity. Open holdings ignore historical window filters;
+their opening date belongs to the current episode and DTE uses the export date.
+Remaining basis and realized gains use ledger annotations, including their fee
+treatment. Average remaining premium is remaining basis divided by quantity and
+the contract multiplier; do not substitute the last buy price or subtract fees
+again. Unknown remaining basis stays unavailable. Closing hold information
+follows the consumed-lot annotations rather than an independent FIFO
+reconstruction.
+
+`tests/test_options_analytics.py` protects grouping, matched-lot coverage, account
+isolation, and partial realization boundaries; `tests/test_options_frontend.py`
+protects Python/JavaScript parity and rendered filter/label behavior. The design
+uses the distinction between executions and positions documented by
+[TradesViz](https://www.tradesviz.com/blog/import-settings-guide/) and
+[TraderSync](https://tradersync.com/support/why-did-my-two-trades-become-one/),
+while keeping partial realized P&L on its actual date as in
+[Tradervue's overview reports](https://app.tradervue.com/help/reports_overview).
 
 ### Account-transfer return flows
 

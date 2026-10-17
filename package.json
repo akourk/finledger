@@ -9,7 +9,8 @@
   "scripts": {
     "test:browser": "node tools/browser_smoke.js _site/index.html",
     "test:a11y": "node tools/a11y_check.js _site/index.html",
-    "test": "npm run test:browser && npm run test:a11y && npm run test:viewer && npm run test:mobile",
+    "test": "npm run test:browser && npm run test:a11y && npm run test:options && npm run test:viewer && npm run test:mobile",
+    "test:options": "node tools/options_smoke.js _site/index.html",
     "test:mobile": "node tools/mobile_smoke.js _site/index.html && node tools/mobile_tables.js _site/index.html && node tools/touch_chart_smoke.js _site/index.html && node tools/secondary_disclosure_smoke.js _site/index.html",
     "test:viewer": "node tools/viewer_smoke.js _site/index.html"
   },

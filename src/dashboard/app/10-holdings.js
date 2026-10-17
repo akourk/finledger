@@ -759,7 +759,7 @@ document.addEventListener('keydown', (e) => {
     if (btn) btn.style.display = 'none';
   };
   const optStats = ((ANALYTICS.options || {}).stats) || {};
-  if (!(optStats.trades || optStats.open_count)) hide('options');
+  if (!(optStats.trades || optStats.closed_count || optStats.open_count)) hide('options');
   const cryptoStats = ((ANALYTICS.crypto || {}).stats) || {};
   if (!cryptoStats.txn_count) hide('crypto');
 })();

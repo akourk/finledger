@@ -8,21 +8,18 @@
 //               or an absolute year ('2026' | '2025' | …).
 //   _optAccountFilter: null = all accounts; otherwise an account_group
 //                      string to restrict the view to one broker.
-// Stats / call-put / by-underlying / annual / cumulative are all
-// recomputed in JS from the filtered closed_trades subset whenever
-// either filter is non-default, so the dashboard stays in sync with
-// the visible window.  Open Contracts are filtered by account only
-// (window doesn't apply to currently-held positions).
+// Completed-position outcomes and execution-date realized P&L are filtered
+// independently. Open positions are filtered by account only.
 let _optWindow = 'lifetime';
 let _optAccountFilter = null;
 
 function _setOptWindow(v) {
   _optWindow = v || 'lifetime';
-  renderOptions();
+  renderKeepingFocus(renderOptions);
 }
 function _setOptAccountFilter(v) {
   _optAccountFilter = (v === 'all' || !v) ? null : v;
-  renderOptions();
+  renderKeepingFocus(renderOptions);
 }
 
 // Resolve _optWindow into a concrete [start_iso, end_iso] date range,
@@ -56,459 +53,260 @@ function _optWindowLabel() {
   return w;
 }
 
-// Stats + analytics rebuilders.  When the window or account filter is
-// active, the precomputed Python aggregates (stats, by_underlying,
-// annual_summary, cumulative_pnl) don't apply — so we rebuild them
-// from the filtered closed_trades subset.
-
-// Single-pass accumulator shared by _computeOptionsStats and
-// _splitClosedByType.  Returns raw running totals; callers shape the
-// final stat object (rounding, win_rate, etc.) from these.
-function _accumulateTradeStats(trades) {
+// Position outcomes and execution-date P&L have deliberately separate scopes.
+// Python builds episodes once; interactive windows select by final close date.
+const _r2 = v => v == null ? null : Math.round(v * 100) / 100;
+const _optSumRealized = rows => rows.some(c => c.realized == null) ? null
+  : _r2(rows.reduce((sum, c) => sum + c.realized, 0));
+function _accumulateTradeStats(positions) {
   let wins = 0, losses = 0, be = 0, pnl = 0, holdSum = 0, holdN = 0;
   let winSum = 0, lossSum = 0, topWin = null, topLoss = null;
-  for (const c of trades) {
-    const r = c.realized || 0;
+  for (const c of positions) {
+    const r = c.realized;
     pnl += r;
-    if (r > 0)      { wins++;   winSum  += r; if (topWin  == null || r > topWin)  topWin  = r; }
-    else if (r < 0) { losses++; lossSum += r; if (topLoss == null || r < topLoss) topLoss = r; }
-    else            { be++; }
+    if (r > 0) { wins++; winSum += r; topWin = topWin == null ? r : Math.max(topWin, r); }
+    else if (r < 0) { losses++; lossSum += r; topLoss = topLoss == null ? r : Math.min(topLoss, r); }
+    else be++;
     if (c.hold_days != null) { holdSum += c.hold_days; holdN++; }
   }
-  return { n: trades.length, wins, losses, be, pnl, holdSum, holdN,
-           winSum, lossSum, topWin, topLoss };
+  return { n: positions.length, wins, losses, be, pnl, holdSum, holdN, winSum, lossSum, topWin, topLoss };
 }
-
-const _r2 = v => v == null ? null : Math.round(v * 100) / 100;
-
-function _computeOptionsStats(closed) {
-  const a = _accumulateTradeStats(closed);
-  const decided = a.wins + a.losses;
+function _positionStats(positions) {
+  const a = _accumulateTradeStats(positions), decided = a.wins + a.losses;
   return {
-    total_pnl: _r2(a.pnl),
-    trades: a.n,
+    total_pnl: _r2(a.pnl), completed_pnl: _r2(a.pnl), trades: a.n,
     wins: a.wins, losses: a.losses, breakevens: a.be,
-    win_rate: decided > 0 ? a.wins / decided : null,
-    avg_hold_days: a.holdN > 0 ? a.holdSum / a.holdN : null,
-    biggest_winner: a.topWin,
-    biggest_loser:  a.topLoss,
-    profit_factor:  a.lossSum < 0 ? _r2(a.winSum / Math.abs(a.lossSum)) : null,
-    expectancy:     a.n > 0 ? _r2(a.pnl / a.n) : null,
-    avg_winner:     a.wins   > 0 ? _r2(a.winSum  / a.wins)   : null,
-    avg_loser:      a.losses > 0 ? _r2(a.lossSum / a.losses) : null,
-    call: _splitClosedByType(closed, 'Call'),
-    put:  _splitClosedByType(closed, 'Put'),
+    win_rate: decided ? a.wins / decided : null,
+    avg_hold_days: a.holdN ? a.holdSum / a.holdN : null,
+    biggest_winner: a.topWin, biggest_loser: a.topLoss,
+    // Round only for presentation, identically for exported and filtered values.
+    profit_factor: a.lossSum < 0 ? a.winSum / Math.abs(a.lossSum) : null,
+    expectancy: a.n ? _r2(a.pnl) / a.n : null,
+    avg_winner: a.wins ? a.winSum / a.wins : null,
+    avg_loser: a.losses ? a.lossSum / a.losses : null,
   };
 }
-
-// Group closed trades by an arbitrary key (underlying / year /
-// account_group …) and produce {keyField, trades, wins, realized,
-// win_rate} rows sorted by the given comparator.
-function _groupTrades(closed, keyFn, keyField, sortFn) {
-  const by = Object.create(null);
+function _splitClosedByType(positions, kind) {
+  return _positionStats(positions.filter(c => c.option_type === kind));
+}
+function _computeOptionsStats(positions) {
+  return { ..._positionStats(positions), call: _splitClosedByType(positions, 'Call'),
+    put: _splitClosedByType(positions, 'Put') };
+}
+function _computeContractStats(closed) {
+  let wins = 0, losses = 0, breakevens = 0, unknown = 0, contracts = 0;
+  for (const c of closed) {
+    const qty = c.qty || 0;
+    contracts += qty;
+    let covered = 0;
+    for (const lot of c.lot_outcomes || []) {
+      const q = lot.qty || 0;
+      covered += q;
+      if (lot.outcome === 'win') wins += q;
+      else if (lot.outcome === 'loss') losses += q;
+      else if (lot.outcome === 'breakeven') breakevens += q;
+      else unknown += q;
+    }
+    unknown += Math.max(0, qty - covered);
+  }
+  const decided = wins + losses;
+  return { wins, losses, breakevens, unknown, contracts,
+    win_rate: decided ? wins / decided : null, coverage_complete: unknown < 1e-9 };
+}
+function _groupTrades(positions, closed, keyFn, keyField, sortFn) {
+  const by = new Map();
+  const group = key => {
+    if (!by.has(key)) by.set(key, { [keyField]: key, trades: 0, wins: 0, losses: 0,
+      breakevens: 0, completed_pnl: 0, realized: 0 });
+    return by.get(key);
+  };
+  for (const c of positions) {
+    const k = keyFn(c);
+    if (!k) continue;
+    const r = group(k);
+    r.trades++;
+    if (c.realized > 0) r.wins++;
+    else if (c.realized < 0) r.losses++;
+    else r.breakevens++;
+    r.completed_pnl += c.realized;
+  }
   for (const c of closed) {
     const k = keyFn(c);
-    if (k == null || k === '') continue;
-    if (!by[k]) by[k] = { [keyField]: k, trades: 0, wins: 0, realized: 0 };
-    by[k].trades++;
-    if ((c.realized || 0) > 0) by[k].wins++;
-    by[k].realized += c.realized || 0;
+    if (k) {
+      const r = group(k);
+      r.realized = r.realized == null || c.realized == null ? null : r.realized + c.realized;
+    }
   }
-  return Object.values(by)
-    .map(r => ({ ...r, realized: _r2(r.realized),
-                       win_rate: r.trades > 0 ? r.wins / r.trades : null }))
-    .sort(sortFn);
+  return [...by.values()].map(r => ({ ...r, completed_pnl: _r2(r.completed_pnl),
+    realized: _r2(r.realized), win_rate: r.wins + r.losses ? r.wins / (r.wins + r.losses) : null })).sort(sortFn);
 }
-const _computeByUnderlying = closed => _groupTrades(closed,
-  c => c.underlying || '(unknown)', 'underlying',
-  (a, b) => b.realized - a.realized);
-const _computeAnnualOptionsSummary = closed => _groupTrades(closed,
-  c => (c.close_date || '').slice(0, 4), 'year',
-  (a, b) => b.year.localeCompare(a.year));
+const _computeByUnderlying = (positions, closed = []) => _groupTrades(positions, closed,
+  c => c.underlying || '(unknown)', 'underlying', (a, b) => (a.realized == null) - (b.realized == null)
+    || (b.realized || 0) - (a.realized || 0) || a.underlying.localeCompare(b.underlying));
+const _computeAnnualOptionsSummary = (positions, closed = []) => _groupTrades(positions, closed,
+  c => (c.close_date || '').slice(0, 4), 'year', (a, b) => b.year.localeCompare(a.year));
 function _computeCumulativePnL(closed) {
+  const dates = new Map();
+  for (const c of closed) {
+    const prior = dates.has(c.close_date) ? dates.get(c.close_date) : 0;
+    dates.set(c.close_date, prior == null || c.realized == null ? null : prior + c.realized);
+  }
   let run = 0;
-  return [...closed]
-    .sort((a, b) => (a.close_date || '').localeCompare(b.close_date || ''))
-    .map(c => ({ date: c.close_date, value: Math.round((run += (c.realized || 0)) * 100) / 100 }));
+  return [...dates].sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, value]) => ({ date, value: _r2(run = run == null || value == null ? null : run + value) }));
 }
-
-// Fallback aggregator used when the Python analytics payload doesn't
-// carry pre-computed call/put splits (older exports).  Mirrors the
-// shape of analytics.options.stats.call / .put exactly so the
-// rendering code can read either source uniformly.
-function _splitClosedByType(closed, kind) {
-  const subset = closed.filter(c => {
-    const t = c.option_type || c.type || (parseOptionSymbol(c.symbol) || {}).type;
-    return t === kind;
-  });
-  const a = _accumulateTradeStats(subset);
-  const decided = a.wins + a.losses;
-  return {
-    trades: a.n,
-    wins: a.wins, losses: a.losses, breakevens: a.be,
-    win_rate: decided > 0 ? a.wins / decided : null,
-    total_pnl: _r2(a.pnl),
-    avg_hold_days: a.holdN > 0 ? a.holdSum / a.holdN : null,
-    avg_winner: a.wins   > 0 ? _r2(a.winSum  / a.wins)   : null,
-    avg_loser:  a.losses > 0 ? _r2(a.lossSum / a.losses) : null,
-  };
+function _optionsScope(opt, range, account) {
+  const inAccount = c => !account || c.account_group === account;
+  const eligible = c => inAccount(c) && (!range || c.close_date >= range[0] && c.close_date <= range[1]);
+  const closed = (opt.closed_trades || []).filter(eligible);
+  const completed = (opt.completed_positions || []).filter(eligible);
+  const open = (opt.open_contracts || []).filter(inAccount);
+  const stats = !range && !account && opt.stats && Array.isArray(opt.completed_positions)
+    ? { ...opt.stats, call: { ...opt.stats.call }, put: { ...opt.stats.put } }
+    : _computeOptionsStats(completed);
+  const realizedPnl = _optSumRealized(closed);
+  stats.realized_pnl = realizedPnl;
+  stats.closed_count = closed.length;
+  stats.closed_contracts = closed.reduce((sum, c) => sum + c.qty, 0);
+  stats.open_count = open.length;
+  stats.open_contract_count = open.reduce((sum, c) => sum + c.qty, 0);
+  for (const [field, type] of [['call', 'Call'], ['put', 'Put']]) {
+    stats[field].realized_pnl = _optSumRealized(closed.filter(c => c.option_type === type));
+  }
+  return { closed, completed, open, stats, contractStats: _computeContractStats(closed), realizedPnl,
+    byUnderlying: _computeByUnderlying(completed, closed), annual: _computeAnnualOptionsSummary(completed, closed),
+    cumulative: _computeCumulativePnL(closed) };
 }
-
-// Parse a Robinhood option contract symbol like
-// "META 12/18/2026 Call $800.00"  →
-//   { underlying:"META", expiry:"2026-12-18", type:"Call", strike:800 }
 function parseOptionSymbol(sym) {
   if (!sym) return null;
   const m = /^(\S+)\s+(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(Call|Put)\s+\$([\d,.]+)/.exec(sym);
   if (!m) return null;
-  const [, under, mo, d, y, type, strikeRaw] = m;
-  const pad = (s) => String(s).padStart(2, '0');
-  return {
-    underlying: under,
-    expiry: y + '-' + pad(mo) + '-' + pad(d),
-    type,
-    strike: parseFloat(strikeRaw.replace(/,/g, '')),
-  };
+  const [, underlying, mo, d, y, type, strike] = m;
+  return { underlying, expiry: `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`, type, strike: parseFloat(strike.replace(/,/g, '')) };
 }
-
 function isOptionSymbol(sym) {
   return !!sym && (sym.includes(' Call ') || sym.includes(' Put ') || sym.endsWith(' OPTION'));
 }
+const _optPct = v => v == null ? '—' : (v * 100).toFixed(1) + '%';
+const _optQty = v => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 6 });
+const _optDays = v => v == null ? '—' : v.toFixed(1);
+const _optSigned = v => v == null ? '—' : fmtSigned(v);
+const _optPnlCell = v => `<span class="${v > 0 ? 'positive' : v < 0 ? 'negative' : ''}">${_optSigned(v)}</span>`;
 
 function renderOptions() {
   const root = document.getElementById('optionsContent');
   if (!root) return;
-
-  // Closed trades + open contracts come straight from the precomputed
-  // analytics (analytics/options.py).  The stats / by-underlying /
-  // annual / cumulative figures below ARE recomputed in JS — not as a
-  // fallback, but because they're re-derived from the window/account-
-  // filtered subset (lifetime+no-filter matches Python by construction).
   const opt = ANALYTICS.options || {};
-  const allClosed = opt.closed_trades || [];
-  const allOpen = opt.open_contracts || [];
-
-  // ---- Apply window + account filters -----------------------------
-  // Window: filter closed trades by close_date in range.  Open contracts
-  // are not filtered by date (they're current positions — the window
-  // refers to "when did the trade close", which doesn't apply to a
-  // still-open contract).  Account filter applies to both.
-  const range = _optWindowRange();
-  let closed = allClosed;
-  if (range) closed = closed.filter(c => (c.close_date || '') >= range[0] && (c.close_date || '') <= range[1]);
-  if (_optAccountFilter) closed = closed.filter(c => c.account_group === _optAccountFilter);
-
-  let open = allOpen;
-  if (_optAccountFilter) open = open.filter(o => o.account_group === _optAccountFilter);
-
-  // Stats / by_underlying / annual_summary / cumulative — always
-  // recompute from the filtered subset.  When window=lifetime and no
-  // account filter is set, the result matches the precomputed Python
-  // analytics by construction.
-  const stats = _computeOptionsStats(closed);
-  const byUnderSorted = _computeByUnderlying(closed).map(r =>
-    [r.underlying, { trades: r.trades, wins: r.wins, realized: r.realized }]);
-  const yearOptSorted = _computeAnnualOptionsSummary(closed).map(r =>
-    [r.year, { trades: r.trades, wins: r.wins, realized: r.realized }]);
-  const cumPoints = _computeCumulativePnL(closed);
-
-  const total = stats.total_pnl != null ? stats.total_pnl : 0;
-  const wins = stats.wins;
-  const losses = stats.losses;
-  const breakevens = stats.breakevens;
-  const decided = wins + losses;
-  const winRate = stats.win_rate != null ? stats.win_rate * 100 : (decided > 0 ? (wins / decided) * 100 : 0);
-  const avgHold = stats.avg_hold_days != null ? stats.avg_hold_days : 0;
-  const topWinVal = stats.biggest_winner;
-  const topLossVal = stats.biggest_loser;
-  const winLabel = _optWindowLabel();
-
-  // --- Render HTML ---
-  // ---- Anchor cards: ALL OPTIONS · LIFETIME ---------------------
-  // Mirrors the Performance tab's "Whole portfolio · all-time"
-  // anchor row.  Computed from the UNFILTERED closed-trade set so
-  // these numbers stay stable as the user changes the account /
-  // window toggles below — a fixed reference point above the
-  // filtered view.
-  const lifetimeStats = _computeOptionsStats(allClosed);
-  const lifetimeDecided = lifetimeStats.wins + lifetimeStats.losses;
-  const lifetimeWinRate = lifetimeDecided > 0
-    ? (lifetimeStats.win_rate * 100).toFixed(1) + '%' : '—';
-  const lifetimePnl = lifetimeStats.total_pnl != null ? lifetimeStats.total_pnl : 0;
-  const lifetimePf = lifetimeStats.profit_factor;
-  const anchorCards = [
-    {
-      label: 'Lifetime Options P&L',
-      value: fmtSigned(lifetimePnl),
-      cls: lifetimePnl >= 0 ? 'positive' : 'negative',
-      title: 'Realized P&L summed across every closed option trade in the dataset.  Doesn\'t change with the filters below.',
-    },
-    {
-      label: 'Lifetime Win Rate',
-      value: lifetimeWinRate,
-      title: `Decided trades only (wins + losses).  Breakevens excluded.\n${lifetimeStats.wins} wins / ${lifetimeStats.losses} losses / ${lifetimeStats.breakevens} breakeven.`,
-    },
-    {
-      label: 'Lifetime Trades',
-      value: lifetimeStats.trades.toLocaleString(),
-      title: 'Total closed option trades — sells, expirations, and exercises.',
-    },
-    {
-      label: 'Lifetime Profit Factor',
-      value: lifetimePf != null ? lifetimePf.toFixed(2) : '—',
-      cls: lifetimePf != null && lifetimePf >= 1 ? 'positive' : (lifetimePf != null && lifetimePf < 1 ? 'negative' : ''),
-      title: 'Gross dollar wins ÷ |gross dollar losses|.  >1 means winners outweigh losers in dollar terms.',
-    },
-    {
-      label: 'Open Contracts',
-      value: allOpen.length.toLocaleString(),
-      title: 'Option contracts currently held.  Not affected by the window filter (current positions are intrinsically as-of-today).',
-    },
-  ];
-  const anchorHtml =
-    `<div class="opt-anchor-label">All options · lifetime</div>` +
-    _renderStatCards(anchorCards, 'opt-anchor-stats');
-
-  // Filter bars — Performance-tab style 2-row pattern: account on the
-  // top row, window (relative + per-year) on the bottom.
-  const optAccounts = [...new Set(allClosed.map(c => c.account_group || '').filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b));
-  const acctRow = optAccounts.length > 1 ? `
-    <div class="toggles-row">
-      <span class="toggles-label">Account:</span>
-      ${_renderAccountChip(null, !_optAccountFilter, "_setOptAccountFilter('all')", 'All')}
-      ${optAccounts.map(acct =>
-        _renderAccountChip(acct, _optAccountFilter === acct,
-          `_setOptAccountFilter(${_jsString(acct)})`)
-      ).join('')}
-    </div>` : '';
-  const optYears = [...new Set(allClosed.map(c => (c.close_date || '').slice(0, 4)).filter(Boolean))]
-    .sort((a, b) => b.localeCompare(a));   // newest year first
-  const winPill = (key, label) =>
-    `<button class="tbtn ${_optWindow === key ? 'active' : ''}" onclick="_setOptWindow('${key}')">${label}</button>`;
-  const winRow = `
-    <div class="toggles-row">
-      <span class="toggles-label">Window:</span>
-      ${winPill('lifetime', 'Lifetime')}
-      ${winPill('5y', '5y')}
-      ${winPill('3y', '3y')}
-      ${winPill('2y', '2y')}
-      ${winPill('1y', '1y')}
-      ${winPill('ytd', 'YTD')}
-      ${winPill('6mo', '6mo')}
-      ${winPill('3mo', '3mo')}
-      ${winPill('30d', '30d')}
-      ${optYears.length ? '<span class="toggles-sep">|</span>' : ''}
-      ${optYears.map(y => winPill(y, y)).join('')}
-    </div>`;
-  const filterBar = `<div class="toggles-card">${acctRow}${winRow}</div>`;
-
-  // Note: Open Contracts moved to the anchor row above — it's a
-  // current-positions count and doesn't react to the window filter.
-  const statCards = [
-    { label: `${winLabel} Options P&L`, value: fmtSigned(total), cls: total >= 0 ? 'positive' : 'negative' },
-    { label: 'Win Rate', value: decided > 0 ? winRate.toFixed(1) + '%' : '—' },
-    { label: 'Trades (W / L / BE)', value: `${wins} / ${losses} / ${breakevens}` },
-    { label: 'Avg Hold Days', value: avgHold ? avgHold.toFixed(1) : '—' },
-    {
-      label: 'Biggest Winner', value: topWinVal != null && topWinVal > 0 ? fmtSigned(topWinVal) : '—',
-      cls: topWinVal != null && topWinVal > 0 ? 'positive' : ''
-    },
-    {
-      label: 'Biggest Loser', value: topLossVal != null && topLossVal < 0 ? fmtSigned(topLossVal) : '—',
-      cls: topLossVal != null && topLossVal < 0 ? 'negative' : ''
-    },
-  ];
-  const statsHtml = _renderStatCards(statCards);
-
-  // ---- Call vs Put breakdown + lifetime ratios -------------------
-  // Three-column panel: per-type stats (Calls, Puts) and lifetime
-  // ratios (profit factor + expectancy).  Surfaces "am I a better
-  // call buyer than put buyer?" at a glance.  Falls back to JS
-  // aggregation when the Python analytics payload is missing.
-  const callS = stats.call || _splitClosedByType(closed, 'Call');
-  const putS = stats.put || _splitClosedByType(closed, 'Put');
-  function _fmtType(s) {
-    const wr = s.win_rate != null ? (s.win_rate * 100).toFixed(1) + '%' : '—';
-    const pnl = s.total_pnl != null ? s.total_pnl : 0;
-    const pnlCls = pnl > 0 ? 'positive' : (pnl < 0 ? 'negative' : '');
-    const wlbe = `${s.wins || 0} W / ${s.losses || 0} L${s.breakevens ? ' / ' + s.breakevens + ' BE' : ''}`;
-    const hold = s.avg_hold_days != null && s.avg_hold_days > 0
-      ? s.avg_hold_days.toFixed(1) + 'd' : '—';
-    const avgWin = s.avg_winner != null ? fmtSigned(s.avg_winner) : '—';
-    const avgLoss = s.avg_loser != null ? fmtSigned(s.avg_loser) : '—';
-    return `
-      <div style="display:grid;grid-template-columns:auto 1fr;column-gap:14px;row-gap:4px;font-size:0.85rem;">
-        <div style="color:var(--text-dim);">Trades</div>      <div><b>${s.trades || 0}</b> <span style="color:var(--text-dim);font-size:0.78rem;">(${wlbe})</span></div>
-        <div style="color:var(--text-dim);">Win Rate</div>    <div><b>${wr}</b></div>
-        <div style="color:var(--text-dim);">Total P&amp;L</div>  <div><b><span class="${pnlCls}">${fmtSigned(pnl)}</span></b></div>
-        <div style="color:var(--text-dim);">Avg Winner</div>  <div><span class="positive">${avgWin}</span></div>
-        <div style="color:var(--text-dim);">Avg Loser</div>   <div><span class="negative">${avgLoss}</span></div>
-        <div style="color:var(--text-dim);">Avg Hold</div>    <div>${hold}</div>
-      </div>`;
-  }
-  const pf = stats.profit_factor;
-  const exp = stats.expectancy;
-  const callPutPanel = `
-    <div class="overview-split-2" style="margin-top:16px;">
-      <div class="panel">
-        <h3 style="color:#60a5fa;">Calls</h3>
-        ${_fmtType(callS)}
-      </div>
-      <div class="panel">
-        <h3 style="color:#f59e0b;">Puts</h3>
-        ${_fmtType(putS)}
-      </div>
-      <div class="panel">
-        <h3>${winLabel} Ratios</h3>
-        <div style="display:grid;grid-template-columns:auto 1fr;column-gap:14px;row-gap:4px;font-size:0.85rem;">
-          <div style="color:var(--text-dim);" title="Gross wins ÷ |gross losses|.  >1 means winners outweigh losers in dollars.">Profit Factor</div>
-          <div><b>${pf != null ? pf.toFixed(2) : '—'}</b></div>
-          <div style="color:var(--text-dim);" title="Average realized P&amp;L per closed trade.">Expectancy</div>
-          <div><b class="${exp > 0 ? 'positive' : (exp < 0 ? 'negative' : '')}">${exp != null ? fmtSigned(exp) : '—'}</b></div>
-          <div style="color:var(--text-dim);">Avg Winner</div>
-          <div class="positive">${stats.avg_winner != null ? fmtSigned(stats.avg_winner) : '—'}</div>
-          <div style="color:var(--text-dim);">Avg Loser</div>
-          <div class="negative">${stats.avg_loser != null ? fmtSigned(stats.avg_loser) : '—'}</div>
-        </div>
-      </div>
-    </div>`;
-
-  // Cumulative P&L chart (SVG, stand-alone mini)
-  const chartHtml = renderMiniLineChart(cumPoints, {
-    label: 'Cumulative realized options profit and loss over time. The Closed Trades table below lists the same trades.',
-    id: 'optionsCumSvg',
-    color: total >= 0 ? '#4ade80' : '#f87171',
-    height: 240,
-    yFormatter: fmtMoneyShort,
-    emptyMsg: 'No closed option trades yet.',
-  });
-
-  // Open contracts table
-  const openCols = ['underlying', 'expiry', 'dte', 'type', 'strike', 'qty', 'open_date', 'entry_price'];
-  const openHead = `<tr>
-    <th scope="col">Underlying</th><th scope="col">Expiry</th><th scope="col" class="num">DTE</th><th scope="col">Type</th>
-    <th scope="col" class="num">Strike</th><th scope="col" class="num">Qty</th>
-    <th scope="col">Opened</th><th scope="col" class="num">Entry Premium</th></tr>`;
-  const openRows = open.length ? open.map(o => {
-    const otype = o.option_type || o.type || '';
-    const dteStr = o.dte == null ? '—'
-      : (o.dte < 0 ? `<span class="negative">${o.dte}</span>` : `<span class="${o.dte <= 7 ? 'negative' : ''}">${o.dte}</span>`);
-    return `<tr>
-      <td><b>${_htmlEsc(o.underlying || '')}</b></td>
-      <td>${_htmlEsc(o.expiry || '—')}</td>
-      <td class="num">${dteStr}</td>
-      <td>${otype}</td>
-      <td class="num">${o.strike != null ? fmtMoney(o.strike, 2) : '—'}</td>
-      <td class="num">${o.qty}</td>
-      <td>${_htmlEsc(o.open_date || '—')}</td>
-      <td class="num">${o.entry_price != null ? fmtMoney(o.entry_price, 2) : '—'}</td>
-    </tr>`;
-  }).join('') : `<tr><td colspan="${openCols.length}" style="color:var(--text-dim);padding:12px;">No open contracts.</td></tr>`;
-
-  // Closed trades table (most recent first)
-  const closedRecent = [...closed].sort((a, b) => (b.close_date || '').localeCompare(a.close_date || ''));
-  const closedRows = closedRecent.slice(0, 200).map(c => {
-    // Analytics-provided rows have these parsed fields inline; fall
-    // back to local parsing for rows from the legacy JS builder.
-    const underlying = c.underlying || (parseOptionSymbol(c.symbol) || {}).underlying || '';
-    const expiry = c.expiry || (parseOptionSymbol(c.symbol) || {}).expiry || '';
-    const otype = c.option_type || c.type || (parseOptionSymbol(c.symbol) || {}).type || '';
-    const strike = c.strike != null ? c.strike : (parseOptionSymbol(c.symbol) || {}).strike;
-    const hold = c.hold_days != null ? c.hold_days
-      : (c.open_date && c.close_date
-        ? Math.max(0, Math.round((new Date(c.close_date) - new Date(c.open_date)) / 86400000))
-        : null);
-    const rCls = c.realized > 0 ? 'positive' : (c.realized < 0 ? 'negative' : '');
-    return `<tr>
-      <td>${_htmlEsc(c.close_date || '')}</td>
-      <td><b>${_htmlEsc(underlying)}</b></td>
-      <td>${_htmlEsc(expiry)}</td>
-      <td>${otype}</td>
-      <td class="num">${strike != null ? fmtMoney(strike, 2) : '—'}</td>
-      <td>${_htmlEsc((c.action || '').replace('Option ', ''))}</td>
-      <td class="num">${c.qty}</td>
-      <td class="num">${fmtMoney(c.proceeds)}</td>
-      <td class="num">${fmtMoney(c.basis)}</td>
-      <td class="num"><span class="${rCls}">${fmtSigned(c.realized)}</span></td>
-      <td class="num">${hold != null ? hold : '—'}</td>
-    </tr>`;
-  }).join('');
-  const closedTail = closedRecent.length > 200 ? `<tr><td colspan="11" style="color:var(--yellow);text-align:center;">Showing 200 most recent of ${closedRecent.length}.</td></tr>` : '';
-
-  // P&L by underlying
-  const underRows = byUnderSorted.map(([u, s]) => {
-    const rCls = s.realized > 0 ? 'positive' : (s.realized < 0 ? 'negative' : '');
-    const wr = s.trades > 0 ? ((s.wins / s.trades) * 100).toFixed(0) + '%' : '—';
-    return `<tr>
-      <td><b>${_htmlEsc(u)}</b></td>
-      <td class="num">${s.trades}</td>
-      <td class="num">${wr}</td>
-      <td class="num"><span class="${rCls}">${fmtSigned(s.realized)}</span></td>
-    </tr>`;
-  }).join('');
-
-  // Annual options activity table
-  const yearOptRows = yearOptSorted.map(([y, s]) => {
-    const rCls = s.realized > 0 ? 'positive' : (s.realized < 0 ? 'negative' : '');
-    const wr = s.trades > 0 ? ((s.wins / s.trades) * 100).toFixed(0) + '%' : '—';
-    return `<tr>
-      <td><b>${y}</b></td>
-      <td class="num">${s.trades}</td>
-      <td class="num">${wr}</td>
-      <td class="num"><span class="${rCls}">${fmtSigned(s.realized)}</span></td>
-    </tr>`;
-  }).join('');
-
-  root.innerHTML = `
-    ${anchorHtml}
-
-    ${filterBar}
-
-    ${statsHtml}
-
-    ${callPutPanel}
-
-    <div class="section-header" style="margin-top:24px;">
-      <h2><span style="color:var(--accent);">Open Contracts (${open.length})</span></h2>
-      <span class="as-of-hint" style="margin-left:auto;">Current positions — window filter doesn't apply${_optAccountFilter ? ` · filtered to ${_htmlEsc(_optAccountFilter)}` : ''}</span>
-    </div>
-    <div class="table-wrap">
-      <table class="mini-table"><caption class="sr-only">Open option contracts</caption><thead>${openHead}</thead><tbody>${openRows}</tbody></table>
-    </div>
-
-    <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Cumulative Realized P&amp;L</span></h2><span class="as-of-hint" style="margin-left:auto;">${winLabel}</span></div>
-    ${chartHtml}
-
-    <div class="overview-split">
-      <div class="panel">
-        <h3>P&amp;L by Underlying</h3>
-        <div class="mini-scroll">
-          <table class="mini-table"><caption class="sr-only">Option profit and loss by underlying</caption><thead><tr>
-            <th scope="col">Underlying</th><th scope="col" class="num">Trades</th><th scope="col" class="num">Win %</th><th scope="col" class="num">Realized</th>
-          </tr></thead><tbody>${underRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody></table>
-        </div>
-        <div class="panel-foot"><a onclick="activateTab('tax')">View ST / LT / §1256 split on the Tax tab →</a></div>
-      </div>
-      <div class="panel">
-        <h3>Annual Options Summary</h3>
-        <div class="mini-scroll">
-          <table class="mini-table"><caption class="sr-only">Option trade count and profit and loss by year</caption><thead><tr>
-            <th scope="col">Year</th><th scope="col" class="num">Trades</th><th scope="col" class="num">Win %</th><th scope="col" class="num">Realized</th>
-          </tr></thead><tbody>${yearOptRows || '<tr><td colspan="4" style="color:var(--text-dim);padding:12px;">—</td></tr>'}</tbody></table>
-        </div>
-      </div>
-    </div>
-
-    <div class="section-header" style="margin-top:24px;"><h2><span style="color:var(--accent);">Closed Trades</span></h2></div>
-    <div class="table-wrap">
-      <table class="mini-table"><caption class="sr-only">Closed option trades</caption><thead><tr>
-        <th scope="col">Close Date</th><th scope="col">Underlying</th><th scope="col">Expiry</th><th scope="col">Type</th>
-        <th scope="col" class="num">Strike</th><th scope="col">Close</th><th scope="col" class="num">Qty</th>
-        <th scope="col" class="num">Proceeds</th><th scope="col" class="num">Basis</th><th scope="col" class="num">Realized</th><th scope="col" class="num">Hold Days</th>
-      </tr></thead><tbody>${closedRows}${closedTail}</tbody></table>
-    </div>
-  `;
+  const scope = _optionsScope(opt, _optWindowRange(), _optAccountFilter);
+  const { closed, completed, open, stats, contractStats, realizedPnl } = scope;
+  const lifetime = _optionsScope(opt, null, null);
+  const label = _optWindowLabel(), accountLabel = _optAccountFilter || 'All accounts';
+  const modern = Array.isArray(opt.completed_positions);
+  const outsideCompleted = closed.filter(c => c.completed_position === false).length;
+  const accounts = [...new Set([...(opt.closed_trades || []), ...(opt.completed_positions || []), ...(opt.open_contracts || [])]
+    .map(c => c.account_group).filter(Boolean))].sort();
+  const accountButton = (value, text, id) => `<button id="opt-account-${id}" class="tbtn ${_optAccountFilter === value ? 'active' : ''}"
+    aria-pressed="${_optAccountFilter === value}" onclick="${_htmlEsc(`_setOptAccountFilter(${value == null ? 'null' : _jsString(value)})`)}">${_htmlEsc(text)}</button>`;
+  const years = [...new Set([...(opt.closed_trades || []), ...(opt.completed_positions || [])]
+    .map(c => (c.close_date || '').slice(0, 4)).filter(Boolean))].sort().reverse();
+  const windowButton = (key, text) => `<button id="opt-window-${key}" class="tbtn ${_optWindow === key ? 'active' : ''}"
+    aria-pressed="${_optWindow === key}" onclick="_setOptWindow('${key}')">${_htmlEsc(text)}</button>`;
+  const filters = `<div class="toggles-card">
+    <div class="toggles-row" role="group" aria-label="Options account"><span class="toggles-label">Account:</span>
+      ${accountButton(null, 'All', 'all')}${accounts.map((a, i) => accountButton(a, a, i)).join('')}</div>
+    <div class="toggles-row" role="group" aria-label="Options window"><span class="toggles-label">Window:</span>
+      ${[['lifetime','Lifetime'],['5y','5y'],['3y','3y'],['2y','2y'],['1y','1y'],['ytd','YTD'],['6mo','6mo'],['3mo','3mo'],['30d','30d']]
+        .map(([k,v]) => windowButton(k,v)).join('')}${years.map(y => windowButton(y,y)).join('')}</div></div>`;
+  const summary = _renderStatCards([
+    { label: 'Realized P&L', value: _optSigned(realizedPnl), cls: realizedPnl == null ? '' : realizedPnl >= 0 ? 'positive' : 'negative', title: 'All closing executions dated within the selected window, including partial closes.' },
+    { label: 'Position Win Rate', value: _optPct(stats.win_rate), title: 'Winning completed positions ÷ winning and losing completed positions. Breakevens excluded.' },
+    { label: 'Completed Positions', value: modern ? _optQty(stats.trades) : '—', title: 'Positions whose final close falls within the selected window.' },
+    { label: 'Completed Position P&L', value: modern ? fmtSigned(stats.completed_pnl) : '—', title: 'All lifetime realized P&L of the positions completed in this window, including earlier partial closes.' },
+  ]);
+  const fixedReference = `<p class="as-of-hint">All accounts · lifetime reference: realized P&amp;L ${_optSigned(lifetime.realizedPnl)}
+    · completed positions ${modern ? _optQty(lifetime.stats.trades) : '—'} · position win rate ${_optPct(lifetime.stats.win_rate)}</p>`;
+  const ratios = s => `<dl class="opt-metrics">
+    <dt>Completed Positions</dt><dd>${modern ? `${_optQty(s.trades)} (${s.wins} W / ${s.losses} L / ${s.breakevens} BE)` : '—'}</dd>
+    <dt>Position Win Rate</dt><dd>${_optPct(s.win_rate)}</dd>
+    <dt>Completed Position P&amp;L</dt><dd>${modern ? _optPnlCell(s.completed_pnl) : '—'}</dd>
+    <dt>Realized P&amp;L</dt><dd>${_optPnlCell(s.realized_pnl)}</dd>
+    <dt>Avg Winner</dt><dd>${_optPnlCell(s.avg_winner)}</dd>
+    <dt>Avg Loser</dt><dd>${_optPnlCell(s.avg_loser)}</dd>
+    <dt>Avg Position Days</dt><dd>${_optDays(s.avg_hold_days)}</dd></dl>`;
+  const outcomePanel = `<div class="overview-split-2 options-outcomes" style="margin-top:16px;">
+    <div class="panel"><h3>Calls · completed positions</h3>${ratios(stats.call)}</div>
+    <div class="panel"><h3>Puts · completed positions</h3>${ratios(stats.put)}</div>
+    <div class="panel"><h3>Completed-position outcomes</h3><dl class="opt-metrics">
+      <dt>Wins / Losses / Breakevens</dt><dd>${modern ? `${stats.wins} / ${stats.losses} / ${stats.breakevens}` : '—'}</dd>
+      <dt>Profit Factor</dt><dd>${stats.profit_factor == null ? '—' : stats.profit_factor.toFixed(2)}</dd>
+      <dt>Avg P&amp;L / Position</dt><dd>${_optPnlCell(stats.expectancy)}</dd>
+      <dt>Avg Winner</dt><dd>${_optPnlCell(stats.avg_winner)}</dd><dt>Avg Loser</dt><dd>${_optPnlCell(stats.avg_loser)}</dd>
+      <dt>Biggest Winner</dt><dd>${_optPnlCell(stats.biggest_winner)}</dd><dt>Biggest Loser</dt><dd>${_optPnlCell(stats.biggest_loser)}</dd>
+      <dt>Avg Position Days</dt><dd>${_optDays(stats.avg_hold_days)}</dd></dl>
+      <p class="as-of-hint">One outcome per completed position. Profit factor is unavailable when there are no losing positions.</p>
+    </div></div>`;
+  const contractPanel = `<details id="options-contract-stats" class="section-disclosure"><summary>Contract outcomes · matched purchase lots</summary>
+    ${_renderStatCards([{label:'Contract Win Rate',value:_optPct(contractStats.win_rate)},
+      {label:'Contracts Closed',value:_optQty(contractStats.contracts)},
+      {label:'Contracts (W / L / BE)',value:`${_optQty(contractStats.wins)} / ${_optQty(contractStats.losses)} / ${_optQty(contractStats.breakevens)}`},
+      {label:'Unclassified Contracts',value:_optQty(contractStats.unknown)}])}
+    <p class="as-of-hint">Closing dates use the selected window. Each matched purchase lot is classified separately and weighted by contract quantity.
+      Breakevens and unclassified contracts are excluded from the rate.${contractStats.unknown > 0 ? ' Coverage is incomplete: the rate describes only classified contracts.' : ''}</p></details>`;
+  const guide = `<details id="options-metric-guide" class="metric-guide"><summary>How options metrics are calculated</summary>
+    <p>A position is one account and one exact option contract (underlying, call/put, strike and expiry), from opening until its quantity returns to zero.
+    Scaling in and partial exits belong to the same position; reopening after flat starts a new one. Different option legs are separate positions, not a combined strategy.</p>
+    <p>Position win rate is winners ÷ (winners + losers). All outcome averages, biggest winners/losers and profit factor use completed positions.
+    Average P&amp;L per position includes breakevens. Profit factor is gross winning position P&amp;L ÷ absolute gross losing position P&amp;L.
+    Position days measure calendar days from first entry through final close, with same-day positions shown as zero.</p>
+    <p>Position statistics are assigned to the final close date and include the position's full P&amp;L. Realized P&amp;L and the cumulative chart use each execution's actual closing date,
+    including partial exits of positions still open. Consequently, these two P&amp;L totals can differ within a selected year or window.</p>
+    <p>Only long positions with a complete supported opening/closing history and known realized P&amp;L enter position outcomes.
+    Transfers and unmatched history can prevent classification. Contract outcomes use the ledger's matched lot basis and allocated proceeds; missing or inconsistent lot evidence is unclassified.
+    P&amp;L follows the ledger annotations and their recorded costs; no extra fee estimate is added here.</p>
+    <p>The ledger has dates rather than reliable execution times: buys on a date precede closes, so a same-day exit and re-entry may be grouped together.
+    Open quantities are current as of ${_htmlEsc(SNAPSHOT_DATE)}, filtered by account only. Avg Basis Premium is remaining basis ÷ contracts ÷ the contract multiplier, not the last purchase price.
+    Execution hold days use matched purchase lots and quantity weighting; position days use the whole position's span.</p></details>`;
+  const chart = realizedPnl == null ? '<p class="notice">Realized P&amp;L is unavailable because closing records lack realized-gain annotations.</p>' : renderMiniLineChart(scope.cumulative, { id:'optionsCumSvg', color:realizedPnl >= 0 ? '#4ade80' : '#f87171',
+    height:240, yFormatter:fmtMoneyShort, calendarAxis:true,
+    label:'Cumulative realized options P&L by closing date in the selected window. Closing executions are listed below.', emptyMsg:'No closing executions in this window.' });
+  const openRows = open.map(o => `<tr><td>${_htmlEsc(o.account_group || '—')}</td><td><b>${_htmlEsc(o.underlying || o.symbol || '')}</b></td>
+    <td>${_htmlEsc(o.expiry || '—')}</td><td class="num">${o.dte == null ? '—' : o.dte}</td><td>${_htmlEsc(o.option_type || o.type || '')}</td>
+    <td class="num">${o.strike == null ? '—' : fmtMoney(o.strike,2)}</td><td class="num">${_optQty(o.qty)}</td>
+    <td>${_htmlEsc(o.open_date || '—')}</td><td class="num">${!modern || o.entry_price == null ? '—' : fmtMoney(o.entry_price,2)}</td></tr>`).join('');
+  const table = (caption, headings, rows, scrollable = false) => `<div class="table-wrap${scrollable ? ' mini-scroll' : ''}"><table class="mini-table"><caption class="sr-only">${caption}</caption>
+    <thead><tr>${headings.map(h => `<th scope="col">${h}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${headings.length}">No matching records.</td></tr>`}</tbody></table></div>`;
+  const contractCells = c => `<td>${_htmlEsc(c.account_group || '—')}</td><td><b>${_htmlEsc(c.underlying || c.symbol || '')}</b></td>
+    <td>${_htmlEsc(c.expiry || '')}</td><td>${_htmlEsc(c.option_type || '')}</td><td class="num">${c.strike == null ? '—' : fmtMoney(c.strike,2)}</td>`;
+  const recent = rows => [...rows].sort((a,b) => (b.close_date || '').localeCompare(a.close_date || '')).slice(0,200);
+  const completedRows = recent(completed).map(c => `<tr><td>${_htmlEsc(c.close_date)}</td>${contractCells(c)}<td>${_htmlEsc(c.open_date || '—')}</td>
+    <td class="num">${_optQty(c.qty)}</td><td class="num">${_optPnlCell(c.realized)}</td><td class="num">${_optDays(c.hold_days)}</td></tr>`).join('');
+  const closedRows = recent(closed).map(c => `<tr><td>${_htmlEsc(c.close_date)}</td>${contractCells(c)}<td>${_htmlEsc((c.action || '').replace('Option ',''))}</td>
+    <td class="num">${_optQty(c.qty)}</td><td class="num">${c.proceeds == null ? '—' : fmtMoney(c.proceeds)}</td>
+    <td class="num">${c.basis == null ? '—' : fmtMoney(c.basis)}</td><td class="num">${_optPnlCell(c.realized)}</td><td class="num">${_optDays(c.hold_days)}</td></tr>`).join('');
+  const groupedRows = (rows,key) => rows.map(r => `<tr><td>${_htmlEsc(r[key])}</td><td class="num">${modern ? _optQty(r.trades) : '—'}</td>
+    <td class="num">${_optPct(r.win_rate)}</td><td class="num">${modern ? _optPnlCell(r.completed_pnl) : '—'}</td><td class="num">${_optPnlCell(r.realized)}</td></tr>`).join('');
+  const limitNote = rows => rows.length > 200 ? `<p class="as-of-hint">Showing the 200 most recent of ${rows.length} records. Statistics include every matching record.</p>` : '';
+  renderDisclosureContent(root, `${filters}<h2>${_htmlEsc(label)} · ${_htmlEsc(accountLabel)}</h2>
+    <p class="as-of-hint">Realized P&amp;L: execution closing dates. Position outcomes: final close dates. Breakevens excluded from win rates.</p>
+    ${!modern ? '<p class="notice">Completed-position analytics are unavailable in this older export. Regenerate the dashboard to see position outcomes.</p>' : ''}
+    ${outsideCompleted ? `<p class="as-of-hint">${outsideCompleted} closing execution${outsideCompleted === 1 ? '' : 's'} belong to positions still open or lacking a complete supported history. Their realized P&amp;L remains included.</p>` : ''}
+    ${summary}${fixedReference}${guide}${outcomePanel}${contractPanel}
+    <div class="section-header" style="margin-top:24px;"><h2>Open positions</h2><span class="as-of-hint">As of ${_htmlEsc(SNAPSHOT_DATE)} · account filter only</span></div>
+    ${_renderStatCards([{label:'Open Contracts',value:_optQty(stats.open_contract_count)},{label:'Open Positions',value:_optQty(open.length)}])}
+    ${table('Open option positions',['Account','Underlying','Expiry','DTE','Type','Strike','Contracts','Opened','Avg Basis Premium'],openRows)}
+    <div class="section-header" style="margin-top:24px;"><h2>Cumulative Realized P&amp;L</h2><span class="as-of-hint">${_htmlEsc(label)} · starts at zero before this window's first close</span></div>${chart}
+    <div class="overview-split options-summaries"><div class="panel"><h3>By underlying</h3>
+      ${table('Option profit and loss by underlying',['Underlying','Completed Positions','Position Win %','Completed P&amp;L','Realized P&amp;L'],groupedRows(scope.byUnderlying,'underlying'),true)}</div>
+    <div class="panel"><h3>Annual Options Summary</h3>
+      ${table('Option outcomes and realized profit and loss by year',['Year','Completed Positions','Position Win %','Completed P&amp;L','Realized P&amp;L'],groupedRows(scope.annual,'year'),true)}</div></div>
+    <p class="as-of-hint">Completed P&amp;L assigns the whole position to its final-close year; realized P&amp;L stays in each execution's year. Both tables follow the selected filters.</p>
+    <details id="options-completed-positions" class="section-disclosure" open><summary>Completed positions (${modern ? completed.length : 'unavailable'})</summary>
+      ${modern ? table('Completed option positions',['Final Close','Account','Underlying','Expiry','Type','Strike','Opened','Contracts Closed','Position P&amp;L','Position Days'],completedRows) + limitNote(completed)
+        : '<p class="notice">Regenerate this older export to see completed positions.</p>'}</details>
+    <details id="options-closing-executions" class="section-disclosure"><summary>Closing executions (${closed.length})</summary>
+      <p class="as-of-hint">Includes partial exits, expirations and exercises. Each row is an execution, not a completed position.</p>
+      ${table('Option closing executions',['Close Date','Account','Underlying','Expiry','Type','Strike','Action','Contracts','Proceeds','Basis','Realized P&amp;L','Lot Hold Days'],closedRows)}${limitNote(closed)}</details>`);
+  applyScrollRegionFocus();
 }
 
 // Generic full-width line chart.  Renders at the container's actual
@@ -576,7 +374,7 @@ function renderMiniLineChart(points, opts) {
   // Build SVG content at a given width (in CSS pixels).  Factored out
   // so we can call it once at initial render (with 800 default) and
   // again after we know the actual container width.
-  const buildContent = (W) => _buildMiniLineChartContent(points, W, height, color, yFmt, id);
+  const buildContent = (W) => _buildMiniLineChartContent(points, W, height, color, yFmt, id, opts.calendarAxis);
 
   // Schedule a post-insert pass that measures and re-renders at the
   // correct width.  Also rebinds hover (dependent on x/y scales).
@@ -606,12 +404,15 @@ function renderMiniLineChart(points, opts) {
 // Pure content builder — returns the SVG inner string for a given
 // pixel width.  No DOM side effects.  `bindHover` is a function to
 // call after the content is in the DOM to wire up crosshair behaviour.
-function _buildMiniLineChartContent(points, W, H, color, yFmt, id) {
+function _buildMiniLineChartContent(points, W, H, color, yFmt, id, calendarAxis = false) {
   const PAD = { l: 64, r: 16, t: 12, b: 28 };
   const plotW = W - PAD.l - PAD.r;
   const plotH = H - PAD.t - PAD.b;
   const n = points.length;
-  const xOf = i => PAD.l + (n === 1 ? plotW / 2 : (i * plotW) / (n - 1));
+  const times = calendarAxis ? points.map(p => Date.parse(p.date + 'T00:00:00Z')) : [];
+  const dated = calendarAxis && times.every(Number.isFinite) && times[n - 1] > times[0];
+  const xOf = i => PAD.l + (n === 1 ? plotW / 2 : dated
+    ? (times[i] - times[0]) * plotW / (times[n - 1] - times[0]) : i * plotW / (n - 1));
   // Float y-axis to data range with 8% padding so short windows don't
   // squish to top of anchored-at-zero.  Keep zero visible when data
   // straddles zero (drawdown / cumulative-P&L charts use this helper).
@@ -646,15 +447,22 @@ function _buildMiniLineChartContent(points, W, H, color, yFmt, id) {
     parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${y0}" x2="${W - PAD.r}" y2="${y0}" stroke-opacity="0.6"/>`);
   }
   const xTicks = Math.min(6, n);
+  let previousLabelX = -Infinity;
   for (let i = 0; i < xTicks; i++) {
     const idx = Math.round((i * (n - 1)) / (xTicks - 1 || 1));
     const x = xOf(idx);
-    parts.push(`<text class="axis-label" x="${x}" y="${H - 8}" text-anchor="middle">${_htmlEsc((points[idx].date || '').slice(0, 7))}</text>`);
+    if (dated && x - previousLabelX < 76) continue;
+    previousLabelX = x;
+    const anchor = dated && idx === n - 1 ? 'end' : 'middle';
+    parts.push(`<text class="axis-label" x="${x}" y="${H - 8}" text-anchor="${anchor}">${_htmlEsc((points[idx].date || '').slice(0, dated ? 10 : 7))}</text>`);
   }
   parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + plotH}"/>`);
   parts.push(`<line class="axis-line" x1="${PAD.l}" y1="${PAD.t + plotH}" x2="${W - PAD.r}" y2="${PAD.t + plotH}"/>`);
-  const d = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(i)},${yOf(p.value)}`).join(' ');
+  // Realized P&L changes on execution dates; do not imply gains between closes.
+  const d = points.map((p, i) => dated && i > 0
+    ? `H${xOf(i)} V${yOf(p.value)}` : `${i === 0 ? 'M' : 'L'}${xOf(i)},${yOf(p.value)}`).join(' ');
   parts.push(`<path class="series-line" d="${d}" stroke="${color}" stroke-width="1.8" fill="none"/>`);
+  if (n === 1) parts.push(`<circle cx="${xOf(0)}" cy="${yOf(points[0].value)}" r="3" fill="${color}"/>`);
 
   // Hover overlay (crosshair + dot + capture rect)
   parts.push(`<line class="hover-v" id="${id}_hv" x1="0" y1="${PAD.t}" x2="0" y2="${PAD.t + plotH}" style="display:none"/>`);
@@ -675,6 +483,14 @@ function _buildMiniLineChartContent(points, W, H, color, yFmt, id) {
       const mx = (ev.clientX - r.left) * (W / r.width);
       let idx = Math.round(((mx - PAD.l) / plotW) * (n - 1));
       idx = Math.max(0, Math.min(n - 1, idx));
+      if (dated) {
+        let low = 0, high = n - 1;
+        while (low < high) {
+          const mid = Math.floor((low + high) / 2);
+          if (xOf(mid) < mx) low = mid + 1; else high = mid;
+        }
+        idx = low > 0 && mx - xOf(low - 1) < xOf(low) - mx ? low - 1 : low;
+      }
       const x = xOf(idx), y = yOf(points[idx].value);
       hv.setAttribute('x1', x); hv.setAttribute('x2', x);
       hv.style.display = '';

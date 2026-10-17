@@ -1098,7 +1098,7 @@ def main():
     tax = analytics["tax"]
     print(f"  {len(analytics['rollover_bridges'])} rollover bridge(s), "
           f"{len(perf)} account filter(s), "
-          f"{opt['trades']} option trades ({opt['open_count']} open), "
+          f"{opt['trades']} completed option positions ({opt['open_count']} open), "
           f"{len(tax['realized_by_symbol'])} symbols with realized gain")
 
     # --- Step 5: Export JSON ---

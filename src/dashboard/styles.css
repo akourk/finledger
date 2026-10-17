@@ -3232,6 +3232,18 @@ h2 > .scope-label, h3 > .scope-label { margin-left: 8px; }
 .scope-context { color: var(--text-dim); font-size: 0.78rem; line-height: 1.55; margin: 6px 0 10px; overflow-wrap: anywhere; }
 .header-total { margin-left: auto; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .header-total .total-value, .section-header > .total-value { color: var(--text); }
+.opt-metrics { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 14px; font-size: 0.85rem; }
+.opt-metrics dt { color: var(--text-dim); }
+.opt-metrics dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+#optionsContent p.as-of-hint { text-align: left; max-width: none; }
+#optionsContent .options-summaries { align-items: start; }
+@media (max-width: 900px) {
+  /* Stacked tables follow the page vertically; retain horizontal scrolling. */
+  #optionsContent .options-summaries .mini-scroll { max-height: none; }
+}
+@media (max-width: 640px) {
+  #optionsContent .options-outcomes { grid-template-columns: minmax(0, 1fr); }
+}
 .metric-guide { margin: 8px 0 14px; font-size: 0.8rem; color: var(--text-dim); }
 .metric-guide summary { cursor: pointer; padding: 5px 0; color: var(--text); width: fit-content; }
 .metric-guide p { max-width: 960px; margin: 8px 0; line-height: 1.6; }
